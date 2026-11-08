@@ -11,7 +11,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 - **2026-11-08.** DP1 (what DataPiler is), DP2 (its name), DP3 (a public repository of its own), DP4 (the Smithbox
   server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
   (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries). DP10 (the zip's folder), DP11 (an update
-  button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session.
+  button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session. DP13 (design
+  0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page).
 - **Open.** None.
 
 ## DP1
@@ -197,3 +198,32 @@ the same request.
 **Owner's words.** "on the settings page, can you add auto detect for Smithbox folder, Game folder, Project folder,
 and also set folder button that brings up over top UI index to select folder, again ask the PandorumLLM agent about
 this (a request how exactly this is done, the layout, etc.)"
+
+## DP13
+
+**Design 0002 adopted; Smithbox found from its running process** · *2026-11-08 · Decided by the owner*
+
+**Question.** Design 0002 ([design/0002-design.md](design/0002-design.md), with its mock) answers request 0002. For
+the Smithbox folder it proposed reading Windows' record of programs the owner started (MuiCache), since Smithbox has
+no installer: on by default, with a Settings switch.
+
+**Decision.** Design 0002 is DataPiler's design for the update button (DP11) and folder picking (DP12), with one
+change: Detect does not read Windows' record of programs started. Smithbox must be running anyway for the server link,
+so Detect reads the Smithbox folder from the running Smithbox's own process, and from it establishes the others: the
+project folder and the game (data) folder from Smithbox's own record of the open project, with Steam's library list as
+a cross-check for the game folder. No MuiCache, and no switch for it. The expansion's Steam app id (2778580 in the
+design, from memory) is read from the owner's own app manifest, never assumed.
+
+**Owner's words.** "what about a dependency for Smithbox process to run, then datapiler could detect the process and
+read path from that, then once the executable is found, the others can be also established."
+
+## DP14
+
+**Masking paths on the page** · *2026-11-08 · Decided by the owner, as recommended*
+
+**Question.** Should Settings have a "Mask paths on this page" switch that shows `<SMITHBOX>`, `<GAME>`, `<PROJECT>`
+and the like in place of the owner's real folders (in Settings, the picker and Detect's list), for screenshots?
+
+**Decision.** Yes, off by default.
+
+**Owner's words.** "Add it, off by default (Recommended)".

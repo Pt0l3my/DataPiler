@@ -81,8 +81,10 @@ WRITES = ("write_local", "write_share")
 # What read_placements and join_names make (build plan §4.6).
 PLACEMENT_COLUMNS: tuple[tuple[str, str], ...] = (("map", "int"), ("entityId", "int"), ("npcParamId", "int"),
                                                    ("talkId", "int"), ("model", "int"))
-# The columns the operations make themselves (join_names's `named`, count's `count`); `name` is local text only.
-MADE_COLUMNS = ("named", "count")
+# The columns the operations make themselves (join_names's `named` and `layer`, count's `count`); `name` is local
+# text only. `layer` is the earliest layer that holds the name: 0 the base game, 1 DLC 1, 2 DLC 2, -1 none (S43).
+MADE_COLUMNS = ("named", "layer", "count")
+JOIN_COLUMNS: tuple[tuple[str, str], ...] = (("named", "bool"), ("layer", "int"), ("name", "text_local"))
 # Each source's row-id column (the id column of DP8 and check 6), and the columns `ids` may pick rows by.
 ID_COLUMN = {"fetch_rows": "id", "read_placements": "entityId"}
 PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParamId")}
@@ -548,7 +550,7 @@ class _Checker:
         r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
         cols = r[1] if r is not None else None
         ok = r is not None and cols is not None
-        if r is not None and cols is not None and any(c in ("named", "name") for c, _ in cols):
+        if r is not None and cols is not None and any(c in ("named", "layer", "name") for c, _ in cols):
             self.add(place + ".rows", "`%s` has a `named` or `name` column already - a table is joined once" % r[0],
                      i)
             ok = False
@@ -562,7 +564,7 @@ class _Checker:
             self.add(place + ".text", _named(t, "is not a text set DataPiler has (%s)" % ", ".join(TEXTS),
                                              "not a text set DataPiler has (%s)" % ", ".join(TEXTS)), i)
         if as_ is not None:
-            self.tables[as_] = (list(cols) + [("named", "bool"), ("name", "text_local")]) if ok and cols else None
+            self.tables[as_] = (list(cols) + list(JOIN_COLUMNS)) if ok and cols else None
             self.lineage[as_] = _after_join(self.lineage.get(r[0]), i) if ok and cols and r is not None else None
 
     def op_filter(self, place: str, i: int, o: dict) -> None:
@@ -1047,7 +1049,7 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
         elif op == "read_placements":
             tables[o["as"]] = list(PLACEMENT_COLUMNS)
         elif op == "join_names":
-            tables[o["as"]] = tables[o["rows"]] + [("named", "bool"), ("name", "text_local")]
+            tables[o["as"]] = tables[o["rows"]] + list(JOIN_COLUMNS)
         elif op == "filter":
             tables[o["as"]] = list(tables[o["rows"]])
         elif op == "count":

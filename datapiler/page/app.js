@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 const JOB_MAX = 256 * 1024;
-const TABS = ["status", "extract", "jobs", "outputs", "terminal", "settings"];
+const TABS = ["status", "extract", "imported", "jobs", "outputs", "terminal", "settings"];
 const SOURCES = ["app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env", "update", "folders"];
 const ROW_UNIT = { rows: "rows", maps: "maps", entries: "entries" };
 
@@ -134,6 +134,7 @@ function showTab(t) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-t") === t));
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("on", s.id === "t-" + t));
   if (t === "outputs") loadOutputs();
+  if (t === "imported") loadImported();
   if (t === "settings") loadSettings();
   if (t === "terminal") { paintTerm(); scrollEnd(); }
 }
@@ -453,6 +454,30 @@ function fileItem(f, area) {
   if (area === "share") { const b = el("button", "sm", "Show"); b.addEventListener("click", () => openShare(f.name)); add(li, b); }
   return li;
 }
+function loadImported() {
+  return api("/api/imported").then((r) => {
+    const ready = r.ready || [];
+    $("impReady").textContent = ready.length ? "Jobs can use now (" + r.language + "): " + ready.map((x) => x.words).join(", ") + "."
+      : "Nothing jobs can use yet in " + r.language + ": Extract's Character names row shows how to export it from Smithbox.";
+    const tb = clear($("impRows"));
+    (r.containers || []).forEach((c) => {
+      const tr = el("tr");
+      const holds = (c.serves || []).map((x) => x.words + " (" + x.layers.map((l) => l.layer + " " + fmtN(l.entries)).join(", ") + ")").join("; ");
+      const lang = c.in_use ? c.language : c.language + " (not Settings' language, not used)";
+      [c.container, lang, fmtN(c.wrappers), fmtN(c.entries), fmtN(c.skipped), holds || "-", c.imported].forEach((v) => add(tr, el("td", null, String(v))));
+      const b = el("button", null, "Remove");
+      b.addEventListener("click", () => {
+        if (!window.confirm("Remove the import " + c.container + " (" + c.language + ") from the text database? Jobs stop using its texts until you import it again.")) return;
+        api("/api/imported/remove", { container: c.container, language: c.language }).then((x) => {
+          if (!x.ok) note(x.error || "Not removed"); else { note("Removed " + c.container, true); loadImported(); }
+        }).catch((e) => note(e.message));
+      });
+      add(tr, add(el("td"), b));
+      add(tb, tr);
+    });
+    if (!(r.containers || []).length) add(tb, add(el("tr"), el("td", null, "No text imported yet.")));
+  }).catch(() => {});
+}
 function loadOutputs() {
   return api("/api/outputs").then((o) => {
     const w = clear($("work")), s = clear($("share"));
@@ -600,7 +625,7 @@ function poll() {
     paintStatus(s);
     paintExtract(s);
     paintJobs(s);
-    if (s.outputs_rev !== OUT_REV) { OUT_REV = s.outputs_rev; if (TAB === "outputs") loadOutputs(); }
+    if (s.outputs_rev !== OUT_REV) { OUT_REV = s.outputs_rev; if (TAB === "outputs") loadOutputs(); if (TAB === "imported") loadImported(); }
     if (TAB === "settings") paintSession(s.session);
     if (!CAT) loadCatalogue();
   }).catch(() => { FAILS += 1; if (FAILS >= 3 && !HOLD) gone(); });

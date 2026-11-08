@@ -2,4 +2,4 @@
 EldenNet's research. This file holds the one name and the one version every other file reads."""
 
 NAME = "DataPiler"
-VERSION = "0.2.0"
+VERSION = "0.2.2"

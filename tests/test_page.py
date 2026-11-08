@@ -58,7 +58,7 @@ class PageTest(unittest.TestCase):
 
     def test_tabs_of_the_design(self):
         tabs = [a.get("data-t") for t, a in self.parser.tags if t == "button" and "data-t" in a]
-        self.assertEqual(tabs, ["status", "extract", "jobs", "outputs", "terminal", "settings"])
+        self.assertEqual(tabs, ["status", "extract", "imported", "jobs", "outputs", "terminal", "settings"])
         self.assertIn("DataPiler has stopped.", self.page)
         # the server's address comes from /api/settings ("server", built from link.HOST and link.PORT), so the port
         # is written in link.py only

@@ -198,6 +198,8 @@ class Api:
             return 200, self.log_lines(query.get("after", "0"))
         if path == "/api/settings":
             return 200, self.settings_view()
+        if path == "/api/imported":
+            return 200, self.imported()
         # UPDATE's routes (build plan 0.2 §3.3): forwarded as they are, and nothing else of api.py reaches update.py.
         if path == "/api/update":
             if self.updates is None:
@@ -405,6 +407,7 @@ class Api:
             "/api/debug": self.debug,
             "/api/extract/run": self.extract_run,
             "/api/extract/cancel": self.extract_cancel,
+            "/api/imported/remove": self.imported_remove,
             "/api/jobs/drop": self.drop,
             "/api/jobs/act": self.act,
             "/api/open": self.open_folder,
@@ -487,6 +490,34 @@ class Api:
     def extract_cancel(self, body: dict) -> dict:
         self.runner.cancel_extract()
         return {"ok": True}
+
+    def imported(self) -> dict:
+        """The Imported tab (S41): the text containers in the text database, counts only, and what jobs can use in
+        Settings' language. Never a text."""
+        from . import jobs as jobs_mod
+        lang = self.live.settings.language
+        out = []
+        for c in self.textdb.containers():
+            c = dict(c)
+            c["in_use"] = c["language"] == lang
+            c["serves"] = [dict(x, words=jobs_mod.TEXT_WORDS.get(x["set"], x["set"]))
+                           for x in self.textdb.serves(c["container"], c["language"])]
+            out.append(c)
+        ready = sorted({x["set"] for c in out if c["in_use"] for x in c["serves"]})
+        return {"language": lang, "containers": out,
+                "ready": [{"set": s, "words": jobs_mod.TEXT_WORDS.get(s, s)} for s in ready]}
+
+    def imported_remove(self, body: dict) -> dict:
+        container = _str(body, "container", 32)
+        language = _str(body, "language", 8)
+        if not container or not language:
+            return {"ok": False, "error": "no such import"}
+        if getattr(self.runner, "busy", lambda: None)():
+            return {"ok": False, "error": "a job or an Extract run is going - remove it when it ends"}
+        ok = self.textdb.remove(container, language)
+        if ok:
+            self._log.info("the import %s (%s) removed from the text database", own(container), own(language))
+        return {"ok": ok} if ok else {"ok": False, "error": "no such import"}
 
     def drop(self, body: dict) -> dict:
         name = _str(body, "name", 260) or "job.json"

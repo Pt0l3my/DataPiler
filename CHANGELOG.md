@@ -3,6 +3,22 @@
 All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init__.py`; a release is tagged
 `v<version>`.
 
+
+
+## 0.2.2 - 2026-11-08
+
+- `join_names` also makes `layer`: the earliest layer of the imported text that holds the name, 0 the base game, 1
+  DLC 1, 2 DLC 2, -1 when no name is found (S43). A number, so a count by it is a summary, and a named table keeps it
+  beside its ids.
+## 0.2.1 - 2026-11-08
+
+- The Imported tab (DP16, the owner's request): the text containers in the text database, with their language,
+  wrappers, entries, placeholders left out and which names each holds per layer (base game, DLC 1, DLC 2), counts
+  only; what jobs can use now; and Remove, which takes an import out of the database (its export file stays).
+- The game's `[ERROR]` placeholder texts are no longer imported, never count as names and are no longer texts for the
+  guard's check 3; 0.2.0's imports are cleaned when the database opens, without a new export (S40).
+- Extract's names rows end their wait once one export arrives (Smithbox 2.2.6 shows one Item container per language,
+  `item_dlc02`, holding the base game and both DLC layers), and their steps follow Smithbox 2.2.6 (S42).
 ## Unreleased (0.2.0)
 
 Built from [design 0002](docs/design/0002-design.md) and its build plan

@@ -39,10 +39,24 @@ VERIFY_SHARE = 0.5
 TEXT_SETS: dict[str, tuple[tuple[str, int], ...]] = {
     name: tuple((c, w) for c in LEAD_CONTAINERS for w in wrappers) for name, wrappers in LEADS.items()
 }
+# Our own names for the layers of each set, in LEADS's order (the newest first), as Smithbox 2.2.6's File List groups
+# them (Base, DLC 1, DLC 2); the expansion's layers are the first two.
+LAYER_NAMES = ("DLC 2", "DLC 1", "base game")
+EXPANSION_LAYERS = 2
+
+# Texts the game keeps in its unused entries: never a name, and never a text for check 3 (S40). FACT on the owner's
+# export of 2026-11-08: the item container's unused entries read "[ERROR]". Compared exactly, after strip().
+PLACEHOLDERS = frozenset({"[ERROR]"})
+
+
+def is_placeholder(text: str) -> bool:
+    return text.strip() in PLACEHOLDERS
+
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS imports (container TEXT NOT NULL, language TEXT NOT NULL, wrappers INTEGER NOT NULL,"
-    " entries INTEGER NOT NULL, sha256 TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY (container, language))",
+    " entries INTEGER NOT NULL, sha256 TEXT NOT NULL, at REAL NOT NULL, skipped INTEGER NOT NULL DEFAULT 0,"
+    " PRIMARY KEY (container, language))",
     "CREATE TABLE IF NOT EXISTS entries (container TEXT NOT NULL, language TEXT NOT NULL, wrapper_id INTEGER NOT NULL,"
     " wrapper_name TEXT NOT NULL, entry_id INTEGER NOT NULL, text TEXT NOT NULL,"
     " PRIMARY KEY (container, language, wrapper_id, wrapper_name, entry_id))",
@@ -65,6 +79,7 @@ class ImportResult:
     language: str
     wrappers: int
     entries: int
+    skipped: int = 0              # placeholder texts left out (S40)
 
 
 class _Index:
@@ -113,17 +128,36 @@ class TextDB:
         with self._lock:
             for stmt in _SCHEMA:
                 self._db.execute(stmt)
+            self._migrate()
             self._db.commit()
         self._index: _Index | None = None
         self._nindex: _Index | None = None          # the texts normalised (`normalise`), for check 3
 
+    def _migrate(self) -> None:
+        """0.2.0's database: add imports.skipped, then take the placeholder texts out of what it imported (S40), so
+        no export has to be made again."""
+        db = self._conn()
+        cols = {r[1] for r in db.execute("PRAGMA table_info(imports)").fetchall()}
+        if "skipped" not in cols:
+            db.execute("ALTER TABLE imports ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0")
+        marks = sorted(PLACEHOLDERS)
+        qs = ", ".join("?" for _ in marks)
+        for container, language, n in db.execute(
+                "SELECT container, language, COUNT(*) FROM entries WHERE trim(text) IN (%s) "
+                "GROUP BY container, language" % qs, marks).fetchall():
+            db.execute("DELETE FROM entries WHERE container = ? AND language = ? AND trim(text) IN (%s)" % qs,
+                       [container, language] + marks)
+            db.execute("UPDATE imports SET entries = MAX(entries - ?, 0), skipped = skipped + ? "
+                       "WHERE container = ? AND language = ?", (int(n), int(n), container, language))
+
     # ---- writing
 
     def import_export(self, data: dict, *, container: str, language: str, sha256: str) -> ImportResult:
-        """Replace that container's entries for that language. Empty texts are skipped. Emits textdb.changed.
-        data has passed inbox.check_export."""
+        """Replace that container's entries for that language. Empty texts and the game's placeholders (S40) are
+        skipped. Emits textdb.changed. data has passed inbox.check_export."""
         rows: list[tuple] = []
         wrappers = 0
+        skipped = 0
         for w in data.get("FmgWrappers") or []:
             wrappers += 1
             wid = int(w["ID"])
@@ -131,6 +165,9 @@ class TextDB:
             for e in (w.get("Fmg") or {}).get("Entries") or []:
                 text = e.get("Text")
                 if not isinstance(text, str) or not text.strip():
+                    continue
+                if is_placeholder(text):
+                    skipped += 1
                     continue
                 rows.append((container, language, wid, wname, int(e["ID"]), text))
         with self._lock:
@@ -140,13 +177,30 @@ class TextDB:
                 db.executemany("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?)", rows)
                 kept = db.execute("SELECT COUNT(*) FROM entries WHERE container = ? AND language = ?",
                                   (container, language)).fetchone()[0]
-                db.execute("INSERT OR REPLACE INTO imports VALUES (?, ?, ?, ?, ?, ?)",
-                           (container, language, wrappers, kept, sha256, time.time()))
+                db.execute("INSERT OR REPLACE INTO imports (container, language, wrappers, entries, sha256, at, "
+                           "skipped) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (container, language, wrappers, kept, sha256, time.time(), skipped))
             self._index = None
             self._nindex = None
             total_containers, total_entries = self._totals()
         events.emit("textdb.changed", containers=total_containers, entries=total_entries)
-        return ImportResult(container, language, wrappers, int(kept))
+        return ImportResult(container, language, wrappers, int(kept), skipped)
+
+    def remove(self, container: str, language: str) -> bool:
+        """Take one import out (the Imported tab's Remove, S41): its entries and its record. The export file in
+        workspace/imported/ stays. False when there was no such import. Emits textdb.changed."""
+        with self._lock:
+            db = self._conn()
+            with db:
+                cur = db.execute("DELETE FROM imports WHERE container = ? AND language = ?", (container, language))
+                db.execute("DELETE FROM entries WHERE container = ? AND language = ?", (container, language))
+            if cur.rowcount <= 0:
+                return False
+            self._index = None
+            self._nindex = None
+            total_containers, total_entries = self._totals()
+        events.emit("textdb.changed", containers=total_containers, entries=total_entries)
+        return True
 
     # ---- reading
 
@@ -165,10 +219,27 @@ class TextDB:
         """[{"container", "language", "wrappers", "entries", "imported": "YYYY-MM-DD HH:MM"}], by container."""
         with self._lock:
             rows = self._conn().execute(
-                "SELECT container, language, wrappers, entries, at FROM imports ORDER BY container, language"
+                "SELECT container, language, wrappers, entries, at, skipped FROM imports ORDER BY container, language"
             ).fetchall()
-        return [{"container": c, "language": lang, "wrappers": int(w), "entries": int(e),
-                 "imported": time.strftime("%Y-%m-%d %H:%M", time.localtime(at))} for c, lang, w, e, at in rows]
+        return [{"container": c, "language": lang, "wrappers": int(w), "entries": int(e), "skipped": int(sk or 0),
+                 "imported": time.strftime("%Y-%m-%d %H:%M", time.localtime(at))}
+                for c, lang, w, e, at, sk in rows]
+
+    def serves(self, container: str, language: str) -> list[dict]:
+        """For the Imported tab (S41): each text set this import holds entries of, with its entries per layer
+        (LAYER_NAMES), counts only."""
+        out = []
+        with self._lock:
+            db = self._conn()
+            for name, wrappers in LEADS.items():
+                layers = []
+                for label, w in zip(LAYER_NAMES, wrappers):
+                    n = db.execute("SELECT COUNT(*) FROM entries WHERE container = ? AND language = ? AND "
+                                   "wrapper_id = ?", (container, language, int(w))).fetchone()[0]
+                    layers.append({"layer": label, "entries": int(n)})
+                if any(x["entries"] for x in layers):
+                    out.append({"set": name, "layers": layers})
+        return out
 
     def has(self, container: str, language: str) -> bool:
         with self._lock:
@@ -199,6 +270,25 @@ class TextDB:
         if pairs is None:
             raise KeyError(text_set)
         return list(dict.fromkeys(int(w) for _, w in pairs))
+
+    def layers(self, text_set: str, language: str) -> dict[int, int]:
+        """For join_names's `layer` (S43): each entry id of a text set with the earliest layer that holds a text for
+        it, 0 the base game, 1 DLC 1, 2 DLC 2 (LEADS's order is the newest first), in any container. Numbers only."""
+        pairs = TEXT_SETS.get(text_set)
+        if pairs is None:
+            raise KeyError(text_set)
+        order = list(dict.fromkeys(int(w) for _, w in pairs))     # the set's wrappers, the newest layer first
+        out: dict[int, int] = {}
+        with self._lock:
+            db = self._conn()
+            for container, wrapper_id in pairs:
+                layer = len(order) - 1 - order.index(int(wrapper_id))
+                for (i,) in db.execute("SELECT entry_id FROM entries WHERE container = ? AND language = ? AND "
+                                       "wrapper_id = ?", (container, language, int(wrapper_id))).fetchall():
+                    i = int(i)
+                    if i not in out or layer < out[i]:
+                        out[i] = layer
+        return out
 
     def names(self, text_set: str, language: str) -> dict[int, str]:
         """Local only: for write_local, never for a share file. The first text for an id wins, in TEXT_SETS's

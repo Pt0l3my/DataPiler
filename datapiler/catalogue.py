@@ -32,22 +32,23 @@ PLACE_NAME_CONTAINERS: tuple[str, ...] = CHARACTER_NAME_CONTAINERS
 COUNTS = "workspace+counts"
 
 _EXPORT_STEPS = (
-    "In Smithbox, open the Text Editor, showing the language set in DataPiler's Settings",
-    "Choose the container `%s`",
-    "On the Data Transfer tab, set the export directory to <WORKSPACE>\\inbox (once)",
-    "Export Text, then Export Selected Container",
+    "In Smithbox, open the Text Editor; in the Container List, open the language set in DataPiler's Settings "
+    "(English for engus)",
+    "Choose its Item container: Smithbox 2.2.6 shows one, whose source file is `%s` and which holds the base game, "
+    "DLC 1 and DLC 2",
+    "In Tools > Data Transfer > Export, set the Export Directory to <WORKSPACE>\\inbox (Smithbox forgets it when it "
+    "restarts) and leave Export Filename empty",
+    "Press Export Selected Container under Actions; the row is done once one of %s arrives",
 )
 
 
 def _steps(containers: tuple[str, ...]) -> tuple[str, ...]:
+    """One export suffices (S42): any one of the containers, the newest first, ends the row's wait."""
     if not containers:
         return ("The text container that holds these names is not confirmed yet, so this row cannot run in 0.1",)
-    steps = [_EXPORT_STEPS[0], _EXPORT_STEPS[1] % containers[0], _EXPORT_STEPS[2], _EXPORT_STEPS[3]]
-    if len(containers) > 1:
-        rest = ["`%s`" % c for c in containers[1:]]
-        steps.append("Repeat steps 2 and 4 for %s" % (" and ".join(rest) if len(rest) <= 2 else
-                                                       ", ".join(rest[:-1]) + " and " + rest[-1]))
-    return tuple(steps)
+    newest = containers[-1]
+    listed = ", ".join("`%s`" % c for c in reversed(containers))
+    return (_EXPORT_STEPS[0], _EXPORT_STEPS[1] % newest, _EXPORT_STEPS[2], _EXPORT_STEPS[3] % listed)
 
 
 ROWS: tuple[Row, ...] = (

@@ -616,7 +616,8 @@ class Runner:
                 st.entries += entries if isinstance(entries, int) and not isinstance(entries, bool) else 0
                 done = len(r.containers) - len(st.waiting_for)
                 st.progress = {"done": done, "of": len(r.containers), "unit": "containers"}
-                if not st.waiting_for:
+                if not st.waiting_for or done >= 1:      # one export suffices (S42): any of its containers
+                    st.waiting_for.clear()
                     st.state = "done"
                     st.progress = None
                     st.result = {"count": st.entries, "unit": "entries", "secs": round(time.time() - st.started, 1)}
@@ -1115,8 +1116,10 @@ class Runner:
                      own(jobs._and([str(w) for w in wrappers])), logbook.n(resolved), logbook.n(len(numbers)),
                      logbook.n(resolved * 100 // len(numbers)))
         names = self.textdb.names(text, lang)
-        out = [tuple(r) + (r[k] in ids, names.get(r[k]) if r[k] in ids else None) for r in rows]
-        ctx.tables[o["as"]] = (list(cols) + [("named", "bool"), ("name", "text_local")], out)
+        layers = self.textdb.layers(text, lang)
+        out = [tuple(r) + (r[k] in ids, layers.get(r[k], -1) if r[k] in ids else -1,
+                           names.get(r[k]) if r[k] in ids else None) for r in rows]
+        ctx.tables[o["as"]] = (list(cols) + list(jobs.JOIN_COLUMNS), out)
         return len(out), len(rows)
 
     def _count(self, ctx: _Ctx, o: dict) -> tuple[int, int | None]:

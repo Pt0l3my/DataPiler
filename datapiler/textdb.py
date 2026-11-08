@@ -271,6 +271,25 @@ class TextDB:
             raise KeyError(text_set)
         return list(dict.fromkeys(int(w) for _, w in pairs))
 
+    def layers(self, text_set: str, language: str) -> dict[int, int]:
+        """For join_names's `layer` (S43): each entry id of a text set with the earliest layer that holds a text for
+        it, 0 the base game, 1 DLC 1, 2 DLC 2 (LEADS's order is the newest first), in any container. Numbers only."""
+        pairs = TEXT_SETS.get(text_set)
+        if pairs is None:
+            raise KeyError(text_set)
+        order = list(dict.fromkeys(int(w) for _, w in pairs))     # the set's wrappers, the newest layer first
+        out: dict[int, int] = {}
+        with self._lock:
+            db = self._conn()
+            for container, wrapper_id in pairs:
+                layer = len(order) - 1 - order.index(int(wrapper_id))
+                for (i,) in db.execute("SELECT entry_id FROM entries WHERE container = ? AND language = ? AND "
+                                       "wrapper_id = ?", (container, language, int(wrapper_id))).fetchall():
+                    i = int(i)
+                    if i not in out or layer < out[i]:
+                        out[i] = layer
+        return out
+
     def names(self, text_set: str, language: str) -> dict[int, str]:
         """Local only: for write_local, never for a share file. The first text for an id wins, in TEXT_SETS's
         order (the live container and the newest layer first)."""

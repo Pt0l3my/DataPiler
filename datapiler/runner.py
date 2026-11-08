@@ -1116,8 +1116,10 @@ class Runner:
                      own(jobs._and([str(w) for w in wrappers])), logbook.n(resolved), logbook.n(len(numbers)),
                      logbook.n(resolved * 100 // len(numbers)))
         names = self.textdb.names(text, lang)
-        out = [tuple(r) + (r[k] in ids, names.get(r[k]) if r[k] in ids else None) for r in rows]
-        ctx.tables[o["as"]] = (list(cols) + [("named", "bool"), ("name", "text_local")], out)
+        layers = self.textdb.layers(text, lang)
+        out = [tuple(r) + (r[k] in ids, layers.get(r[k], -1) if r[k] in ids else -1,
+                           names.get(r[k]) if r[k] in ids else None) for r in rows]
+        ctx.tables[o["as"]] = (list(cols) + list(jobs.JOIN_COLUMNS), out)
         return len(out), len(rows)
 
     def _count(self, ctx: _Ctx, o: dict) -> tuple[int, int | None]:

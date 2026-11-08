@@ -4,6 +4,12 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 `v<version>`.
 
 
+
+## 0.2.2 - 2026-11-08
+
+- `join_names` also makes `layer`: the earliest layer of the imported text that holds the name, 0 the base game, 1
+  DLC 1, 2 DLC 2, -1 when no name is found (S43). A number, so a count by it is a summary, and a named table keeps it
+  beside its ids.
 ## 0.2.1 - 2026-11-08
 
 - The Imported tab (DP16, the owner's request): the text containers in the text database, with their language,

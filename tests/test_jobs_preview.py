@@ -70,7 +70,8 @@ class PreviewTest(unittest.TestCase):
     def test_the_columns_of_every_table(self):
         cols = jobs.columns_of(load("good-example.json"))
         self.assertEqual(cols["npc_named"], [("id", "int"), ("nameId", "int"), ("teamType", "int"),
-                                             ("npcType", "int"), ("named", "bool"), ("name", "text_local")])
+                                             ("npcType", "int"), ("named", "bool"), ("layer", "int"),
+                                          ("name", "text_local")])
         self.assertEqual(cols["per_team"], [("teamType", "int"), ("count", "int")])
 
 

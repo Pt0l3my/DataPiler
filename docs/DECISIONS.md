@@ -10,7 +10,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 
 - **2026-11-08.** DP1 (what DataPiler is), DP2 (its name), DP3 (a public repository of its own), DP4 (the Smithbox
   server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
-  (Jobrunner's code copied).
+  (Jobrunner's code copied). DP8 (what a share file may hold).
 - **Open.** None.
 
 ## DP1
@@ -115,3 +115,25 @@ written afresh from the design?
 name and version), under DataPiler's MIT licence, with the README line.
 
 **Owner's words.** "Copy it (Recommended)".
+
+## DP8
+
+**What a share file may hold** · *2026-11-08 · Decided by the owner, as recommended*
+
+**Question.** The build's review found that a job could put a whole column of the game's character table (every row's
+id and name number) into a share file, against the rule that no whole table or column of the game's data leaves the
+PC. What may share files hold? **Options:** (a) **only what a feature needs**: ids and numbers only for rows a job has
+picked for a purpose (the named characters, matched with their names on the owner's PC, or an explicit list of ids),
+never a raw table or column straight from Smithbox, and the guard refuses a table that covers more than half of a game
+table's rows; (b) **counts only**: counts and summaries, never ids; (c) **whole columns allowed**, since ids and
+numbers are not text.
+
+**Decision.** (a). A share file holds ids and numbers only for rows a job picked for a purpose; a table made straight
+from `fetch_rows` or `read_placements`, or by a filter of one, never reaches `write_share` unless it was narrowed by
+`join_names` to the named rows or by an explicit list of ids; and the guard gains a sixth check, refusing any table
+that covers more than half of a game table's rows. The leads it allows go to a numbers-only research file in EldenNet
+(EldenNet O59).
+
+**Owner's words.** "Only what a feature needs (Recommended)".
+
+**Follows from.** Request 0001's rules; CLAUDE.md, Game data; EldenNet ER08 §7 item 3.

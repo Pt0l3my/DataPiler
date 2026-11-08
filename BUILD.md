@@ -53,7 +53,9 @@ parts of the MinGW-w64 runtime are inside it; the workflow copies their licence 
 source at the tag as `git archive` makes it, with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it (it
 checks the exe in the zip against the exe's sha256), and its `.sha256`. It attaches `DataPiler.exe`,
 `DataPiler.exe.sha256`, `THIRD-PARTY-NOTICES.txt`, the zip and the zip's sha256 to a **draft** release for that tag;
-publishing it stays the owner's act. Anyone can read the workflow's log and see the exe was made from the source at
+publishing it stays the owner's act. The release's notes are `docs/release-notes/<version>.md` at that commit, with a
+short list of the files added; the workflow fails if that file is missing, so each version's notes are written before
+its release. Anyone can read the workflow's log and see the exe was made from the source at
 that tag.
 
 ## Comparing a release's exe with your own build

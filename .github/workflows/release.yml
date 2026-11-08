@@ -139,4 +139,7 @@ jobs:
         run: |
           app="DataPiler-${TAG#v}"
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then where="--verify-tag"; else where="--target=$GITHUB_SHA"; fi
-          gh release create "$TAG" DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft "$where" --title "DataPiler ${TAG#v}" --notes "$app.zip is the whole app: the source at this tag, as git archive makes it, with DataPiler.exe and THIRD-PARTY-NOTICES.txt placed in it; $app.zip.sha256 holds its sha256. Unpack it anywhere and start DataPiler.exe. DataPiler.exe, built by the release workflow from launcher-src/ at this tag, is attached on its own too, with DataPiler.exe.sha256; BUILD.md says how to compare it with your own build. THIRD-PARTY-NOTICES.txt holds the notices of the MinGW-w64 runtime parts linked into the exe (NOTICE, section 4)."
+          notes="src/docs/release-notes/${TAG#v}.md"
+          if [ ! -s "$notes" ]; then echo "::error::no release notes at docs/release-notes/${TAG#v}.md"; exit 1; fi
+          { tr -d '\r' < "$notes"; printf '\n**Files**\n- `%s.zip`: the whole app, the source at this commit with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it; `%s.zip.sha256` holds its sha256.\n- `DataPiler.exe` and `DataPiler.exe.sha256`: the launcher, built by this workflow from `launcher-src/` at this commit; BUILD.md says how to compare it with your own build.\n- `THIRD-PARTY-NOTICES.txt`: the notices of the MinGW-w64 runtime parts linked into the exe.\n' "$app" "$app"; } > notes.md
+          gh release create "$TAG" DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft "$where" --title "DataPiler ${TAG#v}" --notes-file notes.md

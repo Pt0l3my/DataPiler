@@ -51,6 +51,44 @@ class MaskingTest(unittest.TestCase):
         self.assertEqual(self.m("c:/games/steam/STEAMAPPS/common/elden ring/game/x"), "<GAME>/x")
         self.assertEqual(self.m("C:\\Games/Steam\\steamapps/common\\ELDEN RING/Game"), "<GAME>")
 
+    def test_learn_found(self):
+        """Detect's candidates as <FOUND>, after the named folders, for the session; a drive alone never."""
+        found = "C:\\Old\\Smithbox-1.0"
+        self.assertEqual(self.m(found + "\\x.exe"), found + "\\x.exe")
+        logbook.learn_found([found, "C:\\", "relative\\folder", 5, GAME + "\\mod", GAME])
+        self.assertEqual(self.m(found + "\\x.exe"), "<FOUND>\\x.exe")
+        self.assertEqual(self.m("c:/old/smithbox-1.0"), "<FOUND>")
+        self.assertEqual(self.m(GAME + "\\regulation.bin"), "<GAME>\\regulation.bin")    # the named one first
+        self.assertEqual(self.m(GAME + "\\mod\\a"), "<GAME>\\mod\\a")
+        self.assertEqual(self.m("C:\\Other"), "C:\\Other")                              # not the drive
+        self.assertEqual(self.m("relative\\folder"), "relative\\folder")
+        # kept when the named folders change (settings.saved), never saved anywhere
+        logbook.set_masks(folders={"<GAME>": GAME}, home=None, user=None, pc=None)
+        self.assertEqual(self.m(found), "<FOUND>")
+        logbook.get("app").info("a line about %s", logbook.own(found + "\\x"))
+        lines, _ = logbook.lines_after(self.seq)
+        self.assertEqual(lines[-1]["msg"], "a line about <FOUND>\\x")
+
+    def test_a_folder_ends_where_its_name_ends(self):
+        """Found by the correctness review (C6): a folder's mask also matched any longer name that began with it."""
+        self.assertEqual(self.m("C:\\Tools\\Smithbox-old\\x"), "C:\\Tools\\Smithbox-old\\x")
+        self.assertEqual(self.m("C:\\Tools\\Smithbox2\\x"), "C:\\Tools\\Smithbox2\\x")
+        self.assertEqual(self.m("C:\\Tools\\Smithbox.old"), "C:\\Tools\\Smithbox.old")
+        self.assertEqual(self.m(HOME + "Two\\Mods"), HOME + "Two\\Mods")
+        self.assertEqual(self.m(HOME + " Smith\\Mods"), HOME + " Smith\\Mods")
+        # where a sentence, a quotation or a list goes on, the folder still ends
+        for tail in ("", " - x", ".", ". Next", "'", '"', ")", ";", ",", ": x", "\\", "/"):
+            with self.subTest(tail=tail):
+                self.assertEqual(self.m("C:\\Tools\\Smithbox" + tail), "<SMITHBOX>" + tail)
+                if not tail.startswith(" "):                # the home folder never ends before a space
+                    self.assertEqual(self.m(HOME + tail), "<HOME>" + tail)
+        self.assertEqual(self.m("'C:\\\\Tools\\\\Smithbox'"), "'<SMITHBOX>'")      # an exception's repr
+        # a sibling that only adds words is its own once known, before the named folder it starts with
+        sibling = "C:\\Tools\\Smithbox 2.2.6 2026-11-01"
+        logbook.learn_found([sibling])
+        self.assertEqual(self.m(sibling + "\\Smithbox.Vulkan.exe"), "<FOUND>\\Smithbox.Vulkan.exe")
+        self.assertEqual(self.m("C:\\Tools\\Smithbox\\Smithbox.exe"), "<SMITHBOX>\\Smithbox.exe")
+
     def test_short_form(self):
         self.assertEqual(self.m("C:\\Games\\Steam\\STEAMA~1\\common\\ELDENR~1\\Game\\eldenring.exe"),
                          "<GAME>\\eldenring.exe")

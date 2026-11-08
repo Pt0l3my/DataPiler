@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
 
+import datapiler
 from datapiler import api, events, logbook, paths, settings, winapi
 from datapiler.api import Api, Live
 from datapiler.logbook import own
@@ -218,14 +219,18 @@ class FakeBackend(winapi.PortableBackend):
         return None
 
 
-class ApiTest(unittest.TestCase):
+class ApiBase(unittest.TestCase):
+    """The fixture: DataPiler's folder, the game's and the project's folders outside it, the fakes."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        self.game = self.root / "Game"
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "DataPiler"         # DataPiler's own folder: the project is outside it (S32)
+        self.root.mkdir()
+        self.game = self.base / "Game"
         self.game.mkdir()
         (self.game / "eldenring.exe").write_bytes(b"")
-        self.project = self.root / "Project"
+        self.project = self.base / "Project"
         self.project.mkdir()
         cfg = Settings(game_dir=str(self.game), project_dir=str(self.project))
         p = paths.resolve(self.root, cfg.workspace_dir, cfg.share_dir)
@@ -261,12 +266,14 @@ class ApiTest(unittest.TestCase):
         code, answer, after = self.api.post(path, body)
         return code, json.loads(json.dumps(answer)), after
 
+
+class ApiTest(ApiBase):
     # ------------------------------------------------------------------------------------ GET
 
     def test_state_shape(self):
         s = self.get("/api/state")
         self.assertEqual(set(s), {"version", "pills", "block", "status", "extract", "jobs", "outputs_rev", "session"})
-        self.assertEqual(s["version"], "0.1.0")
+        self.assertEqual(s["version"], datapiler.VERSION)
         self.assertEqual(set(s["pills"]), {"smithbox", "game", "link"})
         self.assertEqual(set(s["status"]), {"smithbox", "game", "project", "link"})
         self.assertEqual(s["extract"]["inbox"], [{"file": "export.json", "reason": "not a Smithbox text export"}])
@@ -339,10 +346,10 @@ class ApiTest(unittest.TestCase):
 
     def test_settings_get(self):
         r = self.get("/api/settings")
-        self.assertEqual(set(r), {"settings", "server", "session"})
+        self.assertEqual(set(r), {"settings", "server", "session", "folders", "expansion", "shown"})
         self.assertEqual(r["server"], "127.0.0.1:22720")
         self.assertEqual(r["session"], {"link": False, "debug": False})
-        self.assertEqual(set(r["settings"]), set(settings.KEYS))
+        self.assertEqual(set(r["settings"]), set(settings.KEYS) - {"recent"})     # recent is in folders (§6)
 
     def test_unknown(self):
         self.assertEqual(self.api.get("/api/none", {})[0], 404)
@@ -368,9 +375,9 @@ class ApiTest(unittest.TestCase):
     def test_a_new_project_folder_is_confirmed_again(self):
         self.post("/api/link", {"on": True, "confirm_project": True})
         self.assertTrue(self.live.session.project_confirmed)
-        other = self.root / "Project2"
+        other = self.base / "Project2"
         other.mkdir()
-        new = self.live.settings.as_dict()
+        new = self.get("/api/settings")["settings"]
         new["project_dir"] = str(other)
         code, r, _ = self.post("/api/settings", {"settings": new})
         self.assertEqual(code, 200, r)
@@ -541,7 +548,7 @@ class ApiTest(unittest.TestCase):
         self.assertIsNone(self.b.clipboard)
 
     def test_settings_post(self):
-        new = self.live.settings.as_dict()
+        new = self.get("/api/settings")["settings"]
         new["port"] = 8831
         seen = []
         unsub = events.subscribe("settings.saved", lambda t, d: seen.append(t))
@@ -567,7 +574,7 @@ class ApiTest(unittest.TestCase):
         runner and Outputs moved to the new one at once."""
         p = self.live.paths
         old_ws = p.workspace
-        new = dict(self.live.settings.as_dict(), workspace_dir="ws2")
+        new = dict(self.get("/api/settings")["settings"], workspace_dir="ws2")
         self.runner.busy_with = {"kind": "job", "id": JOB_ID, "title": "t"}         # no longer refused while busy
         code, r, _ = self.post("/api/settings", {"settings": new})
         self.assertEqual(code, 200, r)
@@ -624,6 +631,289 @@ class ApiTest(unittest.TestCase):
         for ok in ("<WORKSPACE>\\inbox", "Page: http://127.0.0.1:8831/", "zorblaxian", "08:42:01.123",
                    "NpcParam: 2,105 rows read in 0.4 s", "quentin_rigs", "xquentin-rig"):
             self.assertFalse(api.owner_hit(ok, words), ok)
+
+
+class FakeUpdater:
+    """UPDATE's Updater as the three routes see it (build plan 0.2 §3.3)."""
+
+    def __init__(self):
+        self.posts = []
+        self.closed = False
+
+    def get(self):
+        return {"state": "idle", "this": datapiler.VERSION}
+
+    def result(self):
+        return {"state": None}
+
+    def post(self, body):
+        self.posts.append(body)
+        if body.get("action") == "install":
+            return 200, {"ok": True, "state": "restarting", "to": "9.9.9"}, self.close
+        return 400, {"error": "not now"}, None
+
+    def close(self):
+        self.closed = True
+
+
+class FakeFolders:
+    def __init__(self):
+        from datapiler import detect
+        self.detect_mod = detect
+        self.cands = {}
+        self.asked = []
+        self.closed = False
+
+    def found(self, want):
+        return list(self.cands.get(want, []))
+
+    def notes(self, want):
+        return ["Smithbox is not running, so its folder cannot be read - start Smithbox, then Detect again"] \
+            if want == "smithbox" else []
+
+    def detect(self, want):
+        self.asked.append(want)
+        return self.found(want)
+
+    def close(self):
+        self.closed = True
+
+
+class FoldersApiTest(ApiBase):
+    """Build plan 0.2 §6: the folder endpoints, the update routes and the mask."""
+
+    def setUp(self):
+        super().setUp()
+        from datapiler import detect
+        self.detect = detect
+        self.folders = FakeFolders()
+        self.updates = FakeUpdater()
+        self.api.close()
+        self.api = Api(live=self.live, status=self.status, link=self.link, runner=self.runner, textdb=self.textdb,
+                       guard=self.guard, inbox=FakeInbox(), catalogue=FakeCatalogue(),
+                       stop=lambda: self.stops.append(1), libs=True, updates=self.updates, folders=self.folders)
+        self.sb = self.base / "Tools" / "Smithbox"
+        self.sb.mkdir(parents=True)
+        (self.sb / "Smithbox.Vulkan.exe").write_bytes(b"")
+
+    def cand(self, value, *sources, name=None, marked=False, detail=None):
+        return self.detect.Candidate(str(value), tuple(sources), name, marked, detail)
+
+    def bad(self, path, body):
+        """A 400: an answer the API gives, or a Bad the server answers as 400 {"error"}."""
+        try:
+            code, r, _ = self.post(path, body)
+        except Bad as e:
+            return {"error": str(e)}
+        self.assertEqual(code, 400, (path, body, r))
+        return r
+
+    def test_the_update_routes_forward_and_answer_404_without_an_updater(self):
+        self.assertEqual(self.get("/api/update"), {"state": "idle", "this": datapiler.VERSION})
+        self.assertEqual(self.get("/api/update-result"), {"state": None})
+        code, r, after = self.post("/api/update", {"action": "install"})
+        self.assertEqual((code, r), (200, {"ok": True, "state": "restarting", "to": "9.9.9"}))
+        self.assertIsNotNone(after)
+        self.assertEqual(self.post("/api/update", {"action": "check", "fresh": False})[:2],
+                         (400, {"error": "not now"}))
+        self.assertEqual(self.updates.posts, [{"action": "install"}, {"action": "check", "fresh": False}])
+        bare = Api(live=self.live, status=self.status, link=self.link, runner=self.runner, textdb=self.textdb,
+                   guard=self.guard, inbox=FakeInbox(), catalogue=FakeCatalogue(), stop=lambda: None, libs=True)
+        self.assertEqual(bare.get("/api/update", {})[0], 404)
+        self.assertEqual(bare.get("/api/update-result", {})[0], 404)
+        self.assertEqual(bare.post("/api/update", {"action": "check"})[0], 404)
+        bare.close()
+        self.api.close()
+        self.assertTrue(self.updates.closed and self.folders.closed)
+
+    def test_settings_view(self):
+        old = self.base / "Old" / "Smithbox"
+        self.live.settings = settings.with_values(self.live.settings, smithbox_dir=str(self.sb),
+                                                  recent={"smithbox_dir": (str(old),), "game_dir": (),
+                                                          "project_dir": ()})
+        self.folders.cands = {"smithbox": [self.cand(self.sb, "running_smithbox")],
+                              "expansion": [self.cand("yes", "steam_manifest", detail=own("DLC app 9000020 installed"))]}
+        r = self.get("/api/settings")
+        f = r["folders"]["smithbox_dir"]
+        self.assertEqual(f["shown"], str(self.sb))
+        self.assertEqual(f["check"], {"ok": True, "text": "Smithbox.Vulkan.exe is here · build not read", "mark": True})
+        self.assertEqual(f["found"], [{"path": str(self.sb), "shown": str(self.sb), "sources": ["running_smithbox"],
+                                       "tags": ["the running Smithbox"], "in_use": True, "check": f["check"]}])
+        self.assertEqual(f["recent"], [{"path": str(old), "shown": str(old)}])
+        self.assertTrue(f["notes"])
+        self.assertEqual(r["folders"]["game_dir"]["check"]["text"], "eldenring.exe is here · version not read")
+        self.assertEqual(r["expansion"]["found"], [{"value": "yes", "sources": ["steam_manifest"],
+                                                     "tags": ["Steam's app manifest"], "in_use": False,
+                                                     "detail": "DLC app 9000020 installed"}])
+        self.assertEqual(r["shown"], {"workspace_dir": "workspace", "share_dir": "share"})
+        self.assertNotIn("recent", r["settings"])
+        self.assertFalse(r["settings"]["mask_paths"])
+
+    def test_settings_post_lays_its_keys_over_and_refuses_recent(self):
+        code, r, _ = self.post("/api/settings", {"settings": {"port": 8832}})
+        self.assertEqual(code, 200, r)
+        self.assertEqual((self.live.settings.port, self.live.settings.game_dir), (8832, str(self.game)))
+        r = self.bad("/api/settings", {"settings": {"recent": {"game_dir": []}}})
+        self.assertEqual(r, {"error": "not a setting the page sets", "field": "recent"})
+        self.assertEqual(self.bad("/api/settings", {"settings": {}, "extra": 1})["error"], "not a key this request takes")
+        # the project rules, whatever the page does (S32)
+        r = self.bad("/api/settings", {"settings": {"project_dir": str(self.base)}})
+        self.assertEqual(r["field"], "project_dir")
+        r = self.bad("/api/settings", {"settings": {"project_dir": str(self.root / "p")}})
+        self.assertIn("DataPiler's folder", r["error"])
+
+    def test_settings_one(self):
+        seen = []
+        unsub = events.subscribe("settings.saved", lambda t, d: seen.append(t))
+        try:
+            self.live.session.project_confirmed = True
+            other = self.base / "Other project"
+            other.mkdir()
+            code, r, _ = self.post("/api/settings/one", {"key": "project_dir", "value": str(other)})
+            self.assertEqual((code, r), (200, {"ok": True}))
+            self.assertEqual(self.live.settings.project_dir, str(other.resolve()))
+            self.assertFalse(self.live.session.project_confirmed)   # asked again, as Save does
+            self.assertEqual(self.live.settings.recent["project_dir"], (str(other.resolve()), str(self.project)))
+            saved = json.loads((self.root / "settings.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["project_dir"], str(other.resolve()))
+            self.assertEqual(seen, ["settings.saved"])
+        finally:
+            unsub()
+        # a ✗ check refuses with its words; a ! saves
+        r = self.bad("/api/settings/one", {"key": "game_dir", "value": str(self.project)})
+        self.assertEqual(r, {"error": "no eldenring.exe here - the game's folder is the Game folder inside ELDEN RING",
+                             "field": "game_dir"})
+        r = self.bad("/api/settings/one", {"key": "project_dir", "value": str(self.game / "mod")})
+        self.assertEqual(r["field"], "project_dir")
+        self.assertEqual(self.post("/api/settings/one", {"key": "smithbox_dir", "value": str(self.base / "x")})[0], 200)
+        self.assertEqual(self.post("/api/settings/one", {"key": "smithbox_dir", "value": ""})[0], 200)
+        self.assertEqual(self.post("/api/settings/one", {"key": "expansion", "value": "yes"})[0], 200)
+        self.assertEqual(self.live.settings.expansion, "yes")
+        self.assertEqual(self.post("/api/settings/one", {"key": "mask_paths", "value": True})[0], 200)
+        self.assertTrue(self.live.settings.mask_paths)
+        for body in ({"key": "recent", "value": []}, {"key": "port", "value": 1}, {"key": "expansion", "value": "x"},
+                     {"key": "mask_paths", "value": "yes"}, {"key": "game_dir", "value": 5},
+                     {"key": "game_dir", "value": "C:\\x\x07"}, {"key": "game_dir", "value": "C:\\" + "x" * 1100},
+                     {"key": "game_dir", "value": "", "more": 1}):
+            with self.subTest(body=body):
+                self.bad("/api/settings/one", body)
+
+    def test_a_link_is_saved_as_the_folder_it_resolves_to(self):
+        target = self.base / "Real project"
+        target.mkdir()
+        link = self.base / "Project link"
+        try:
+            os.symlink(str(target), str(link), target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("this system makes no symlinks here")
+        self.assertEqual(self.post("/api/settings/one", {"key": "project_dir", "value": str(link)})[0], 200)
+        self.assertEqual(self.live.settings.project_dir, str(target.resolve()))
+        # a typed path is saved as typed (S34)
+        new = dict(self.get("/api/settings")["settings"], project_dir=str(link))
+        self.assertEqual(self.post("/api/settings", {"settings": new})[0], 200)
+        self.assertEqual(self.live.settings.project_dir, str(link))
+
+    def test_detect(self):
+        self.folders.cands = {"game": [self.cand(self.game, "smithbox_record", "steam_library", name="Mine",
+                                                 marked=True)]}
+        code, r, _ = self.post("/api/detect", {"want": "game"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.folders.asked, ["game"])
+        self.assertEqual(r["want"], "game")
+        self.assertEqual(r["found"][0]["tags"], ["Smithbox's project record, marked to open",
+                                                 "Steam's library list agrees"])
+        self.assertEqual((r["found"][0]["name"], r["found"][0]["marked"], r["found"][0]["in_use"]), ("Mine", True, True))
+        self.assertEqual(r["notes"], [])
+        for body in ({"want": "everything"}, {}, {"want": "game", "x": 1}):
+            self.bad("/api/detect", body)
+
+    def test_dirs_endpoints(self):
+        got = self.post("/api/dirs", {"path": str(self.base), "want": "game"})[1]
+        self.assertIn("Game", [d["name"] for d in got["dirs"]])
+        self.assertEqual(self.post("/api/dirs", {"path": "", "want": "game"})[1]["shown"], "This PC")
+        self.assertEqual(self.post("/api/dirs", {"path": "\\\\server\\share", "want": "game"})[1],
+                         {"refused": "network paths can be typed in the field, not browsed"})
+        r = self.post("/api/dirs/check", {"want": "project", "path": str(self.project)})[1]
+        self.assertEqual(r, {"ok": True, "text": "outside the game's folder", "mark": False})
+        r = self.post("/api/dirs/new", {"parent": str(self.base), "name": "ER project", "want": "project"})[1]
+        self.assertEqual(r, {"path": str(self.base / "ER project"), "shown": str(self.base / "ER project")})
+        self.assertIn("refused", self.post("/api/dirs/new", {"parent": str(self.game), "name": "m", "want": "project"})[1])
+        for path, body in (("/api/dirs", {"path": 5, "want": "game"}), ("/api/dirs", {"path": "", "want": "x"}),
+                           ("/api/dirs", {"path": "", "want": "game", "extra": 1}),
+                           ("/api/dirs", {"path": "C:\\" + "x" * 1100, "want": "game"}),
+                           ("/api/dirs", {"path": "C:\\a\nb", "want": "game"}),
+                           ("/api/dirs/new", {"parent": str(self.base), "name": "x", "want": "game"}),
+                           ("/api/dirs/check", {"want": "expansion", "path": ""}),
+                           ("/api/dirs/forget", {"key": "workspace_dir"})):
+            with self.subTest(path=path, body=body):
+                self.bad(path, body)
+
+    def test_forget(self):
+        self.live.settings = settings.with_values(self.live.settings, recent={"smithbox_dir": (str(self.sb),),
+                                                                              "game_dir": (str(self.game),),
+                                                                              "project_dir": ()})
+        self.assertEqual(self.post("/api/dirs/forget", {"key": "smithbox_dir"})[1], {"ok": True})
+        self.assertEqual(self.live.settings.recent["smithbox_dir"], ())
+        self.assertEqual(self.live.settings.recent["game_dir"], (str(self.game),))
+        saved = json.loads((self.root / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["recent"]["smithbox_dir"], [])
+
+    def test_with_the_mask_on_no_answer_shows_an_invented_real_folder(self):
+        """DP14 (S35): every path the page draws is the log's mask of it; Status's details too."""
+        api.set_masks(self.live)
+        found_only = self.base / "Found" / "Smithbox"
+        found_only.mkdir(parents=True)
+        (found_only / "Smithbox.exe").write_bytes(b"")
+        self.live.settings = settings.with_values(self.live.settings, smithbox_dir=str(self.sb), mask_paths=True,
+                                                  recent={"smithbox_dir": (str(self.base / "Old"),), "game_dir": (),
+                                                          "project_dir": ()})
+        api._learn_recent(self.live.settings)
+        api.set_masks(self.live)
+        logbook.learn_found([str(found_only)])
+        self.folders.cands = {"smithbox": [self.cand(found_only, "running_smithbox")],
+                              "project": [self.cand(self.project, "smithbox_record", name="Secret name")]}
+        real = str(self.base)
+
+        def shown_values(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k in ("shown", "detail", "name") and isinstance(v, str):
+                        yield v
+                    else:
+                        yield from shown_values(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    yield from shown_values(v)
+
+        answers = [self.get("/api/settings"), self.get("/api/state"),
+                   self.post("/api/detect", {"want": "project"})[1],
+                   self.post("/api/dirs", {"path": str(self.game), "want": "game"})[1]]
+        for a in answers:
+            for v in shown_values(a):
+                self.assertNotIn(real, v)
+        r = answers[0]
+        self.assertEqual(r["folders"]["smithbox_dir"]["shown"], "<SMITHBOX>")
+        self.assertEqual(r["folders"]["smithbox_dir"]["found"][0]["shown"], "<FOUND>")
+        self.assertEqual(r["folders"]["game_dir"]["shown"], "<GAME>")
+        self.assertEqual(r["folders"]["smithbox_dir"]["recent"][0]["shown"], "<FOUND>")
+        self.assertNotIn("name", answers[2]["found"][0])
+        self.assertEqual(answers[3]["crumbs"][0]["name"], "<GAME>")
+        self.assertEqual(r["shown"]["workspace_dir"], "workspace")
+        # the Status details masked; the real path stays beside it for Use only
+        details = [c["detail"] for card in answers[1]["status"].values() if isinstance(card, list) for c in card
+                   if c.get("detail")]
+        self.assertTrue(details)
+        self.assertTrue(all(real not in d for d in details))
+
+    def test_status_offers_one_found_folder_with_use(self):
+        """DP15: the Smithbox folder blank and one place found: Status says so and offers it."""
+        self.live.settings = settings.with_values(self.live.settings, smithbox_dir="")
+        self.folders.cands = {"smithbox": [self.cand(self.sb, "running_smithbox")]}
+        card = {c["id"]: c for c in self.get("/api/state")["status"]["smithbox"]}
+        self.assertEqual(card["installed"]["ok"], "warn")
+        self.assertEqual(card["installed"]["text"], "Found 1 place - confirm it in Settings")
+        self.assertEqual(card["installed"]["use"], {"key": "smithbox_dir", "path": str(self.sb), "shown": str(self.sb)})
+        self.assertEqual(self.live.settings.smithbox_dir, "")       # nothing saved by itself
 
 
 if __name__ == "__main__":

@@ -7,7 +7,11 @@ import _repo  # noqa: F401
 
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
+import zipfile
 
 WORKFLOWS = os.path.join(_repo.ROOT, ".github", "workflows")
 CHECKS = os.path.join(WORKFLOWS, "checks.yml")
@@ -349,6 +353,64 @@ class Release(unittest.TestCase):
         self.assertLess(order.index("One zip of the whole app, the tagged source with the exe placed in it"),
                         next(k for k, n in enumerate(order) if n.startswith("A draft release")))
 
+    def test_the_zip_carries_its_manifest_checked_by_the_helper(self):
+        """S28 (build plan 0.2 §4.11): the manifest written from the zip's own files after the exe and the notices
+        are in, added to the zip, checked with sha256sum, then the zip passed through the helper's --check-zip, all
+        before the zip's own sha256 is taken."""
+        text = runs(self.wf["jobs"]["release"])
+        order = [
+            'zip -X -q "../$app.zip" "DataPiler/DataPiler.exe" "DataPiler/THIRD-PARTY-NOTICES.txt"',
+            '(cd unpacked && unzip -q "../$app.zip")',
+            "python3 src/tools/manifest.py unpacked/DataPiler",
+            '(cd unpacked && zip -X -q "../$app.zip" DataPiler/manifest.sha256)',
+            "(cd unpacked/DataPiler && sha256sum -c --strict --quiet manifest.sha256)",
+            'unzip -l "$app.zip" | grep -q " DataPiler/update-helper.py$"',
+            'unzip -l "$app.zip" | grep -q " DataPiler/manifest.sha256$"',
+            'python3 src/update-helper.py --check-zip "$app.zip" --version "${TAG#v}"',
+            'sha256sum "$app.zip" | tee "$app.zip.sha256"',
+        ]
+        where = [text.find(part) for part in order]
+        self.assertNotIn(-1, where, [p for p, w in zip(order, where) if w < 0])
+        self.assertEqual(where, sorted(where))
+        self.assertIn("rm -rf unpacked && mkdir unpacked", text)
+        # the one-folder check (DP10) still holds after the manifest is added
+        self.assertGreater(text.rfind('cut -d / -f 1 | sort -u)" = "DataPiler"'), text.find("manifest.sha256)"))
+
+    def test_this_tree_as_a_release_passes_the_helpers_checks(self):
+        """A dry run of the zip steps on this working tree: its files under DataPiler/, the manifest written by
+        tools/manifest.py from the unpacked copy, and check_archive at this VERSION."""
+        git = shutil.which("git")
+        if not git or not os.path.isdir(os.path.join(_repo.ROOT, ".git")):
+            self.skipTest("not a git checkout")
+        done = subprocess.run([git, "-C", _repo.ROOT, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                              capture_output=True, timeout=60)
+        if done.returncode != 0:
+            self.skipTest("git ls-files did not run")
+        files = sorted({f for f in done.stdout.decode("utf-8").split("\0") if f
+                        and os.path.isfile(os.path.join(_repo.ROOT, f))})
+        from datapiler import VERSION, install
+        h = install.helper(install.APP)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("manifest_tool_wf", os.path.join(_repo.ROOT, "tools",
+                                                                                        "manifest.py"))
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = os.path.join(tmp, "unpacked", "DataPiler")
+            for f in files:
+                dst = os.path.join(stage, f)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copyfile(os.path.join(_repo.ROOT, f), dst)
+            self.assertGreater(tool.write(stage), 50)
+            z = os.path.join(tmp, "DataPiler-%s.zip" % VERSION)
+            with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in files + ["manifest.sha256"]:
+                    zf.write(os.path.join(stage, f), "DataPiler/" + f)
+            a = h.check_archive(z, version=VERSION)
+        self.assertEqual(a.version, VERSION)
+        self.assertIn("update-helper.py", a.manifest)
+        self.assertIn("requirements.lock", a.manifest)
+
     def test_github_values_reach_the_shell_through_the_environment(self):
         for job in self.wf["jobs"].values():
             for s in steps(job):
@@ -398,6 +460,26 @@ class Checks(unittest.TestCase):
         install = next(k for k, r in enumerate(order) if "pip install" in r)
         linked = [k for k, r in enumerate(order) if TEST_COMMAND in r and "venv" in r]
         self.assertTrue(linked and linked[0] > install)
+
+    def test_windows_renames_a_venv_made_as_venv_new(self):
+        """Build plan 0.2 §4.11 (P4): DataPiler.ps1 builds .venv.new and renames it .venv; the renamed venv's Python
+        must still import the link's libraries, and the tests run with it."""
+        win = self.jobs["tests-windows"]
+        text = runs(win)
+        made = text.index('python -m venv "${{ runner.temp }}\\dp\\.venv.new"')
+        pip = text.index('& "${{ runner.temp }}\\dp\\.venv.new\\Scripts\\python.exe" -m pip install')
+        renamed = text.index("Rename-Item -LiteralPath \"${{ runner.temp }}\\dp\\.venv.new\" -NewName '.venv' "
+                             "-ErrorAction Stop")
+        imported = text.index('& "${{ runner.temp }}\\dp\\.venv\\Scripts\\python.exe" -c "import grpc, '
+                              'google.protobuf"')
+        tests = text.index('& "${{ runner.temp }}\\dp\\.venv\\Scripts\\python.exe" ' + TEST_COMMAND)
+        self.assertLess(made, pip)
+        self.assertLess(pip, renamed)
+        self.assertLess(renamed, imported)
+        self.assertLess(imported, tests)
+        with open(PS1, encoding="ascii") as f:
+            ps1 = f.read()
+        self.assertIn("Rename-Item -LiteralPath $VenvNew -NewName '.venv' -ErrorAction Stop", ps1)
 
     def test_the_repository_check_runs(self):
         self.assertTrue(any("tools/repocheck.py" in runs(job) for job in self.jobs.values()))

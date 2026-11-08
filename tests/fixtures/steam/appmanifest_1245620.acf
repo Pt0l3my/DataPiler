@@ -1,0 +1,24 @@
+// Invented: an app manifest in Steam's shape, with two installed depots, one of them a DLC's.
+"AppState"
+{
+	"appid"		"1245620"
+	"Universe"		"1"
+	"name"		"An invented game"
+	"StateFlags"		"4"
+	"installdir"		"ELDEN RING"
+	"SizeOnDisk"		"50000000000"
+	"InstalledDepots"
+	{
+		"9000011"
+		{
+			"manifest"		"1000000000000000011"
+			"size"		"40000000000"
+		}
+		"9000021"
+		{
+			"manifest"		"1000000000000000021"
+			"size"		"10000000000"
+			"dlcappid"		"9000020"
+		}
+	}
+}

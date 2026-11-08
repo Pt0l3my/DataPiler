@@ -1,7 +1,8 @@
 # DataPiler.exe, built from launcher-src/ (settled S4; build plan P10), placed in one zip of the whole app: the
 # tagged source as `git archive` makes it, with the built exe and the toolchain's notices in it (settled S24). The
 # draft release carries the zip, its sha256 and the notices on their own too (DP9); the exe's sha256 is in this
-# workflow's log, so the owner downloads one file. Publishing the release stays the owner's act. It starts in either of two ways:
+# workflow's log, so the owner downloads one file. From 0.2.0 the zip holds DataPiler/manifest.sha256 too, checked here
+# with the update helper's own --check-zip (settled S28). Publishing the release stays the owner's act. It starts in either of two ways:
 # a version tag the owner pushes, or the owner's "Run workflow" button on GitHub's Actions page (settled S4's note),
 # which reads the version from datapiler/__init__.py and makes the draft for tag v<version>; GitHub creates that tag
 # when the owner publishes the draft.
@@ -156,6 +157,17 @@ jobs:
           # one folder, named without the version (DP10)
           test "$(unzip -Z1 "$app.zip" | cut -d / -f 1 | sort -u)" = "DataPiler"
           unzip -p "$app.zip" "DataPiler/DataPiler.exe" | sha256sum | cut -d " " -f 1 | grep -qx "$(cut -d " " -f 1 DataPiler.exe.sha256)"
+          # S28: every file's sha256 in DataPiler/manifest.sha256, written from the zip's own files, which the
+          # Update... button and its helper check before anything is unpacked (build plan 0.2 section 4.11)
+          rm -rf unpacked && mkdir unpacked
+          (cd unpacked && unzip -q "../$app.zip")
+          python3 src/tools/manifest.py unpacked/DataPiler
+          (cd unpacked && zip -X -q "../$app.zip" DataPiler/manifest.sha256)
+          (cd unpacked/DataPiler && sha256sum -c --strict --quiet manifest.sha256)
+          unzip -l "$app.zip" | grep -q " DataPiler/update-helper.py$"
+          unzip -l "$app.zip" | grep -q " DataPiler/manifest.sha256$"
+          python3 src/update-helper.py --check-zip "$app.zip" --version "${TAG#v}"
+          test "$(unzip -Z1 "$app.zip" | cut -d / -f 1 | sort -u)" = "DataPiler"
           sha256sum "$app.zip" | tee "$app.zip.sha256"
       - name: A draft release for the tag, with the exe, its sha256, the toolchain's notices and the app's zip
         env:

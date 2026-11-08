@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -26,6 +26,13 @@ FOLDER_MAX = 1024
 LANGUAGE_RX = re.compile(r"[a-z]{2,8}")
 EXPANSION = ("", "yes", "no")          # not stated yet, installed, not installed
 _CONTROL_RX = re.compile(r"[\x00-\x1f\x7f]")
+FOLDER_KEYS = ("smithbox_dir", "game_dir", "project_dir")
+RECENT_MAX = 5
+NOT_PAGE = "not a setting the page sets"          # recent: kept by the app, never sent by the page (S34)
+
+
+def _no_recent() -> dict:
+    return {k: () for k in FOLDER_KEYS}
 
 
 @dataclass(frozen=True)
@@ -40,9 +47,13 @@ class Settings:
     port: int = 0
     log_max_mb: int = 2
     log_keep: int = 5
+    mask_paths: bool = False            # DP14: the page draws the log's masks in place of paths (S35)
+    recent: dict = field(default_factory=_no_recent, compare=True, hash=False)   # key -> tuple, newest first
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["recent"] = {k: list(self.recent.get(k, ())) for k in FOLDER_KEYS}
+        return d
 
 
 KEYS = tuple(f.name for f in fields(Settings))
@@ -105,7 +116,8 @@ _LABEL = {
     "smithbox_dir": "the Smithbox folder", "game_dir": "the game folder", "project_dir": "the project folder",
     "workspace_dir": "the workspace", "share_dir": "the share folder", "language": "the text language",
     "port": "the page's port", "log_max_mb": "the log's size", "log_keep": "the number of log files kept",
-    "expansion": "whether the expansion is installed",
+    "expansion": "whether the expansion is installed", "mask_paths": "Mask paths on this page",
+    "recent": "the folders used before",
 }
 
 
@@ -156,12 +168,17 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
     vals["port"] = _int(raw, "port", d.port, 1024, 65535, zero=True)
     vals["log_max_mb"] = _int(raw, "log_max_mb", d.log_max_mb, 1, 50)
     vals["log_keep"] = _int(raw, "log_keep", d.log_keep, 2, 20)     # every file, datapiler.log among them
+    mask = raw.get("mask_paths", d.mask_paths)
+    if not isinstance(mask, bool):
+        raise SettingsError("mask_paths", "Mask paths on this page must be on or off")
+    vals["mask_paths"] = mask
+    vals["recent"] = _recent(raw.get("recent", None))
     s = Settings(**vals)  # type: ignore[arg-type]
 
     game, smithbox, project = s.game_dir, s.smithbox_dir, s.project_dir
-    if project and game:
-        if paths.is_inside(project, game):
-            raise SettingsError("project_dir", "the project folder must be outside the game's folder")
+    why = project_refusal(project, game, root)
+    if why is not None:
+        raise SettingsError("project_dir", why)
     workspace = _full(root, s.workspace_dir)
     share = _full(root, s.share_dir)
     # A full path on a mapped network drive. A relative workspace sits in DataPiler's own folder, wherever the owner
@@ -184,6 +201,79 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
     return s
 
 
+def project_refusal(project: str, game: str, root: Path) -> str | None:
+    """The project rules (S32), or None: not the game's folder nor inside it (design 0001), not a folder that holds
+    the game's folder, not DataPiler's folder nor inside it."""
+    if not project:
+        return None
+    if game:
+        if paths.is_inside(project, game):
+            return "the project folder must be outside the game's folder"
+        if paths.is_inside(game, project):
+            return "the project folder must not hold the game's folder"
+    if paths.is_inside(project, root):
+        return "the project folder must be outside DataPiler's folder"
+    return None
+
+
+def _recent(v: object) -> dict:
+    """recent as the app keeps it: three lists of at most five full folder paths, newest first, no repeats
+    (case-folded). A bad entry is dropped, never an error: the app writes it, the page never sets it."""
+    out = _no_recent()
+    if v is None:
+        return out
+    if not isinstance(v, Mapping):
+        raise SettingsError("recent", "the folders used before are not a list DataPiler wrote")
+    for k in FOLDER_KEYS:
+        items = v.get(k, ())
+        if not isinstance(items, (list, tuple)):
+            continue
+        kept: list[str] = []
+        seen: set[str] = set()
+        for x in items:
+            if not isinstance(x, str):
+                continue
+            x = x.strip()
+            if not x or len(x) > FOLDER_MAX or _CONTROL_RX.search(x) or not _absolute(x):
+                continue
+            folded = _fold(x)
+            if folded in seen:
+                continue
+            seen.add(folded)
+            kept.append(x)
+            if len(kept) >= RECENT_MAX:
+                break
+        out[k] = tuple(kept)
+    return out
+
+
+def _fold(p: str) -> str:
+    return p.replace("/", "\\").rstrip("\\").casefold()
+
+
+def with_recent(old: Settings, new: Settings) -> Settings:
+    """new, with each folder key whose value changed put at the front of its recent list (its old value kept behind
+    it, so a folder set before 0.2.0 is not lost), at most five, no repeats."""
+    rec = {k: tuple(v) for k, v in new.recent.items()}
+    for k in FOLDER_KEYS:
+        before, after = getattr(old, k), getattr(new, k)
+        if before == after:
+            continue
+        items = list(rec.get(k, ()))
+        for value in (before, after):          # the old value behind, then the new one at the front
+            if not value or not _absolute(value):
+                continue
+            items = [value] + [x for x in items if _fold(x) != _fold(value)]
+        rec[k] = tuple(items[:RECENT_MAX])
+    return replace(new, recent=rec)
+
+
+def forget_recent(s: Settings, key: str) -> Settings:
+    rec = {k: tuple(v) for k, v in s.recent.items()}
+    rec[key] = ()
+    return replace(s, recent=rec)
+
+
 def load(path: Path, *, root: Path | None = None) -> tuple[Settings, list[Own]]:
     """settings.json, or the defaults; the list says what was wrong (a missing file: nothing). A key that fails
     its check takes its default and is named in the list."""
@@ -201,6 +291,12 @@ def load(path: Path, *, root: Path | None = None) -> tuple[Settings, list[Own]]:
         return Settings(), [own("settings.json is not an object - the defaults are used")]
     problems: list[Own] = []
     raw = dict(raw)
+    # From 0.2.0 (S36): a key this version does not know is dropped with a line naming it, and the rest is checked,
+    # so a version rolled back to keeps the owner's folders.
+    for k in [k for k in raw if k not in KEYS and k != "format"]:
+        raw.pop(k)
+        name = k if isinstance(k, str) and re.fullmatch(r"[a-z_]{1,32}", k) else "(key)"
+        problems.append(own("settings.json: %s is not a setting this DataPiler knows - left out" % name))
     for _ in range(len(KEYS) + len(raw) + 2):
         try:
             return check(raw, root=root), problems

@@ -75,6 +75,36 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.httpd.server_address[0], "127.0.0.1")
         self.assertEqual(server.HOST, "127.0.0.1")
 
+    def test_a_port_in_use_is_refused_and_reuse_is_off_on_windows(self):
+        # SO_REUSEADDR off on Windows (it would let a second program bind the port there); elsewhere on, so the port
+        # of the page that asked for an update binds again past TIME_WAIT. A live listener's port is refused anyway.
+        self.assertEqual(server.Server.allow_reuse_address, sys.platform != "win32")
+        with self.assertRaises(OSError):
+            server.Server(self.port, server.App(EchoApi()))
+
+    @unittest.skipIf(sys.platform == "win32", "Windows binds past TIME_WAIT without the option: the owner's first "
+                                              "update shows it (build plan 0.2 §10 P4)")
+    def test_the_port_binds_again_after_a_stop_with_closed_connections(self):
+        app = server.App(EchoApi())
+        first = server.Server(0, app)
+        port = first.port
+        t = threading.Thread(target=first.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        t.start()
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", "/", headers={"Host": "127.0.0.1:%d" % port})
+            c.getresponse().read()
+        finally:
+            first.shutdown()
+            first.server_close()
+            t.join(5)
+        c.close()
+        again = server.Server(port, server.App(EchoApi()))
+        try:
+            self.assertEqual(again.port, port)
+        finally:
+            again.server_close()
+
     def test_wrong_host(self):
         r, _ = self.req("GET", "/api/state", host="example.invalid:%d" % self.port)
         self.assertEqual(r.status, 403)
@@ -288,6 +318,28 @@ class ErrorsStayOffTheWindow(unittest.TestCase):
         lines, _ = logbook.lines_after(before)
         self.assertEqual([(ln["src"], ln["level"], ln["msg"]) for ln in lines],
                          [("page", "ERROR", "a request failed: ValueError")])
+
+
+class AssembleTest(unittest.TestCase):
+    """Build plan 0.2 §3.2: the page's script and style from several files, in order; a missing file is an error."""
+
+    def test_several_files_in_order(self):
+        import tempfile
+        from pathlib import Path
+        self.assertEqual(server.PAGE_JS, ("app.js", "folders.js", "update.js"))
+        self.assertEqual(server.PAGE_CSS, ("app.css", "update.css"))
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d)
+            (f / "index.html").write_text("<style nonce=\"__NONCE__\">/*__CSS__*/</style>"
+                                          "<script nonce=\"__NONCE__\">/*__JS__*/</script>", encoding="utf-8")
+            for name in server.PAGE_JS + server.PAGE_CSS:
+                (f / name).write_text("/* %s */" % name, encoding="utf-8")
+            page = server.assemble("N", "T", f).decode("utf-8")
+            self.assertIn("/* app.js */\n/* folders.js */\n/* update.js */", page)
+            self.assertIn("/* app.css */\n/* update.css */", page)
+            (f / "folders.js").unlink()
+            with self.assertRaises(FileNotFoundError):
+                server.assemble("N", "T", f)
 
 
 if __name__ == "__main__":

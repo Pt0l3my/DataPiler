@@ -23,6 +23,10 @@ from . import NAME, logbook
 
 HOST = "127.0.0.1"
 PAGE_DIR = Path(__file__).resolve().parent / "page"
+# The page's script and style, each assembled from these files in this order (build plan 0.2 §3.2): app.js stays
+# top-level (the page's shared names); folders.js and update.js are each one IIFE.
+PAGE_JS = ("app.js", "folders.js", "update.js")
+PAGE_CSS = ("app.css", "update.css")
 TOKEN_HEADER = "X-DataPiler-Token"
 DROP_PATH = "/api/jobs/drop"
 DROP_MAX = 400 * 1024           # a 256 KB job in base64, and its name
@@ -72,11 +76,17 @@ class App:
         self.page = assemble(self.nonce, self.token)
 
 
+def _joined(folder: Path, names: tuple[str, ...]) -> str:
+    """The files joined with a newline, in order; a missing one raises OSError (FileNotFoundError)."""
+    return "\n".join((folder / name).read_text(encoding="utf-8") for name in names)
+
+
 def assemble(nonce: str, token: str, folder: Path = PAGE_DIR) -> bytes:
-    """index.html with app.css in its one <style nonce> and app.js in its one <script nonce>."""
+    """index.html with PAGE_CSS's files in its one <style nonce> and PAGE_JS's in its one <script nonce> (build plan
+    0.2 §3.2): each tuple's files joined with a newline, in order. A missing file is an error."""
     html = (folder / "index.html").read_text(encoding="utf-8")
-    css = (folder / "app.css").read_text(encoding="utf-8")
-    js = (folder / "app.js").read_text(encoding="utf-8")
+    css = _joined(folder, PAGE_CSS)
+    js = _joined(folder, PAGE_JS)
     page = html.replace("/*__CSS__*/", css).replace("/*__JS__*/", js)
     return page.replace("__NONCE__", nonce).replace("__TOKEN__", token).encode("utf-8")
 
@@ -300,7 +310,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
-    allow_reuse_address = False
+    # Never SO_REUSEADDR on Windows, where it would let another program bind the page's port beside this one. Elsewhere
+    # it only lets the port be bound again while the last run's closed connections wait out TIME_WAIT, as Windows
+    # allows without it: the port of the page that asked for an update (build plan 0.2 §4.8). A port another program
+    # listens on is refused either way.
+    allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, port: int, app: App):
         self.app = app

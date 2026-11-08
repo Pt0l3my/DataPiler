@@ -108,6 +108,24 @@ class LauncherCpp(unittest.TestCase):
         self.assertLess(body.index("if (Running())"), body.index("if (Starting())"))
         self.assertLess(body.index("if (Starting())"), body.index("CreateProcessW("))
 
+    def test_an_update_under_way_opens_nothing(self):
+        """Build plan 0.2 §4.10: while DataPiler's mutex or the window's is held and update/pending.json is there,
+        a start says "DataPiler is updating - see its window." and exits 0, opening nothing."""
+        self.assertIn('static bool Updating(const std::wstring& dir) { return IsFile(dir + L"\\\\update\\\\pending.json"); }',
+                      self.code)
+        notice = self.code[self.code.index("static int UpdatingNotice() {"):]
+        notice = notice[:notice.index("}") + 1]
+        self.assertIn('MessageBoxW(NULL, L"DataPiler is updating - see its window.", TITLE, MB_ICONINFORMATION);',
+                      notice)
+        self.assertIn("return 0;", notice)
+        body = self.code[self.code.index("int WINAPI wWinMain("):]
+        for branch in ("if (Running()) {", "if (Starting()) {"):
+            first = body[body.index(branch) + len(branch):].strip().splitlines()[0].strip()
+            self.assertEqual(first, "if (Updating(dir)) return UpdatingNotice();", branch)
+        self.assertLess(body.index("UpdatingNotice"), body.index("CreateProcessW("))
+        from datapiler import install
+        self.assertEqual(install.PENDING, "update/pending.json")
+
     def test_what_it_never_does(self):
         low = self.code.lower()
         for word in ("pythonw", "create_no_window", "socket", "connect(", "wsastartup", "winsock", "ws2_32",

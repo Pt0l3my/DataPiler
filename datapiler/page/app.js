@@ -8,10 +8,10 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&": 
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 const JOB_MAX = 256 * 1024;
 const TABS = ["status", "extract", "jobs", "outputs", "terminal", "settings"];
-const SOURCES = ["app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env"];
+const SOURCES = ["app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env", "update", "folders"];
 const ROW_UNIT = { rows: "rows", maps: "maps", entries: "entries" };
 
-let ST = null, CAT = null, GONE = false, FAILS = 0, TAB = "status";
+let ST = null, CAT = null, GONE = false, FAILS = 0, TAB = "status", HOLD = false, OV = null;
 let OUT_REV = -1, VIEW = null, SETTINGS = null;
 let PICK = new Set(), BUNDLE = null, LAST_ROWS = [];
 let JOBS_KEY = "", ROWS_KEY = "", CARDS_KEY = "";
@@ -68,6 +68,65 @@ function mark(ok) {
 }
 function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); return e; }
 
+// ---- the one overlay, for the folder picker and the Update... pop-up (build plan 0.2 section 3.2)
+// Opens the one overlay (a second call closes the first). Esc and its × close it; focus is kept inside while it is
+// open and returns to opts.opener (else the element that had focus) when it closes; onClose runs on every close.
+// Returns the parts to fill: box (.modal), body (.mb), foot (.mf); and close().
+function overlay(title, opts) {
+  opts = opts || {};
+  if (OV) OV.close();
+  const shade = $("ov");
+  const opener = opts.opener || document.activeElement;
+  clear(shade);
+  const box = el("div", "modal" + (opts.wide ? " wide" : ""));
+  const head = el("div", "mh"), t = el("span", "mt", title), x = el("button", "x", "×");
+  t.id = "ovTitle";
+  x.title = "Close (Esc)";
+  x.setAttribute("aria-label", "Close");
+  const body = el("div", "mb"), foot = el("div", "mf");
+  add(box, add(head, t, x), body, foot);
+  add(shade, box);
+  shade.classList.add("on");
+  let open = true;
+  const focusables = () => Array.prototype.filter.call(
+    box.querySelectorAll("button, input, select, textarea, a[href], [tabindex]"),
+    (e) => !e.disabled && e.tabIndex >= 0 && e.getClientRects().length > 0);
+  const first = () => { const f = focusables(); return f.find((e) => e !== x) || x; };
+  function onKey(e) {
+    if (!open) return;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+    if (e.key !== "Tab") return;
+    const f = focusables();
+    if (!f.length) { e.preventDefault(); return; }
+    const a = document.activeElement, lo = f[0], hi = f[f.length - 1];
+    if (!box.contains(a)) { e.preventDefault(); lo.focus(); }
+    else if (e.shiftKey && a === lo) { e.preventDefault(); hi.focus(); }
+    else if (!e.shiftKey && a === hi) { e.preventDefault(); lo.focus(); }
+  }
+  function onFocus(e) { if (open && !box.contains(e.target)) first().focus(); }
+  function close() {
+    if (!open) return;
+    open = false;
+    document.removeEventListener("keydown", onKey, true);
+    document.removeEventListener("focusin", onFocus, true);
+    shade.classList.remove("on");
+    clear(shade);
+    if (OV === handle) OV = null;
+    try { if (opener && opener.focus && document.body.contains(opener)) opener.focus(); } catch (e) { /* gone */ }
+    if (opts.onClose) { try { opts.onClose(); } catch (e) { /* the close goes on */ } }
+  }
+  x.addEventListener("click", close);
+  document.addEventListener("keydown", onKey, true);
+  document.addEventListener("focusin", onFocus, true);
+  const handle = { box: box, body: body, foot: foot, close: close };
+  OV = handle;
+  setTimeout(() => { if (open && !box.contains(document.activeElement)) first().focus(); }, 0);
+  return handle;
+}
+// While on, poll()'s failures never show "DataPiler has stopped" (an update's restart; until the page reloads), and
+// poll() and pollTerm() ask nothing: the app is down or about to be, and only the Update... pop-up's probe asks.
+function holdHeartbeat(on) { HOLD = !!on; if (HOLD) FAILS = 0; }
+
 // ---- tabs
 function showTab(t) {
   if (TABS.indexOf(t) < 0) t = "status";
@@ -114,6 +173,15 @@ function checkRow(c) {
   if (c.detail) add(textSpan, qm(c.detail));
   add(row, mark(c.ok), textSpan);
   if (c.fix) add(row, el("span", "sub", c.fix));
+  if (c.use && c.use.key && c.use.path) {
+    // DP15: a folder Status offers (one place found, or the folder Smithbox runs from) - saved only on this press
+    const b = el("button", "sm", "Use");
+    b.title = "Save " + (c.use.shown || "") + " in Settings";
+    b.addEventListener("click", () => api("/api/settings/one", { key: c.use.key, value: c.use.path }).then(() => {
+      note("Saved in Settings.", true); CARDS_KEY = ""; poll(); if (TAB === "settings") loadSettings();
+    }).catch((e) => note(e.message)));
+    add(row, add(el("span", "sub"), b));
+  }
   return row;
 }
 function cardFor(kind, body) {
@@ -428,7 +496,7 @@ function paintTerm() {
   TERM.lines.filter(visible).forEach((l) => add(t, lineEl(l)));
 }
 function pollTerm() {
-  if (GONE) return;
+  if (GONE || HOLD) return;
   api("/api/log?after=" + TERM.last).then((r) => {
     if (!r.lines.length) return;
     TERM.last = r.lines[r.lines.length - 1].seq;
@@ -474,6 +542,9 @@ function copyForSharing() {
 // ---- Settings
 const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "expansion", "port", "log_max_mb", "log_keep"];
 const NUMS = { port: true, log_max_mb: true, log_keep: true };
+// The five folder fields: drawn read-only as their masks while Mask paths on this page is on, and left out of Save.
+const PATH_FIELDS = { smithbox_dir: true, game_dir: true, project_dir: true, workspace_dir: true, share_dir: true };
+function masked() { return !!(SETTINGS && SETTINGS.settings && SETTINGS.settings.mask_paths); }
 function loadSettings() {
   return api("/api/settings").then((r) => {
     SETTINGS = r;
@@ -481,6 +552,8 @@ function loadSettings() {
     $("sServer").textContent = r.server || "";
     paintSession(r.session);
     $("sErr").textContent = "";
+    // folders.js draws the folder rows, the mask and the picker's places from the same answer
+    document.dispatchEvent(new CustomEvent("dp:settings", { detail: r }));
   }).catch(() => {});
 }
 function paintSession(s) {
@@ -492,6 +565,7 @@ function saveSettings() {
   const out = {};
   let bad = null;
   FIELDS.forEach((k) => {
+    if (masked() && PATH_FIELDS[k]) return;      // not editable while masked: the app keeps them as they are
     const raw = $("s_" + k).value.trim();
     $("s_" + k).classList.remove("bad");
     if (NUMS[k]) {
@@ -501,6 +575,9 @@ function saveSettings() {
     } else out[k] = raw;
   });
   if (bad) { $("s_" + bad).classList.add("bad"); $("sErr").textContent = "A whole number is needed here."; return; }
+  // folders.js refuses a changed folder whose check line is a ✗, with its words (and calls saveSettings again once a
+  // pending check has answered)
+  if (!document.dispatchEvent(new CustomEvent("dp:beforesave", { cancelable: true, detail: out }))) return;
   api("/api/settings", { settings: out }).then((r) => {
     $("sErr").textContent = "";
     note("Settings saved." + (r.next_start && r.next_start.length ? " At the next start: " + r.next_start.join(", ") + "." : ""), true);
@@ -515,7 +592,7 @@ function saveSettings() {
 // ---- polling and the heartbeat: three failures in a row show "DataPiler has stopped"
 function gone() { GONE = true; $("gone").classList.add("on"); }
 function poll() {
-  if (GONE) return Promise.resolve();
+  if (GONE || HOLD) return Promise.resolve();
   return api("/api/state").then((s) => {
     FAILS = 0;
     ST = s;
@@ -526,7 +603,7 @@ function poll() {
     if (s.outputs_rev !== OUT_REV) { OUT_REV = s.outputs_rev; if (TAB === "outputs") loadOutputs(); }
     if (TAB === "settings") paintSession(s.session);
     if (!CAT) loadCatalogue();
-  }).catch(() => { FAILS += 1; if (FAILS >= 3) gone(); });
+  }).catch(() => { FAILS += 1; if (FAILS >= 3 && !HOLD) gone(); });
 }
 
 // ---- wiring

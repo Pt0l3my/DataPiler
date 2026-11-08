@@ -6,6 +6,8 @@
 //  opens that one's page (or waits for it) and leaves, and no second window opens.
 //  Otherwise it starts DataPiler.ps1 beside it in a visible PowerShell window, waits
 //  for the port file the app writes once its page is up, and opens the browser there.
+//  While an update runs (update\pending.json, from Install until the new version's page
+//  is up), a start meanwhile only says so: the window shows each step.
 //  No elevation (asInvoker), no socket probing, no Python embedded.
 // ================================================================
 #define WIN32_LEAN_AND_MEAN
@@ -126,6 +128,15 @@ static bool Running() { return Held(MUTEX); }
 // stopped: also while it asks its setup question, makes .venv or runs pip, before the app's mutex.
 static bool Starting() { return Held(WINDOW_MUTEX); }
 
+// An update is under way: update\pending.json is written at Install and removed by the new
+// version once its page is up (build plan 0.2 section 4.10). The window shows each step.
+static bool Updating(const std::wstring& dir) { return IsFile(dir + L"\\update\\pending.json"); }
+
+static int UpdatingNotice() {
+    MessageBoxW(NULL, L"DataPiler is updating - see its window.", TITLE, MB_ICONINFORMATION);
+    return 0;
+}
+
 static void OpenPage(int port) {
     wchar_t url[64];
     wsprintfW(url, L"http://127.0.0.1:%d/", port);
@@ -158,6 +169,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     // Held: DataPiler is running already. Open its page; start nothing.
     if (Running()) {
+        if (Updating(dir)) return UpdatingNotice();
         int port = WaitPort(pf, 0, NULL, NULL);
         if (port) { OpenPage(port); return 0; }
         MessageBoxW(NULL, L"DataPiler is running, but its page did not come up within 60 seconds.\n"
@@ -168,6 +180,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     // A DataPiler window is open but its app is not up yet (its setup question, .venv, pip):
     // start nothing, so .venv is never made twice at once; open its page once it comes up.
     if (Starting()) {
+        if (Updating(dir)) return UpdatingNotice();
         FILETIME now0; GetSystemTimeAsFileTime(&now0);
         int port = WaitPort(pf, Ticks(now0), NULL, NULL);
         if (port) { OpenPage(port); return 0; }

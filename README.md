@@ -6,8 +6,9 @@ NPC framework for Elden Ring. You start it from `DataPiler.exe`; a PowerShell wi
 opens as a tab in your browser with all its tools: Smithbox's status, data extraction by type or by bundle, a drop
 zone for jobs, the outputs, and the log.
 
-**Status: 0.1.0.** The first version, built from [design 0001](docs/design/0001-design.md). The owner's decisions are
-in [docs/DECISIONS.md](docs/DECISIONS.md), what the build settled in [docs/design/settled.md](docs/design/settled.md),
+**Status: 0.2.0.** Built from [design 0001](docs/design/0001-design.md) and, for the Update… button and the folder
+detection, [design 0002](docs/design/0002-design.md). The owner's decisions are in
+[docs/DECISIONS.md](docs/DECISIONS.md), what the builds settled in [docs/design/settled.md](docs/design/settled.md),
 and what changed in [CHANGELOG.md](CHANGELOG.md).
 
 ## What you need
@@ -39,6 +40,45 @@ and what changed in [CHANGELOG.md](CHANGELOG.md).
 - **Without the exe:** in DataPiler's folder, run
   `powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\DataPiler.ps1` (the policy applies to that one
   process and changes nothing on your PC). DataPiler then opens the page itself.
+
+## Updating
+
+- **The first update is by hand, once.** 0.1.0 cannot hand over to the updater, so reaching 0.2.0 is an unpack by
+  hand: quit DataPiler, download `DataPiler-0.2.0.zip`, check it against its sha256, and copy what its `DataPiler`
+  folder holds over your DataPiler folder, replacing the files there. Your `settings.json`, workspace, share folder,
+  logs, jobs and `.venv` are not in the zip, so they stay. From 0.2.0 on, the button does it.
+- **Update…** in the top bar asks GitHub for the latest release, only when you press it: nothing checks on its own,
+  and there is no setting that would. The pop-up shows the release's version, date and notes (as text: its links show
+  their address and do not open from there), and **Open the release page ↗** opens the release in a new tab.
+- **Download** fetches the zip into DataPiler's own `update\` folder, then checks it before anything is unpacked: its
+  size; the release's own `.sha256`; GitHub's own digest of the file (both must agree, and without a digest the
+  pop-up says it relies on the `.sha256` alone); the zip's shape (one `DataPiler` folder, nothing outside it, no
+  links); and every file in it against the release's manifest, `manifest.sha256`, with the version inside. Closing the
+  pop-up stops a download. A download not installed is removed at the next start.
+- **Install and restart** stops DataPiler. Its window then backs up every file it will replace or remove into
+  `update\backup-<version>\`, writes the new files, checks each where it landed, and starts the new version. It never
+  touches your workspace, share, logs, jobs, `settings.json` or `.venv`, nor a file you added yourself. A file the new
+  version drops goes into the backup, not the bin. Any failure puts every file back and starts the old version again.
+  Ctrl+C does not stop the swap part way; if it is cut off all the same (the window closed, the power cut), the
+  window puts the old files back from the backup, at once or at the next start. Install waits while a job or an
+  Extract run is going.
+- **If the new version does not start** (its page never comes up, or its window script stops first), the window says
+  so and offers **R** to go back to the version you had, with its Python environment. It never goes back by itself.
+- **If the Python libraries changed**, the window asks Y again after the restart, as at the first start; the new
+  `.venv` is built beside the old one, which stays until the new version's page is up.
+- **At each start** DataPiler checks its own files against the release's manifest and says in the log which differ.
+  It repairs nothing. A copy from the repository has no manifest: it can check for a release, but installs one only by
+  hand.
+- **Where it connects:** `api.github.com`, `github.com` and GitHub's two file hosts, over https only, every redirect
+  checked again, and only from those three presses. Each call is a log line, by host and path. After an update whose
+  Python libraries changed, and your Y, pip fetches them from `pypi.org` and `files.pythonhosted.org`, as at the first
+  start.
+- **SmartScreen:** a zip you download by hand carries Windows' download mark, so the unsigned exe may warn on its
+  first start (More info, then Run anyway). The files the button writes carry no such mark; they are proved by their
+  checksums instead.
+- **For the release account:** the checks prove the files are the ones the release published, not that the release
+  itself is good, which rests on the GitHub account. Keep two-factor authentication on it, and let only the release
+  workflow put files on a release, never a hand upload.
 
 ## The first start's question
 
@@ -78,14 +118,28 @@ DataPiler reads the file and never writes it.
   every share file before it is written, then refuses a file whose tables from one game table cover, together, more
   than half of that table's rows (DP8). Extract's own share files hold counts only.
 - **Settings asks you one thing about your game:** whether its expansion is installed. Share files record your answer,
-  and wait until you have given it.
+  and wait until you have given it. Detect reads Steam's app manifest and shows the DLC app ids it lists; as a DLC app
+  may be an artbook or a soundtrack, it offers Yes and No and you choose. It is saved only when you press Use.
+- **Finding your folders:** each folder on Settings has **Detect** and **Set folder…**, with a check line under it.
+  Detect reads only what this PC already records: Smithbox's folder from the running Smithbox (DataPiler sees it start
+  and stop, whichever of its exes you run), your project and the game's folder from Smithbox's own record of its
+  projects (read as Smithbox's source describes it, not yet checked against a real install), and Steam's install path, its library list, the game's app manifest and Windows' uninstall entry, with the
+  running game, for the game's folder and as a cross-check. Each find is listed with where it came from; nothing is
+  saved until you press **Use**. Finds are kept in memory for the session only and never logged. **Set folder…** opens
+  a folder picker in the page: it lists folder names only, never a file, and does not browse network shares or
+  Windows' own folder. The project folder must be outside the game's folder, must not hold it, and must be outside
+  DataPiler's own folder.
+- **Mask paths on this page** (Settings, off by default) shows your folders on the page as the placeholders the logs
+  use, for screenshots, the folder names the picker lists included.
 - The names' text ids (which part of Smithbox's text exports holds the character and place names) come from
   EldenNet's research and are checked against your own data each time a job joins names: if fewer than half of the
   names it looks up are found there, the job stops and says so.
 - Its page answers only on `127.0.0.1`, to itself, with a token made at each start, and loads nothing from
   elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<WORKSPACE>`).
 - Jobs are data, never code: a closed set of operations, checked when they are dropped, run only on Start.
-- It writes only inside its own folder, and into the workspace and share folders if you move them in Settings.
+- It writes only inside its own folder, and into the workspace and share folders if you move them in Settings. Its
+  one use of the internet after the first start is the Update… button, when you press it, and pip after your Y when
+  an update changes the Python libraries.
 - It is not a Smithbox plugin and is not affiliated with Smithbox, FromSoftware or Bandai Namco.
 
 ## Where its code comes from
@@ -102,8 +156,11 @@ DataPiler reads the file and never writes it.
 - Tests: `python3 -I -m unittest discover -s tests` from the repository's root, standard library only; the link tests
   skip without grpcio.
 - The repository's own check: `python3 -I tools/repocheck.py`. It fails a run-time file (`workspace/`, `share/`,
-  `logs/`, `jobs/`), a game file, a share file, an IP address, a user's folder or an e-mail address in the tree, and
-  CI runs it on every push.
+  `logs/`, `jobs/`, `update/`, a release's `manifest.sha256`), a game file, a share file, an IP address, a user's
+  folder or an e-mail address in the tree, and CI runs it on every push.
+- A release's manifest: `python3 tools/manifest.py <folder>` writes `<folder>/manifest.sha256`, and
+  `python3 update-helper.py --check-zip <zip> --version <X.Y.Z>` makes the button's checks of a release zip, read only.
+  The release workflow runs both.
 
 ## Licence
 

@@ -12,8 +12,10 @@ from datapiler.settings import Settings, SettingsError
 class SettingsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        self.game = self.root / "Game"
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "DataPiler"           # DataPiler's own folder: the project may not be in it (S32)
+        self.root.mkdir()
+        self.game = self.base / "Game"
         self.game.mkdir()
 
     def tearDown(self):
@@ -34,7 +36,8 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(s, Settings())
         self.assertEqual(s.as_dict(), {"smithbox_dir": "", "game_dir": "", "project_dir": "", "workspace_dir": "workspace",
                                        "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
-                                       "log_max_mb": 2, "log_keep": 5})
+                                       "log_max_mb": 2, "log_keep": 5, "mask_paths": False,
+                                       "recent": {"smithbox_dir": [], "game_dir": [], "project_dir": []}})
 
     def test_the_expansion_is_the_owners_statement(self):
         """P2 (settled S21): yes, no, or not stated yet (blank, at first); nothing else."""
@@ -79,13 +82,72 @@ class SettingsTest(unittest.TestCase):
         e = self.refused("project_dir", game_dir=str(self.game), project_dir=str(inner))
         self.assertIn("outside the game's folder", e.rule)
         self.refused("project_dir", game_dir=str(self.game), project_dir=str(self.game))
-        sibling = self.root / "Game2"
+        sibling = self.base / "Game2"
         sibling.mkdir()
         self.assertEqual(self.check(game_dir=str(self.game), project_dir=str(sibling)).project_dir, str(sibling))
 
+    def test_the_project_rules_of_0_2(self):
+        """S32: not a folder that holds the game's folder, not DataPiler's folder nor inside it."""
+        e = self.refused("project_dir", game_dir=str(self.game), project_dir=str(self.base))
+        self.assertIn("hold the game's folder", e.rule)
+        for inner in (self.root, self.root / "projects"):
+            with self.subTest(inner=inner.name):
+                e = self.refused("project_dir", project_dir=str(inner))
+                self.assertIn("outside DataPiler's folder", e.rule)
+        self.assertIsNone(settings.project_refusal("", str(self.game), self.root))
+        self.assertIsNone(settings.project_refusal(str(self.base / "Mod"), "", self.root))
+
+    def test_mask_paths(self):
+        """DP14: off by default, on or off only."""
+        self.assertFalse(self.check().mask_paths)
+        self.assertTrue(self.check(mask_paths=True).mask_paths)
+        for bad in ("yes", 1, None):
+            with self.subTest(bad=bad):
+                self.refused("mask_paths", mask_paths=bad)
+
+    def test_recent_kept_by_the_app_and_capped(self):
+        """S34: five a folder, newest first, no repeats (case-folded); the old value kept behind the new one."""
+        folders = [str(self.base / ("F%d" % i)) for i in range(7)]
+        s = Settings(game_dir=folders[0])
+        for f in folders[1:]:
+            s = settings.with_recent(s, settings.with_values(s, game_dir=f))
+        self.assertEqual(list(s.recent["game_dir"]), folders[6:1:-1])
+        self.assertEqual(s.recent["project_dir"], ())
+        again = settings.with_recent(s, settings.with_values(s, game_dir=folders[3].upper()
+                                                             if folders[3].upper() != folders[3] else folders[3]))
+        self.assertEqual(len(again.recent["game_dir"]), 5)
+        self.assertEqual(len({x.casefold() for x in again.recent["game_dir"]}), 5)
+        # unchanged values add nothing; blank values are never kept
+        self.assertEqual(settings.with_recent(s, s).recent, s.recent)
+        blank = settings.with_recent(s, settings.with_values(s, game_dir=""))
+        self.assertNotIn("", blank.recent["game_dir"])
+        self.assertEqual(settings.forget_recent(s, "game_dir").recent["game_dir"], ())
+        # as the file holds it: lists, checked, bad entries dropped, never an error
+        got = self.check(recent={"game_dir": [folders[1], "relative", 5, folders[1], folders[2]], "other": [1]})
+        self.assertEqual(got.recent["game_dir"], (folders[1], folders[2]))
+        self.refused("recent", recent=["not", "an", "object"])
+        f = self.root / "settings.json"
+        settings.save(f, s)
+        self.assertEqual(json.loads(f.read_text(encoding="utf-8"))["recent"]["game_dir"], folders[6:1:-1])
+        self.assertEqual(settings.load(f, root=self.root)[0], s)
+
+    def test_load_drops_a_key_it_does_not_know_with_its_name(self):
+        """S36: a version rolled back to keeps the owner's folders; the line names the key (or "(key)")."""
+        f = self.root / "settings.json"
+        f.write_text(json.dumps({"format": settings.FORMAT, "game_dir": str(self.game), "update_channel": "x",
+                                 "Bad Key!": 1}), encoding="utf-8")
+        s, problems = settings.load(f, root=self.root)
+        self.assertEqual(s.game_dir, str(self.game))
+        text = " | ".join(problems)
+        self.assertIn("update_channel is not a setting this DataPiler knows", text)
+        self.assertIn("(key) is not a setting this DataPiler knows", text)
+        self.assertNotIn("Bad Key", text)
+        # a save from the page still refuses an unknown key
+        self.refused("update_channel", update_channel="x")
+
     def test_workspace_and_share_rules(self):
         self.refused("workspace_dir", game_dir=str(self.game), workspace_dir=str(self.game / "ws"))
-        sb = self.root / "Smithbox"
+        sb = self.base / "Smithbox"
         self.refused("share_dir", smithbox_dir=str(sb), share_dir=str(sb / "share"))
         self.refused("share_dir", workspace_dir="workspace", share_dir="workspace/share")
         self.refused("workspace_dir", workspace_dir="share/ws", share_dir="share")

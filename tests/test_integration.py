@@ -1,6 +1,10 @@
 """Phase 2 (build plan §8.1): the real modules, the fake Soapstone server, an invented text export dropped in the
 inbox, the design's example job dropped and started: a share file whose checks all pass, a job log, and no planted
-name in the ring, the files or the share file. Skips without grpc."""
+name in the ring, the files or the share file. Skips without grpc.
+
+And 0.2.0's update the whole way (build plan 0.2 §3.4, §7.1): the real Updater with a fake GitHub and the real
+Folders with a fake backend, through datapiler.main: Update..., Download and Install on the page's API, exit 75, the
+window's helper, the new start on the same port, and the result served once. Needs no grpc."""
 
 import _repo  # noqa: F401
 
@@ -24,7 +28,7 @@ try:
 except ImportError:
     HAVE_GRPC = False
 
-from datapiler import textdb, winapi
+from datapiler import install, textdb, winapi
 from datapiler.settings import Settings, save
 
 EXAMPLE_JOB = {
@@ -86,14 +90,18 @@ class IntegrationTest(unittest.TestCase):
             p.start()
         self.fake = fake_soapstone.FakeSoapstone().start()
         self.tmp = tempfile.TemporaryDirectory()
-        root = self.root = Path(self.tmp.name)
+        # DataPiler's folder, with the game, Smithbox and the project beside it: from 0.2.0 a project inside
+        # DataPiler's folder is refused (S32)
+        base = Path(self.tmp.name)
+        root = self.root = base / "DataPiler"
+        root.mkdir()
         for d in ("Game", "Smithbox", "Project"):
-            (root / d).mkdir()
-        (root / "Game" / "eldenring.exe").write_bytes(b"")
-        (root / "Game" / "regulation.bin").write_bytes(b"invented regulation bytes " * 64)
-        (root / "Smithbox" / "Smithbox.exe").write_bytes(b"")
-        save(root / "settings.json", Settings(game_dir=str(root / "Game"), smithbox_dir=str(root / "Smithbox"),
-                                              project_dir=str(root / "Project"), expansion="yes"))
+            (base / d).mkdir()
+        (base / "Game" / "eldenring.exe").write_bytes(b"")
+        (base / "Game" / "regulation.bin").write_bytes(b"invented regulation bytes " * 64)
+        (base / "Smithbox" / "Smithbox.exe").write_bytes(b"")
+        save(root / "settings.json", Settings(game_dir=str(base / "Game"), smithbox_dir=str(base / "Smithbox"),
+                                              project_dir=str(base / "Project"), expansion="yes"))
         self.use = winapi.use(FakeBackend())
         self.use.__enter__()
         spec = importlib.util.spec_from_file_location("datapiler_main_it", str(Path(_repo.ROOT) / "datapiler.py"))
@@ -226,6 +234,137 @@ class IntegrationTest(unittest.TestCase):
         status, raw = self.http(port, "POST" if body is not None else "GET", path, body)
         self.assertEqual(status, 200, raw[:300])
         return json.loads(raw)
+
+
+class UpdateTheWholeWay(unittest.TestCase):
+    def setUp(self):
+        from test_archive import invented_app, manifest_of, release_zip, sha
+        from test_update import ASSET_HOST, FakeGitHub
+        from datapiler.update import ASSET_PREFIX, LATEST, PAGE_PREFIX
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name).resolve()
+        root = self.root = base / "DataPiler"
+        self.old = invented_app("0.2.0")
+        for rel, data in self.old.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(data)
+        (root / "manifest.sha256").write_bytes(manifest_of(self.old))
+        for d in ("Game", "Smithbox"):
+            (base / d).mkdir()
+        (base / "Game" / "eldenring.exe").write_bytes(b"")
+        (base / "Smithbox" / "Smithbox.exe").write_bytes(b"")
+        self.game = base / "Game"
+        save(root / "settings.json", Settings(game_dir=str(base / "Game"), smithbox_dir=str(base / "Smithbox")))
+        self.new = invented_app("0.3.0", **{"datapiler/added.py": b"# new in the invented 0.3.0\n"})
+        z = release_zip(Path(self.tmp.name) / "built.zip", self.new).read_bytes()
+        name = "DataPiler-0.3.0.zip"
+        gh = self.gh = FakeGitHub()
+        gh.routes[LATEST] = (200, {}, json.dumps({
+            "tag_name": "v0.3.0", "published_at": "2026-11-20T10:00:00Z", "html_url": PAGE_PREFIX + "tag/v0.3.0",
+            "body": "## What's new\n- invented", "assets": [
+                {"name": name, "size": len(z), "browser_download_url": ASSET_PREFIX + "v0.3.0/" + name,
+                 "digest": "sha256:" + sha(z)},
+                {"name": name + ".sha256", "size": 90, "browser_download_url": ASSET_PREFIX + "v0.3.0/" + name +
+                 ".sha256"}]}).encode())
+        gh.routes[ASSET_PREFIX + "v0.3.0/" + name] = (302, {"Location": ASSET_HOST + "z"}, b"")
+        gh.routes[ASSET_HOST + "z"] = lambda: (200, {}, z)
+        gh.routes[ASSET_PREFIX + "v0.3.0/" + name + ".sha256"] = (200, {}, ("%s  %s\n" % (sha(z), name)).encode())
+        self.use = winapi.use(FakeBackend())
+        self.use.__enter__()
+        spec = importlib.util.spec_from_file_location("datapiler_main_up", str(Path(_repo.ROOT) / "datapiler.py"))
+        self.entry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.entry)
+
+    def tearDown(self):
+        self.use.__exit__(None, None, None)
+        self.tmp.cleanup()
+
+    def start(self, *args):
+        entry, gh = self.entry, self.gh
+
+        class Parts(entry.RealParts):
+            def updater(self, run):
+                from datapiler import update
+                return update.Updater(root=run.root, version=self.version, port=lambda: run.port,
+                                      busy=run.runner.busy, request_exit=run.request_update_exit, fetch=gh)
+
+        Parts.version = self.version
+        out = {}
+
+        def run():
+            with contextlib.redirect_stdout(io.StringIO()):
+                out["code"] = entry.main(["--no-browser", "--no-link", *args], root=self.root, parts=Parts())
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        port_file = self.root / "datapiler.port"
+        port = wait_for(lambda: port_file.is_file() and int(port_file.read_text(encoding="ascii").strip() or 0))
+        self.assertTrue(port)
+        page = IntegrationTest.http(self, port, "GET", "/")[1].decode("utf-8")
+        self.token = re.search(r'const TOKEN = "([^"]+)"', page).group(1)
+        return t, out, port
+
+    http = IntegrationTest.http
+    api = IntegrationTest.api
+
+    def view_until(self, port, state):
+        return wait_for(lambda: (lambda v: v if v["state"] == state else None)(self.api(port, "/api/update")), 20)
+
+    def test_check_download_install_swap_and_come_back(self):
+        self.version = "0.2.0"
+        t, out, port = self.start("--port", "0")
+        try:
+            v = self.api(port, "/api/update", {"action": "check", "fresh": False})
+            self.assertIn(v["state"], ("checking", "newer"))
+            v = self.view_until(port, "newer")
+            self.assertEqual(v["latest"]["version"], "0.3.0")
+            self.api(port, "/api/update", {"action": "download"})
+            v = self.view_until(port, "ready")
+            self.assertTrue(all(c["ok"] is True for c in v["checks"]), v["checks"])
+            self.assertEqual(v["plan"]["add"], 1)
+            self.assertEqual(self.api(port, "/api/settings")["settings"]["game_dir"], str(self.game))
+        except BaseException:
+            self.api(port, "/api/quit", {"cancel_running": True})
+            raise
+        self.assertEqual(self.api(port, "/api/update", {"action": "install"}),
+                         {"ok": True, "state": "restarting", "to": "0.3.0"})
+        t.join(15)
+        self.assertEqual(out.get("code"), 75)
+        pending = install.read_pending(self.root)
+        self.assertEqual(pending.port, port)
+        # the window: the helper from the verified download, as DataPiler.ps1 runs it on exit code 75
+        said = []
+        h = install.helper(install.APP)
+        self.assertEqual(h.install(self.root, self.root / "update" / "pending.json", say=said.append), 0, said)
+        for rel, data in self.new.items():
+            self.assertEqual((self.root / rel).read_bytes(), data, rel)
+        # the new version starts on the page's port, serves the result once, and cleans up
+        self.version = "0.3.0"
+        t, out, port2 = self.start()
+        try:
+            self.assertEqual(port2, port)
+            r = wait_for(lambda: (lambda x: x if x["state"] else None)(self.api(port2, "/api/update-result")), 10)
+            self.assertEqual((r["state"], r["from"], r["to"], r["backup"]), ("updated", "0.2.0", "0.3.0",
+                                                                              "update\\backup-0.2.0"))
+            self.assertEqual(r["counts"]["added"], 1)
+            self.assertEqual(r["check"], {"files": len(self.new), "differ": 0, "manifest": True})
+            self.assertEqual(self.api(port2, "/api/update-result"), {"state": None})
+            self.assertFalse((self.root / "update" / "pending.json").exists())
+            self.assertTrue(wait_for(lambda: not (self.root / "update" / "0.3.0").exists(), 10))
+            self.assertTrue((self.root / "update" / "backup-0.2.0" / "backup.json").is_file())
+        finally:
+            self.assertEqual(self.api(port2, "/api/quit", {"cancel_running": True}), {"ok": True})
+            t.join(15)
+        self.assertEqual(out.get("code"), 0)
+        log = (self.root / "logs" / "datapiler.log").read_text(encoding="utf-8")
+        self.assertIn("update   install check: all %d files match the release" % len(self.new), log)
+        self.assertIn("update   update requested: 0.3.0 - stopping (exit code 75)", log)
+        self.assertIn("(the open page reloads)", log)
+        texts = [log, (self.root / "logs" / "update.log").read_text(encoding="utf-8")] + said
+        for text in texts:
+            self.assertNotIn(self.tmp.name, text)
+            for name in ("zorblax", "QUENTIN-RIG"):
+                self.assertNotIn(name.casefold(), text.casefold())
 
 
 if __name__ == "__main__":

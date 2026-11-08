@@ -53,6 +53,16 @@ class LogbookTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             logbook.get("nobody")
 
+    def test_the_sources_of_0_2(self):
+        """update (UPDATE's) and folders (FOLDERS's), with the 0.1 nine before them."""
+        self.assertEqual(logbook.SOURCES, ("app", "page", "smithbox", "link", "extract", "job", "guard", "textdb",
+                                           "env", "update", "folders"))
+        for src in ("update", "folders"):
+            logbook.get(src).info("a line")
+        lines = self.file_lines()[1:]
+        self.assertIn("  INFO   update   a line", lines[-2])
+        self.assertIn("  INFO   folders  a line", lines[-1])
+
     def test_debug_only_to_the_file_and_only_with_the_switch(self):
         log = logbook.get("link")
         log.debug("hidden one")

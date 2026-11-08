@@ -166,12 +166,21 @@ class ServerTest(unittest.TestCase):
         """An unknown method reaches send_error with its headers read; a garbled request line reaches it before them
         (answered with a status line from Python 3.11 on, HTTP/0.9-style before), and neither may fail."""
         import socket as _socket
-        with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
-            c.sendall(b"BREW / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\nabc")
-            self.assertIn(b" 501 ", c.recv(4096).split(b"\r\n")[0] + b" ")
-        with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
-            c.sendall(b"NONSENSE\r\n\r\n")
-            self.assertIn(b"not understood", c.recv(4096))
+
+        def ask(raw):
+            got = b""
+            with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
+                c.sendall(raw)
+                while True:  # the server closes the connection after these answers: read until it does
+                    chunk = c.recv(4096)
+                    if not chunk:
+                        return got
+                    got += chunk
+
+        answer = ask(b"BREW / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\nabc")
+        self.assertIn(b" 501 ", answer.split(b"\r\n")[0] + b" ")
+        self.assertIn(b"not understood", answer)
+        self.assertIn(b"not understood", ask(b"NONSENSE\r\n\r\n"))
 
     def test_body_must_be_an_object(self):
         for body in (b"[1, 2]", b"\"text\"", b"{broken", b"\xff\xfe"):

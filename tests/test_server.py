@@ -179,7 +179,7 @@ class ServerTest(unittest.TestCase):
 
         answer = ask(b"BREW / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\nabc")
         self.assertIn(b" 501 ", answer.split(b"\r\n")[0] + b" ")
-        self.assertIn(b"not understood", answer)
+        self.assertTrue(answer.endswith(b'{"error": "failed"}'), answer[-40:])  # 5xx answers say "failed"
         self.assertIn(b"not understood", ask(b"NONSENSE\r\n\r\n"))
 
     def test_body_must_be_an_object(self):

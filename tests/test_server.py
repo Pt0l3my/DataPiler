@@ -162,11 +162,16 @@ class ServerTest(unittest.TestCase):
             r, raw = self.req("POST", "/api/echo", {"x": "a" * (server.POST_MAX * 8)}, token="wrong")
             self.assertEqual(r.status, 403, i)
 
-    def test_a_bad_request_line_is_answered(self):
+    def test_the_standard_librarys_own_errors_are_answered(self):
+        """An unknown method reaches send_error with its headers read; a garbled request line reaches it before them
+        (answered with a status line from Python 3.11 on, HTTP/0.9-style before), and neither may fail."""
         import socket as _socket
         with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
+            c.sendall(b"BREW / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\nabc")
+            self.assertIn(b" 501 ", c.recv(4096).split(b"\r\n")[0] + b" ")
+        with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
             c.sendall(b"NONSENSE\r\n\r\n")
-            self.assertIn(b" 400 ", c.recv(4096).split(b"\r\n")[0] + b" ")
+            self.assertIn(b"not understood", c.recv(4096))
 
     def test_body_must_be_an_object(self):
         for body in (b"[1, 2]", b"\"text\"", b"{broken", b"\xff\xfe"):

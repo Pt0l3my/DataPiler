@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataPiler</title>
+<style nonce="__NONCE__">
+/*__CSS__*/
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Data<span>Piler</span></div><div class="ver" id="ver">0.1</div>
+  <span class="pill mute" id="pSmithbox">&#9679; Smithbox</span>
+  <span class="pill mute" id="pGame">&#9679; Game</span>
+  <span class="pill mute" id="pLink">&#9679; Server link off</span>
+  <div class="spacer"></div>
+  <button id="quit">Quit</button>
+</header>
+<div class="block" id="block" hidden></div>
+<nav class="tabs" id="tabs">
+  <button data-t="status" class="on">Status</button><button data-t="extract">Extract</button><button data-t="jobs">Jobs</button>
+  <button data-t="outputs">Outputs</button><button data-t="terminal">Terminal</button><button data-t="settings">Settings</button>
+</nav>
+<main>
+  <div class="msgs" id="msgs"></div>
+
+  <!-- ===================================================== Status -->
+  <section class="tab on" id="t-status">
+    <div class="grid" id="cards"></div>
+  </section>
+
+  <!-- ===================================================== Extract -->
+  <section class="tab" id="t-extract">
+    <div class="chips" id="bundles"></div>
+    <div class="card">
+      <div class="tscroll"><table>
+        <thead><tr><th></th><th>Type</th><th>From</th><th>Gives</th><th>Goes to</th><th>Progress</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+      <div class="ask" id="xAsk" hidden></div>
+      <div class="inbox" id="inbox" hidden></div>
+      <div class="actions">
+        <button class="pri" id="run">Run</button><button id="cancel">Cancel</button>
+        <label class="mute"><input type="checkbox" id="loadMaps"> Let DataPiler load the maps in Smithbox (it asks above ten)</label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Jobs -->
+  <section class="tab" id="t-jobs">
+    <div class="drop" id="drop">Drop a job file here - or <button id="pick">Choose file</button>
+      <div class="dsub">Checked at once; nothing runs until Start. A job file is at most 256 KB.</div></div>
+    <input type="file" id="file" accept=".json,application/json" hidden>
+    <div id="jobs"></div>
+  </section>
+
+  <!-- ===================================================== Outputs -->
+  <section class="tab" id="t-outputs">
+    <div class="grid">
+      <div class="card"><h3>Workspace <span class="pill err">Local only - never share</span></h3>
+        <ul class="files" id="work"></ul>
+        <div class="actions"><button id="openWork">Open folder</button></div></div>
+      <div class="card"><h3>Share <span class="pill ok">Passed the guard</span></h3>
+        <ul class="files" id="share"></ul>
+        <div id="shareBad" hidden><h3 class="sub">Not passing the guard now <span class="pill err">Never share</span></h3>
+          <ul class="files" id="shareBadList"></ul></div>
+        <div id="viewer" hidden>
+          <div class="vhead" id="vhead"></div>
+          <div class="vchecks" id="vchecks"></div>
+          <div class="viewer mono" id="vtext"></div>
+        </div>
+        <div class="actions"><button id="copyPath" disabled>Copy path</button><button id="openShare">Open folder</button></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Terminal -->
+  <section class="tab" id="t-terminal">
+    <div class="tbar" id="tbar">
+      <span class="chip on" data-lv="INFO">INFO+</span><span class="chip" data-lv="WARN">WARN+</span>
+      <span class="chips" id="srcChips"></span>
+      <div class="spacer"></div>
+      <button id="pause">Pause scroll</button><button id="copyVis">Copy visible</button><button id="copyShare">Copy for sharing</button>
+    </div>
+    <div class="term" id="term"></div>
+  </section>
+
+  <!-- ===================================================== Settings -->
+  <section class="tab" id="t-settings">
+    <div class="card"><div class="form">
+      <label for="s_smithbox_dir">Smithbox folder</label><input type="text" id="s_smithbox_dir" spellcheck="false">
+      <label for="s_game_dir">Game folder</label><input type="text" id="s_game_dir" spellcheck="false">
+      <label for="s_project_dir">Project folder <span class="qm" title="Smithbox's project for the game - outside the game's folder">?</span></label><input type="text" id="s_project_dir" spellcheck="false">
+      <label for="s_workspace_dir">Workspace <span class="qm" title="Local only: it holds game text. Relative to DataPiler's folder, or a full path">?</span></label><input type="text" id="s_workspace_dir" spellcheck="false">
+      <label for="s_share_dir">Share folder <span class="qm" title="Only files that passed the guard. Outside the workspace">?</span></label><input type="text" id="s_share_dir" spellcheck="false">
+      <label for="s_language">Text language <span class="qm" title="Smithbox's code, e.g. engus">?</span></label><input type="text" id="s_language" spellcheck="false">
+      <label for="s_port">Page port <span class="qm" title="Blank for any free one; takes effect at the next start">?</span></label><input type="text" id="s_port" placeholder="(any free one)" spellcheck="false">
+      <label for="s_log_max_mb">Log size, MB a file</label><input type="text" id="s_log_max_mb" spellcheck="false">
+      <label for="s_log_keep">Log files kept</label><input type="text" id="s_log_keep" spellcheck="false">
+      <label>Server <span class="qm" title="Smithbox's own address - shown, never editable">?</span></label><span class="mono" id="sServer"></span>
+      <label>Server link this session</label><span><button id="sLink">Switch on</button> <span class="mute">off at every start</span></span>
+      <label>DEBUG to the file this session</label><span><button id="sDebug">Switch on</button> <span class="mute">off at every start</span></span>
+    </div>
+    <div class="errline" id="sErr"></div>
+    <div class="actions"><button class="pri" id="sSave">Save</button></div></div>
+  </section>
+</main>
+
+<div class="shade" id="gone"><div class="modal"><b>DataPiler has stopped.</b>
+  <div class="hint">Its files are kept in its folder. Start it again with DataPiler.exe; you can close this tab.</div></div></div>
+
+<script nonce="__NONCE__">
+/*__JS__*/
+</script>
+</body>
+</html>

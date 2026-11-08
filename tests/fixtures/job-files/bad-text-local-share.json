@@ -1,0 +1,11 @@
+{
+  "format": "datapiler-job/1",
+  "id": "en-0007-roster-counts",
+  "title": "Roster: named characters per team",
+  "ops": [
+    {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId", "teamType", "npcType"]},
+    {"op": "fetch_rows", "as": "talk", "param": "TalkParam", "fields": ["id", "msgId"]},
+    {"op": "join_names", "as": "npc_named", "rows": "npc", "key": "nameId", "text": "character_names"},
+    {"op": "write_share", "name": "roster-names", "tables": ["npc_named"], "columns": {"npc_named": ["nameId", "name"]}}
+  ]
+}

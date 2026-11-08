@@ -1,0 +1,595 @@
+"""The endpoints of build plan §5 against fakes of JOBS's and LINK's parts. The fakes are also used by test_start."""
+
+import _repo  # noqa: F401
+
+import base64
+import json
+import os
+import tempfile
+import unittest
+from dataclasses import dataclass
+from pathlib import Path
+from unittest import mock
+
+from datapiler import api, events, logbook, paths, settings, winapi
+from datapiler.api import Api, Live
+from datapiler.logbook import own
+from datapiler.server import Bad
+from datapiler.settings import Session, Settings
+from datapiler.status import Status
+from datapiler.winapi import Proc
+
+PLANTED = "Velkor Dunmarrow"
+JOB_ID = "en-0007-roster-counts"
+CARD = {"id": JOB_ID, "title": "Roster: named characters per team", "format": "datapiler-job/1", "sha256": "0" * 64,
+        "state": "checked", "refusals": [], "preview": {"reads": ["NpcParam rows: id"], "computes": [], "writes": []},
+        "wait": None, "ops": [], "result": None}
+
+
+class FakeLink:
+    def __init__(self, state="off"):
+        self.state = state
+        self.switched = []
+        self.closed = None
+
+    def switch(self, on):
+        self.switched.append(on)
+        if self.state != "no_libs":
+            self.state = "on" if on else "off"
+        return self.state
+
+    def stats(self):
+        return {"calls": 0, "last_call": None, "last_methods": []}
+
+    def would_call(self):
+        return [{"method": "ListParams", "for": "the names of the params"}]
+
+    def close(self, why):
+        self.closed = why
+        if self.state != "no_libs":
+            self.state = "off"
+
+
+class FakeRunner:
+    def __init__(self):
+        self.busy_with = None
+        self.added = []
+        self.stopped = None
+        self.cancelled = False
+        self.runs = []
+        self.loaded = False
+        self.rows = []
+
+    def load_folder(self):
+        self.loaded = True
+
+    def add(self, filename, raw):
+        if not raw:
+            raise ValueError("empty")
+        self.added.append((filename, raw))
+        return dict(CARD), False
+
+    def act(self, job_id, what, *, confirm_maps=None):
+        if job_id != JOB_ID or what not in ("start", "cancel", "remove"):
+            raise ValueError("unknown")
+        if what == "start" and confirm_maps != 98:
+            return {"ok": False, "ask": {"maps": 98, "text": "Start loads 98 maps in Smithbox. Go on?"}}
+        return {"ok": True}
+
+    def run_extract(self, rows, *, load_maps=False, confirm_maps=None):
+        if any(r not in ("character_rows", "map_placements") for r in rows):
+            raise ValueError("unknown row")
+        self.runs.append((list(rows), load_maps, confirm_maps))
+        return {"ok": True}
+
+    def cancel_extract(self):
+        self.cancelled = True
+
+    def cards(self):
+        return [dict(CARD)]
+
+    def extract_state(self):
+        return {"running": None, "rows": list(self.rows), "ask": None}
+
+    def made_by(self):
+        return {"roster-counts.json": own(JOB_ID), "local/%s/npc-named.json" % JOB_ID: own(JOB_ID)}
+
+    def busy(self):
+        return self.busy_with
+
+    def stop(self, *, cancel, timeout=3.0):
+        self.stopped = cancel
+
+
+class FakeTextDB:
+    def __init__(self, texts=(PLANTED,)):
+        self.texts = [t.casefold() for t in texts]
+        self.closed = False
+
+    def find_in(self, haystack):
+        h = haystack.casefold()
+        return any(len(t) >= 4 and t in h for t in self.texts)
+
+    def close(self):
+        self.closed = True
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    check: int
+    name: str
+    ok: bool
+    where: str | None
+
+
+class FakeGuard:
+    def __init__(self):
+        self.fail = {}          # file bytes -> the check that fails on them
+        self.calls = 0
+
+    def check(self, data, *, declared):
+        self.calls += 1
+        bad = self.fail.get(bytes(data))
+        return [CheckResult(i, n, i != bad, "(file)" if i == bad else None)
+                for i, n in enumerate(("Shape", "Values", "Text", "The owner", "Size"), 1)]
+
+    def check_labels(self):
+        return []
+
+
+class FakeInbox:
+    def __init__(self):
+        self.running = False
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def state(self):
+        return [{"file": "export.json", "reason": "not a Smithbox text export"}]
+
+
+class FakeCatalogue:
+    ROWS = ()
+
+    @staticmethod
+    def public():
+        return {"rows": [{"id": "character_rows", "name": "Character rows", "help": "?", "sources": ["server"],
+                          "gives": "row ids, name numbers", "goes_to": "workspace+share", "steps": []}],
+                "bundles": {"roster": ["character_rows"]}}
+
+
+class FakeParts:
+    """datapiler.main's parts for tests: fakes of the TextDB, Guard, Link, Runner and Inbox."""
+
+    def __init__(self):
+        self.made = {}
+
+    def store(self, live):
+        self.made["textdb"], self.made["guard"] = FakeTextDB(), FakeGuard()
+        return self.made["textdb"], self.made["guard"]
+
+    def port_answers(self, game):
+        return False
+
+    def link(self, status, no_link):
+        self.made["link"] = FakeLink("no_libs" if no_link else "off")
+        return self.made["link"], not no_link
+
+    def runner(self, live, link, textdb, guard, status):
+        self.made["runner"] = FakeRunner()
+        return self.made["runner"]
+
+    def inbox(self, live, textdb):
+        self.made["inbox"] = FakeInbox()
+        return self.made["inbox"]
+
+    def catalogue(self):
+        return FakeCatalogue()
+
+
+class FakeBackend(winapi.PortableBackend):
+    def __init__(self):
+        self.procs = []
+        self.clipboard = None
+        self.opened = None
+
+    def processes(self):
+        return list(self.procs)
+
+    def set_clipboard(self, text):
+        self.clipboard = text
+        return True
+
+    def open_folder(self, path):
+        self.opened = path
+        return False
+
+    def user_name(self):
+        return "zorblax"
+
+    def pc_name(self):
+        return "QUENTIN-RIG"
+
+    def home(self):
+        return None
+
+
+class ApiTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.game = self.root / "Game"
+        self.game.mkdir()
+        (self.game / "eldenring.exe").write_bytes(b"")
+        self.project = self.root / "Project"
+        self.project.mkdir()
+        cfg = Settings(game_dir=str(self.game), project_dir=str(self.project))
+        p = paths.resolve(self.root, cfg.workspace_dir, cfg.share_dir)
+        paths.ensure(p)
+        self.live = Live(root=self.root, settings=cfg, paths=p, session=Session())
+        self.b = FakeBackend()
+        self.use = winapi.use(self.b)
+        self.use.__enter__()
+        self.link = FakeLink()
+        self.runner = FakeRunner()
+        self.textdb = FakeTextDB()
+        self.status = Status(lambda: self.live.settings, lambda: self.link, lambda: False)
+        self.stops = []
+        self.guard = FakeGuard()
+        self.api = Api(live=self.live, status=self.status, link=self.link, runner=self.runner, textdb=self.textdb,
+                       guard=self.guard, inbox=FakeInbox(), catalogue=FakeCatalogue(),
+                       stop=lambda: self.stops.append(1), libs=True)
+
+    def tearDown(self):
+        self.api.close()
+        self.status.close()
+        self.use.__exit__(None, None, None)
+        logbook.set_debug(False)
+        logbook.set_masks(folders={}, home=None, user=None, pc=None)
+        self.tmp.cleanup()
+
+    def get(self, path, **query):
+        code, body = self.api.get(path, {k: str(v) for k, v in query.items()})
+        self.assertEqual(code, 200, path)
+        return json.loads(json.dumps(body))
+
+    def post(self, path, body):
+        code, answer, after = self.api.post(path, body)
+        return code, json.loads(json.dumps(answer)), after
+
+    # ------------------------------------------------------------------------------------ GET
+
+    def test_state_shape(self):
+        s = self.get("/api/state")
+        self.assertEqual(set(s), {"version", "pills", "block", "status", "extract", "jobs", "outputs_rev", "session"})
+        self.assertEqual(s["version"], "0.1.0")
+        self.assertEqual(set(s["pills"]), {"smithbox", "game", "link"})
+        self.assertEqual(set(s["status"]), {"smithbox", "game", "project", "link"})
+        self.assertEqual(s["extract"]["inbox"], [{"file": "export.json", "reason": "not a Smithbox text export"}])
+        self.assertEqual(s["jobs"][0]["id"], JOB_ID)
+        self.assertEqual(s["session"], {"link": False, "debug": False, "libs": True})
+
+    def test_a_waiting_extract_run_is_named_under_the_bar(self):
+        """Design §2: one line under the bar whenever something blocks a run, saying what and where to fix it."""
+        self.assertIsNone(self.get("/api/state")["block"])
+        self.runner.rows = [{"id": "character_names", "state": "waiting_export", "grey": None},
+                            {"id": "character_rows", "state": "queued", "grey": "the server link is off"}]
+        self.assertEqual(self.get("/api/state")["block"],
+                         "Extract waits: the server link is off - switch it on in Status.")
+        self.runner.rows[1]["grey"] = "the server link needs its two libraries - restart DataPiler and answer Y"
+        self.assertEqual(self.get("/api/state")["block"], "Extract waits: the server link needs its two libraries - "
+                                                          "restart DataPiler and answer Y.")
+        self.runner.rows[1].update(state="idle")
+        self.assertIsNone(self.get("/api/state")["block"])
+
+    def test_outputs_rev_counts_written_files(self):
+        before = self.get("/api/state")["outputs_rev"]
+        events.emit("share.written", name=own("x"), size=1)
+        events.emit("local.written", job=own("x"), size=1)
+        events.emit("inbox.import", container=own("item"), ok=True, entries=3)
+        events.emit("job.state", id=own("x"), state=own("done"))
+        self.assertEqual(self.get("/api/state")["outputs_rev"], before + 3)
+
+    def test_catalogue(self):
+        c = self.get("/api/catalogue")
+        self.assertEqual(set(c), {"rows", "bundles"})
+
+    def test_outputs_and_share(self):
+        p = self.live.paths
+        (p.workspace / "textdb.sqlite").write_bytes(b"x" * 10)
+        (p.local / JOB_ID).mkdir(parents=True)
+        (p.local / JOB_ID / "npc-named.json").write_bytes(b"{}")
+        doc = {"format": "datapiler-share/1", "tables": [{"name": "per_team", "columns": [{"name": "count",
+                                                                                         "type": "int"}]}]}
+        data = json.dumps(doc).encode()
+        (p.share / "roster-counts.json").write_bytes(data)
+        (p.share / "Not Ours.json").write_bytes(b"{}")
+        o = self.get("/api/outputs")
+        names = {f["name"]: f for f in o["workspace"]}
+        self.assertIn("textdb.sqlite", names)
+        self.assertEqual(names["local/%s/npc-named.json" % JOB_ID]["made_by"], JOB_ID)
+        self.assertEqual([f["name"] for f in o["share"]], ["roster-counts.json"])
+        f = o["share"][0]
+        self.assertEqual(set(f), {"name", "size", "time", "made_by", "ok", "failed"})
+        self.assertEqual((f["ok"], f["failed"]), (True, None))
+        self.assertNotIn(self.tmp.name, json.dumps(o))
+        v = self.get("/api/share", name="roster-counts.json")
+        self.assertEqual(set(v), {"name", "size", "sha256", "text", "checks"})
+        self.assertEqual(v["text"], data.decode())
+        self.assertEqual([c["check"] for c in v["checks"]], [1, 2, 3, 4, 5])
+        with self.assertRaises(Bad):
+            self.api.get("/api/share", {"name": "../settings.json"})
+        with self.assertRaises(Bad):
+            self.api.get("/api/share", {"name": "missing.json"})
+
+    def test_log(self):
+        logbook.get("app").info("a line for the log test")
+        r = self.get("/api/log", after=0)
+        self.assertEqual(set(r), {"lines", "last", "first"})
+        self.assertEqual(set(r["lines"][-1]), {"seq", "t", "level", "src", "msg"})
+        r2 = self.get("/api/log", after=r["last"])
+        self.assertEqual(r2["lines"], [])
+        with self.assertRaises(Bad):
+            self.api.get("/api/log", {"after": "x"})
+
+    def test_settings_get(self):
+        r = self.get("/api/settings")
+        self.assertEqual(set(r), {"settings", "server", "session"})
+        self.assertEqual(r["server"], "127.0.0.1:22720")
+        self.assertEqual(r["session"], {"link": False, "debug": False})
+        self.assertEqual(set(r["settings"]), set(settings.KEYS))
+
+    def test_unknown(self):
+        self.assertEqual(self.api.get("/api/none", {})[0], 404)
+        self.assertEqual(self.api.post("/api/none", {})[0], 404)
+
+    # ------------------------------------------------------------------------------------ POST
+
+    def test_link_switching(self):
+        # Once a session, the owner confirms the project Smithbox has open (DataPiler cannot see it yet, P1).
+        code, r, _ = self.post("/api/link", {"on": True})
+        self.assertEqual(r, {"ok": False, "state": "off", "ask": {"text": api.PROJECT_ASK}})
+        self.assertEqual(self.link.switched, [])
+        code, r, _ = self.post("/api/link", {"on": True, "confirm_project": True})
+        self.assertEqual(r, {"ok": True, "state": "on"})
+        self.assertTrue(self.live.session.link)
+        self.assertTrue(self.live.session.project_confirmed)
+        code, r, _ = self.post("/api/link", {"on": False})
+        self.assertEqual(r, {"ok": True, "state": "off"})
+        self.assertFalse(self.live.session.link)
+        code, r, _ = self.post("/api/link", {"on": True})                      # asked once only
+        self.assertEqual(r, {"ok": True, "state": "on"})
+
+    def test_a_new_project_folder_is_confirmed_again(self):
+        self.post("/api/link", {"on": True, "confirm_project": True})
+        self.assertTrue(self.live.session.project_confirmed)
+        other = self.root / "Project2"
+        other.mkdir()
+        new = self.live.settings.as_dict()
+        new["project_dir"] = str(other)
+        code, r, _ = self.post("/api/settings", {"settings": new})
+        self.assertEqual(code, 200, r)
+        self.assertFalse(self.live.session.project_confirmed)
+        _, r, _ = self.post("/api/link", {"on": True})
+        self.assertIn("ask", r)
+
+    def test_link_refused_when_the_project_check_fails(self):
+        inner = self.game / "proj"
+        inner.mkdir()
+        self.live.settings = Settings(game_dir=str(self.game), project_dir=str(inner))
+        _, r, _ = self.post("/api/link", {"on": True})
+        self.assertFalse(r["ok"])
+        self.assertIn("inside the game's folder", r["why"])
+        self.assertEqual(self.link.switched, [])
+
+    def test_link_refused_while_the_game_runs(self):
+        self.b.procs = [Proc("eldenring.exe", None)]
+        _, r, _ = self.post("/api/link", {"on": True})
+        self.assertFalse(r["ok"])
+        self.assertIn("game is running", r["why"])
+        self.assertEqual(self.link.switched, [])
+
+    def test_link_refused_without_the_libraries(self):
+        self.link.state = "no_libs"
+        _, r, _ = self.post("/api/link", {"on": True})
+        self.assertEqual(r["state"], "no_libs")
+        self.assertIn("two libraries", r["why"])
+        self.assertEqual(self.link.switched, [])
+        with self.assertRaises(Bad):
+            self.api.post("/api/link", {"on": "yes"})
+
+    def test_quit_asks_while_a_job_runs(self):
+        self.runner.busy_with = {"kind": "job", "id": JOB_ID, "title": "a title"}
+        _, r, after = self.post("/api/quit", {"cancel_running": False})
+        self.assertEqual(r, {"ok": False, "ask": {"text": "A job is running (%s). Quit cancels it between calls."
+                                                          % JOB_ID}})
+        self.assertIsNone(after)
+        _, r, after = self.post("/api/quit", {"cancel_running": True})
+        self.assertEqual(r, {"ok": True})
+        after()
+        self.assertEqual(self.stops, [1])
+        self.runner.busy_with = None
+        _, r, after = self.post("/api/quit", {})
+        self.assertEqual(r, {"ok": True})
+
+    def test_debug(self):
+        _, r, _ = self.post("/api/debug", {"on": True})
+        self.assertEqual(r, {"ok": True})
+        self.assertTrue(self.live.session.debug)
+        self.assertTrue(logbook.debug_on())
+        self.post("/api/debug", {"on": False})
+        self.assertFalse(logbook.debug_on())
+
+    def test_extract(self):
+        _, r, _ = self.post("/api/extract/run", {"rows": ["character_rows"], "load_maps": False, "confirm_maps": None})
+        self.assertEqual(r, {"ok": True})
+        self.assertEqual(self.runner.runs, [(["character_rows"], False, None)])
+        with self.assertRaises(Bad):
+            self.api.post("/api/extract/run", {"rows": ["no_such_row"]})
+        with self.assertRaises(Bad):
+            self.api.post("/api/extract/run", {"rows": "character_rows"})
+        _, r, _ = self.post("/api/extract/cancel", {})
+        self.assertEqual(r, {"ok": True})
+        self.assertTrue(self.runner.cancelled)
+
+    def test_drop_and_act(self):
+        raw = b'{"format": "datapiler-job/1"}'
+        _, r, _ = self.post("/api/jobs/drop", {"name": "job.json", "data": base64.b64encode(raw).decode()})
+        self.assertEqual(r["ok"], True)
+        self.assertEqual(r["again"], False)
+        self.assertEqual(r["card"]["id"], JOB_ID)
+        self.assertEqual(self.runner.added, [("job.json", raw)])
+        with self.assertRaises(Bad):
+            self.api.post("/api/jobs/drop", {"name": "job.json", "data": "%%% not base64"})
+        with self.assertRaises(Bad):
+            self.api.post("/api/jobs/drop", {"name": "job.json", "data": ""})
+        _, r, _ = self.post("/api/jobs/act", {"id": JOB_ID, "what": "start", "confirm_maps": None})
+        self.assertEqual(r["ok"], False)
+        self.assertEqual(r["ask"]["maps"], 98)
+        _, r, _ = self.post("/api/jobs/act", {"id": JOB_ID, "what": "start", "confirm_maps": 98})
+        self.assertEqual(r, {"ok": True})
+        with self.assertRaises(Bad):
+            self.api.post("/api/jobs/act", {"id": "nobody", "what": "start"})
+
+    def test_open_folder_off_windows(self):
+        _, r, _ = self.post("/api/open", {"area": "share"})
+        self.assertEqual(r, {"ok": False, "error": "Opening a folder works on Windows only."})
+        self.assertEqual(self.b.opened, str(self.live.paths.share))
+        with self.assertRaises(Bad):
+            self.api.post("/api/open", {"area": "elsewhere"})
+
+    def test_copy_path(self):
+        f = self.live.paths.share / "roster-counts.json"
+        f.write_bytes(b"{}")
+        _, r, _ = self.post("/api/copy-path", {"name": "roster-counts.json"})
+        self.assertEqual(r, {"ok": True})
+        self.assertEqual(self.b.clipboard, str(f.resolve()))
+        self.assertNotIn(self.tmp.name, json.dumps(r))
+        with self.assertRaises(Bad):
+            self.api.post("/api/copy-path", {"name": "../datapiler.port"})
+
+    def test_a_file_that_fails_the_guard_now_is_never_vouched_for(self):
+        """Found by the security review: Outputs listed every share-named file under "Passed the guard" and Copy
+        path put its path on the clipboard unchecked - a file DataPiler did not write, or one changed since."""
+        share = self.live.paths.share
+        (share / "roster-counts.json").write_bytes(b'{"good": 1}')
+        foreign = b'{"foreign": 1}'
+        (share / "foreign.json").write_bytes(foreign)
+        self.guard.fail[foreign] = 4
+        o = self.get("/api/outputs")
+        got = {f["name"]: (f["ok"], f["failed"]) for f in o["share"]}
+        self.assertEqual(got, {"roster-counts.json": (True, None), "foreign.json": (False, 4)})
+        self.b.clipboard = None
+        _, r, _ = self.post("/api/copy-path", {"name": "foreign.json"})
+        self.assertEqual(r, {"ok": False, "error": "The file does not pass the guard now: check 4. Never share it."})
+        self.assertIsNone(self.b.clipboard)
+        # Changed since: the next listing checks it again.
+        (share / "roster-counts.json").write_bytes(foreign)
+        os.utime(share / "roster-counts.json", ns=(1, 1))
+        o = self.get("/api/outputs")
+        self.assertEqual({f["name"]: f["ok"] for f in o["share"]}, {"roster-counts.json": False, "foreign.json": False})
+        # Unchanged files are not checked again until the text database changes.
+        calls = self.guard.calls
+        self.get("/api/outputs")
+        self.assertEqual(self.guard.calls, calls)
+        self.guard.fail.clear()
+        events.emit("textdb.changed", containers=1, entries=1)
+        o = self.get("/api/outputs")
+        self.assertEqual(self.guard.calls, calls + 2)
+        self.assertTrue(all(f["ok"] for f in o["share"]))
+        # Over the guard's size: check 5, and no path on the clipboard.
+        big = share / "huge.json"
+        big.write_bytes(b" " * (self.api._cap() + 1))
+        _, r, _ = self.post("/api/copy-path", {"name": "huge.json"})
+        self.assertIn("check 5", r["error"])
+        self.assertIsNone(self.b.clipboard)
+
+    def test_settings_post(self):
+        new = self.live.settings.as_dict()
+        new["port"] = 8831
+        seen = []
+        unsub = events.subscribe("settings.saved", lambda t, d: seen.append(t))
+        try:
+            code, r, _ = self.post("/api/settings", {"settings": new})
+        finally:
+            unsub()
+        self.assertEqual((code, r), (200, {"ok": True, "next_start": ["port"]}))
+        self.assertEqual(seen, ["settings.saved"])
+        saved = json.loads((self.root / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["port"], 8831)
+        self.assertEqual(self.live.settings.port, 8831)
+        bad = dict(new, project_dir=str(self.game / "inner"))
+        code, r, _ = self.post("/api/settings", {"settings": bad})
+        self.assertEqual(code, 400)
+        self.assertEqual(r["field"], "project_dir")
+        self.runner.busy_with = {"kind": "job", "id": JOB_ID, "title": "t"}
+        code, r, _ = self.post("/api/settings", {"settings": dict(new, share_dir="share2")})
+        self.assertEqual((code, r["field"]), (400, "share_dir"))
+
+    def test_the_workspace_moves_at_the_next_start(self):
+        """Found by the correctness review: the text database stayed open in the old workspace while the inbox, the
+        runner and Outputs moved to the new one at once."""
+        p = self.live.paths
+        old_ws = p.workspace
+        new = dict(self.live.settings.as_dict(), workspace_dir="ws2")
+        self.runner.busy_with = {"kind": "job", "id": JOB_ID, "title": "t"}         # no longer refused while busy
+        code, r, _ = self.post("/api/settings", {"settings": new})
+        self.assertEqual(code, 200, r)
+        self.assertEqual(r["next_start"], ["workspace_dir"])
+        self.assertEqual(r["note"], api.WORKSPACE_MOVES)
+        self.assertEqual(self.live.settings.workspace_dir, "ws2")                    # saved for the next start
+        self.assertEqual(self.live.paths.workspace, old_ws)                           # in use until then
+        self.assertEqual(self.live.paths.textdb, p.textdb)
+        self.assertFalse((self.root / "ws2").exists())
+        saved = json.loads((self.root / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["workspace_dir"], "ws2")
+        # Saved again unchanged: still waiting for the next start, said again.
+        code, r, _ = self.post("/api/settings", {"settings": new})
+        self.assertEqual(r["next_start"], ["workspace_dir"])
+        # Back to the folder in use: nothing waits.
+        code, r, _ = self.post("/api/settings", {"settings": dict(new, workspace_dir="workspace")})
+        self.assertEqual(r, {"ok": True, "next_start": []})
+        # A share folder inside the workspace in use is refused, though it is outside the new one.
+        code, r, _ = self.post("/api/settings", {"settings": dict(new, share_dir="workspace/share")})
+        self.assertEqual((code, r["field"]), (400, "share_dir"))
+
+    def test_log_share(self):
+        log = logbook.get("job")
+        _, start = logbook.lines_after(0, limit=0)
+        log.info("an ordinary line: %s rows", 12)
+        _, mid = logbook.lines_after(0, limit=0)
+        _, r, _ = self.post("/api/log/share", {"after": start, "upto": mid, "levels": ["INFO", "WARN", "ERROR"],
+                                               "sources": ["job"]})
+        self.assertTrue(r["ok"])
+        self.assertIn("an ordinary line: 12 rows", r["text"])
+        log.info("a line with a planted text: %s", own(PLANTED))
+        _, last = logbook.lines_after(0, limit=0)
+        _, r, _ = self.post("/api/log/share", {"after": start, "upto": last, "levels": ["INFO"], "sources": ["job"]})
+        self.assertEqual(r, {"ok": False, "refused": {"check": 3, "line": last}})
+        _, r, _ = self.post("/api/log/share", {"after": start, "upto": last, "levels": ["INFO"], "sources": ["app"]})
+        self.assertTrue(r["ok"])
+        crafted = [{"seq": 41, "t": "2026-11-08 08:00:00.000", "level": "INFO", "src": "link",
+                    "msg": "from 198.51.100.40"},
+                   {"seq": 42, "t": "2026-11-08 08:00:00.000", "level": "INFO", "src": "link",
+                    "msg": "by zorblax"}]
+        with mock.patch.object(logbook, "lines_after", lambda seq, limit=1000: ([x for x in crafted if x["seq"] > seq], 42)):
+            _, r, _ = self.post("/api/log/share", {"after": 0, "upto": 42, "levels": ["INFO"], "sources": ["link"]})
+            self.assertEqual(r, {"ok": False, "refused": {"check": 4, "line": 41}})
+            _, r, _ = self.post("/api/log/share", {"after": 41, "upto": 42, "levels": ["INFO"], "sources": ["link"]})
+        self.assertEqual(r, {"ok": False, "refused": {"check": 4, "line": 42}})
+
+    def test_owner_rules_for_a_line(self):
+        words = ["zorblax", "QUENTIN-RIG"]
+        for bad in ("C:\\Games", "at d:/x", "\\\\server\\share", "~/x", "zorblax", "ZORBLAX's", "quentin-rig",
+                    "203.0.113.1", "fe80::1"):
+            self.assertTrue(api.owner_hit("a line " + bad, words), bad)
+        for ok in ("<WORKSPACE>\\inbox", "Page: http://127.0.0.1:8831/", "zorblaxian", "08:42:01.123",
+                   "NpcParam: 2,105 rows read in 0.4 s"):
+            self.assertFalse(api.owner_hit(ok, words), ok)
+
+
+if __name__ == "__main__":
+    unittest.main()

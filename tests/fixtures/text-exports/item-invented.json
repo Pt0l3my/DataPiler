@@ -1,0 +1,59 @@
+{
+  "Name": "item",
+  "SourceContainer": "item",
+  "SourceCategory": "Invented",
+  "FmgWrappers": [
+    {
+      "Name": "InventedCharacterNames",
+      "ID": 9001,
+      "Fmg": {
+        "Name": "InventedCharacterNames",
+        "Entries": [
+          {
+            "ID": 9000000,
+            "Text": "Quillon Marrowgate"
+          },
+          {
+            "ID": 9000001,
+            "Text": "the Lamplighter of Corrow"
+          },
+          {
+            "ID": 9000002,
+            "Text": ""
+          },
+          {
+            "ID": 9000003,
+            "Text": null
+          },
+          {
+            "ID": 9000004,
+            "Text": "Serevan the Unlit"
+          }
+        ],
+        "Version": 2,
+        "BigEndian": false,
+        "Unicode": true
+      }
+    },
+    {
+      "Name": "InventedPlaceNames",
+      "ID": 9002,
+      "Fmg": {
+        "Name": "InventedPlaceNames",
+        "Entries": [
+          {
+            "ID": 9100000,
+            "Text": "the Hollow of Ashgrove"
+          },
+          {
+            "ID": 9100001,
+            "Text": "Corrow Landing"
+          }
+        ],
+        "Version": 2,
+        "BigEndian": false,
+        "Unicode": true
+      }
+    }
+  ]
+}

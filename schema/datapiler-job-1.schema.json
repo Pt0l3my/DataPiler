@@ -1,0 +1,599 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "datapiler-job-1.schema.json",
+  "title": "DataPiler job, datapiler-job/1",
+  "description": "A job for DataPiler 0.1: data, never code. DataPiler checks the same rules again itself, and some more that a schema cannot state: each `as` is used once and only tables made by earlier operations are read; columns exist in their table and are of the right type (`key` and `by` take whole numbers or flags, a share file never takes the `name` column of join_names); a job writes at most one share file, under a name no other job here uses; `needs` is not above DataPiler's version; the id is not used by another job here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "id",
+    "title",
+    "ops"
+  ],
+  "properties": {
+    "format": {
+      "const": "datapiler-job/1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^(?!extract-|extract$|refused-)(?!(con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z0-9][a-z0-9-]{2,63}$",
+      "description": "a-z, 0-9 and -, 3 to 64 characters; not starting extract- or refused-, and not a name Windows keeps for a device (con, prn, aux, nul, com0 to com9, lpt0 to lpt9)."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+    },
+    "needs": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
+      "description": "The oldest DataPiler that can run this job, such as 0.1 or 0.1.0."
+    },
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/op_fetch_rows"
+          },
+          {
+            "$ref": "#/$defs/op_load_maps"
+          },
+          {
+            "$ref": "#/$defs/op_read_placements"
+          },
+          {
+            "$ref": "#/$defs/op_join_names"
+          },
+          {
+            "$ref": "#/$defs/op_filter"
+          },
+          {
+            "$ref": "#/$defs/op_count"
+          },
+          {
+            "$ref": "#/$defs/op_distinct"
+          },
+          {
+            "$ref": "#/$defs/op_write_local"
+          },
+          {
+            "$ref": "#/$defs/op_write_share"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "table": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "A table's name: a-z, 0-9 and _, up to 32 characters, starting with a letter."
+    },
+    "column": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+      "description": "A column's name."
+    },
+    "file_name": {
+      "type": "string",
+      "pattern": "^(?!(con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z0-9][a-z0-9_-]{0,63}$",
+      "description": "A file's name without .json: a-z, 0-9, _ and -, up to 64 characters, and not a name Windows keeps for a device (con, prn, aux, nul, com0 to com9, lpt0 to lpt9). Never a path."
+    },
+    "map_id": {
+      "type": "string",
+      "pattern": "^m[0-9]{2}_[0-9]{2}_[0-9]{2}_[0-9]{2}$"
+    },
+    "map_list": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2000,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/map_id"
+      }
+    },
+    "row_id": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "number": {
+      "type": "number",
+      "exclusiveMinimum": -9223372036854775808,
+      "exclusiveMaximum": 9223372036854775808
+    },
+    "value": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/value"
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "eq": {
+              "$ref": "#/$defs/value"
+            },
+            "ne": {
+              "$ref": "#/$defs/value"
+            },
+            "lt": {
+              "$ref": "#/$defs/number"
+            },
+            "le": {
+              "$ref": "#/$defs/number"
+            },
+            "gt": {
+              "$ref": "#/$defs/number"
+            },
+            "ge": {
+              "$ref": "#/$defs/number"
+            },
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/number"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "where": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9_]{0,63}$": {
+          "$ref": "#/$defs/condition"
+        }
+      },
+      "description": "Every condition must hold: {column: value} for equality, or {column: {\"eq\"|\"ne\"|\"lt\"|\"le\"|\"gt\"|\"ge\": value, \"in\": [numbers]}}. Columns of whole numbers, numbers or flags only; a flag takes eq or ne with true or false."
+    },
+    "by": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/column"
+      }
+    },
+    "columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{0,31}$": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/column"
+          }
+        }
+      }
+    },
+    "op_fetch_rows": {
+      "type": "object",
+      "description": "A param's rows through Smithbox's server (the vanilla bank), only the fields named, numbers only. Makes a table of the rows' id and fields.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "param",
+        "fields"
+      ],
+      "properties": {
+        "op": {
+          "const": "fetch_rows"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "param": {
+          "enum": [
+            "NpcParam",
+            "TalkParam",
+            "WorldMapPlaceNameParam",
+            "BonfireWarpParam"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "id",
+              "msgId",
+              "nameId",
+              "npcType",
+              "teamType"
+            ]
+          }
+        },
+        "ids": {
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 65535,
+              "items": {
+                "$ref": "#/$defs/row_id"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "to"
+              ],
+              "properties": {
+                "from": {
+                  "$ref": "#/$defs/row_id"
+                },
+                "to": {
+                  "$ref": "#/$defs/row_id"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "NpcParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id",
+                    "nameId",
+                    "teamType",
+                    "npcType"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "TalkParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id",
+                    "msgId"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapPlaceNameParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "BonfireWarpParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "op_load_maps": {
+      "type": "object",
+      "description": "Loads maps in Smithbox (OpenResource, map resources only), ten at a time, asking above ten. Its view changes, not its data. \"all\" is not accepted in 0.1: no allowed call lists every map.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "maps"
+      ],
+      "properties": {
+        "op": {
+          "const": "load_maps"
+        },
+        "maps": {
+          "$ref": "#/$defs/map_list"
+        }
+      }
+    },
+    "op_read_placements": {
+      "type": "object",
+      "description": "The placed characters of maps loaded in Smithbox (\"all\": the loaded maps). Makes a table of map, entityId, npcParamId, talkId and model, numbers only.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "maps"
+      ],
+      "properties": {
+        "op": {
+          "const": "read_placements"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "maps": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/map_list"
+            },
+            {
+              "const": "all"
+            }
+          ]
+        }
+      }
+    },
+    "op_join_names": {
+      "type": "object",
+      "description": "Joins a table with the local text database by a name number (key, a column of whole numbers). Makes the table's columns, named (a flag) and name (local text: workspace files only).",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "rows",
+        "key",
+        "text"
+      ],
+      "properties": {
+        "op": {
+          "const": "join_names"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "rows": {
+          "$ref": "#/$defs/table"
+        },
+        "key": {
+          "$ref": "#/$defs/column"
+        },
+        "text": {
+          "enum": [
+            "character_names",
+            "place_names"
+          ]
+        }
+      }
+    },
+    "op_filter": {
+      "type": "object",
+      "description": "Keeps the rows where every condition holds.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "rows",
+        "where"
+      ],
+      "properties": {
+        "op": {
+          "const": "filter"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "rows": {
+          "$ref": "#/$defs/table"
+        },
+        "where": {
+          "$ref": "#/$defs/where"
+        }
+      }
+    },
+    "op_count": {
+      "type": "object",
+      "description": "Counts the rows (where every condition holds) per value of the `by` columns. Makes the `by` columns and count.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "rows"
+      ],
+      "properties": {
+        "op": {
+          "const": "count"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "rows": {
+          "$ref": "#/$defs/table"
+        },
+        "by": {
+          "$ref": "#/$defs/by"
+        },
+        "where": {
+          "$ref": "#/$defs/where"
+        }
+      }
+    },
+    "op_distinct": {
+      "type": "object",
+      "description": "The distinct values of the `by` columns.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "rows",
+        "by"
+      ],
+      "properties": {
+        "op": {
+          "const": "distinct"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "rows": {
+          "$ref": "#/$defs/table"
+        },
+        "by": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/by"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        }
+      }
+    },
+    "op_write_local": {
+      "type": "object",
+      "description": "Writes tables to workspace/local/<job id>/<name>.json: local only, names allowed.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name",
+        "tables"
+      ],
+      "properties": {
+        "op": {
+          "const": "write_local"
+        },
+        "name": {
+          "$ref": "#/$defs/file_name"
+        },
+        "tables": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/table"
+          }
+        },
+        "columns": {
+          "$ref": "#/$defs/columns"
+        }
+      }
+    },
+    "op_write_share": {
+      "type": "object",
+      "description": "Writes the tables and columns named (columns for every table) to share/<name>.json, through the guard.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name",
+        "tables",
+        "columns"
+      ],
+      "properties": {
+        "op": {
+          "const": "write_share"
+        },
+        "name": {
+          "$ref": "#/$defs/file_name"
+        },
+        "tables": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/table"
+          }
+        },
+        "columns": {
+          "$ref": "#/$defs/columns"
+        },
+        "notes": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "named_only",
+              "vanilla_rows",
+              "loaded_maps_only",
+              "summary"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

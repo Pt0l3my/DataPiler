@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataPiler (mock)</title>
+<style>
+:root {
+  --bg: #111317; --card: #181b21; --card2: #1e222a; --edge: #2a2f39; --text: #e6e8ec; --mute: #8d94a3;
+  --acc: #b5f320; --acc-ink: #1a2200; --ok: #4fd18b; --warn: #f2b84b; --err: #ff6b6b; --run: #59a8ff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--edge);
+         position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 15px; } .brand span { color: var(--acc); }
+.ver { color: var(--mute); font-size: 11px; margin-right: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--edge);
+        font-size: 11.5px; background: var(--card2); white-space: nowrap; }
+.pill.ok { color: var(--ok); border-color: rgba(79,209,139,.4); }
+.pill.warn { color: var(--warn); border-color: rgba(242,184,75,.4); }
+.pill.err { color: var(--err); border-color: rgba(255,107,107,.45); }
+.pill.mute { color: var(--mute); }
+.spacer { flex: 1; }
+button { font: inherit; color: var(--text); background: var(--card2); border: 1px solid var(--edge); border-radius: 7px; padding: 5px 12px; cursor: pointer; }
+button:hover { border-color: var(--acc); }
+button.pri { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); font-weight: 600; }
+button[disabled] { opacity: .45; cursor: default; }
+.tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
+.tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 9px 12px; color: var(--mute); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--acc); }
+main { padding: 16px; max-width: 1180px; }
+.notice { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: rgba(242,184,75,.09); color: var(--warn); border: 1px solid rgba(242,184,75,.3); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--edge); border-radius: 10px; padding: 14px 16px; }
+.card h3 { margin: 0 0 10px; font-size: 13.5px; }
+.qm { display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; font-size: 10.5px; font-weight: 800;
+      border-radius: 50%; color: var(--acc); background: rgba(181,243,32,.13); margin-left: 6px; cursor: help; vertical-align: 1px; }
+.check { display: grid; grid-template-columns: 20px 1fr; gap: 2px 6px; padding: 4px 0; border-top: 1px solid #20242c; }
+.check:first-of-type { border-top: none; }
+.m.ok { color: var(--ok); } .m.bad { color: var(--err); } .m.warn { color: var(--warn); }
+.sub { grid-column: 2; color: var(--mute); font-size: 12px; }
+code, .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.ph { color: var(--run); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; color: var(--mute); font-weight: 600; font-size: 11.5px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+td { padding: 7px 8px; border-bottom: 1px solid #20242c; vertical-align: middle; }
+tr.off td { opacity: .5; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.chip { padding: 3px 11px; border-radius: 999px; border: 1px solid var(--edge); background: var(--card2); cursor: pointer; font-size: 12px; }
+.chip.on { color: var(--acc); border-color: rgba(181,243,32,.45); }
+.from { font-size: 11px; padding: 1px 7px; border-radius: 6px; border: 1px solid var(--edge); }
+.from.srv { color: var(--run); border-color: rgba(89,168,255,.4); } .from.gd { color: var(--warn); border-color: rgba(242,184,75,.4); }
+.bar { height: 6px; background: #252a33; border-radius: 4px; overflow: hidden; width: 150px; display: inline-block; vertical-align: middle; }
+.bar i { display: block; height: 100%; background: var(--acc); }
+.guided { margin: 4px 0 0; padding-left: 18px; color: var(--mute); font-size: 12px; }
+.drop { border: 2px dashed var(--edge); border-radius: 10px; padding: 22px; text-align: center; color: var(--mute); margin-bottom: 12px; }
+.jobcard { background: var(--card2); border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+.cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
+.cols3 b { display: block; color: var(--mute); font-size: 11.5px; font-weight: 600; margin-bottom: 3px; }
+.cols3 ul { margin: 0; padding-left: 16px; }
+.files { list-style: none; padding: 0; margin: 0; }
+.files li { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid #20242c; }
+.files li:first-child { border-top: none; }
+.files .n { flex: 1; }
+.viewer { background: #0d0f12; border: 1px solid var(--edge); border-radius: 8px; padding: 10px; white-space: pre; overflow: auto; max-height: 260px; }
+.term { background: #0b0d10; border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; height: 380px; overflow: auto; }
+.ln { white-space: pre; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.ln .t { color: #6f7683; } .ln.warn { color: var(--warn); } .ln.err { color: var(--err); } .src { color: var(--run); }
+.form { display: grid; grid-template-columns: 210px 1fr; gap: 8px 12px; align-items: center; }
+.form input[type=text] { width: 100%; background: var(--card2); border: 1px solid var(--edge); color: var(--text); border-radius: 6px; padding: 5px 8px; font: 12px Consolas, monospace; }
+.tab { display: none; } .tab.on { display: block; }
+.mocknote { color: var(--mute); font-size: 11.5px; margin-top: 18px; }
+@media (max-width: 720px) { .cols3 { grid-template-columns: 1fr; } .form { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Data<span>Piler</span></div><div class="ver">0.1 (mock)</div>
+  <span class="pill ok">● Smithbox running</span>
+  <span class="pill ok">● Game closed</span>
+  <span class="pill warn">● Server link on (this session)</span>
+  <div class="spacer"></div>
+  <button>Quit</button>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-t="status" class="on">Status</button><button data-t="extract">Extract</button><button data-t="jobs">Jobs</button>
+  <button data-t="outputs">Outputs</button><button data-t="terminal">Terminal</button><button data-t="settings">Settings</button>
+</nav>
+<main>
+  <!-- ===================================================== Status -->
+  <section class="tab on" id="t-status">
+    <div class="grid">
+      <div class="card"><h3>Smithbox<span class="qm" title="Read from Smithbox's own files and its process - nothing in Smithbox is changed">?</span></h3>
+        <div class="check"><span class="m ok">✓</span><span>Installed in <span class="mono ph">&lt;SMITHBOX&gt;</span></span></div>
+        <div class="check"><span class="m ok">✓</span><span>Build 2.x (placeholder)</span></div>
+        <div class="check"><span class="m ok">✓</span><span>Running</span></div>
+        <div class="check"><span class="m ok">✓</span><span>Its server is switched on <span class="qm" title="System_Enable_Soapstone_Server in Startup.json - read, never written">?</span></span>
+          <span class="sub">It has no password: switch it off in Smithbox when you are done.</span></div>
+        <div class="check"><span class="m ok">✓</span><span>The server answers on 127.0.0.1:22720</span></div>
+        <div class="check"><span class="m ok">✓</span><span>Project open: <span class="mono ph">&lt;PROJECT&gt;</span></span>
+          <span class="sub">Outside the game's folder.</span></div>
+      </div>
+      <div class="card"><h3>The game<span class="qm" title="Read from its folder and its exe's version resource">?</span></h3>
+        <div class="check"><span class="m ok">✓</span><span>Folder <span class="mono ph">&lt;GAME&gt;</span></span></div>
+        <div class="check"><span class="m ok">✓</span><span>Version 1.x (placeholder), the expansion's files present</span></div>
+        <div class="check"><span class="m ok">✓</span><span>Not running <span class="qm" title="Neither eldenring.exe nor start_protected_game.exe - checked every 2 s while the link is on">?</span></span></div>
+        <div class="check"><span class="m ok">✓</span><span>regulation.bin's sha256 read <span class="qm" title="Goes into each share file's provenance block">?</span></span></div>
+      </div>
+      <div class="card"><h3>Server link<span class="qm" title="Read calls only, from a fixed list; off at every start; closed at once if the game starts">?</span></h3>
+        <div class="check"><span class="m warn">●</span><span>On for this session</span><span class="sub">142 calls · the last at 08:41:58 · ListParamRows, GetParamRows</span></div>
+        <div style="margin-top:10px"><button>Switch off</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Extract -->
+  <section class="tab" id="t-extract">
+    <div class="chips"><span class="chip on">Roster</span><span class="chip">Placements</span><span class="chip">Places</span><span class="chip">Everything</span></div>
+    <div class="card">
+      <table>
+        <thead><tr><th></th><th>Type</th><th>From</th><th>Gives</th><th>Goes to</th><th>Progress</th></tr></thead>
+        <tbody>
+          <tr><td><input type="checkbox" checked></td><td>Character rows<span class="qm" title="NpcParam rows: row id, name number (signed - negative means none) and a few numeric fields">?</span></td>
+              <td><span class="from srv">Server</span></td><td>row ids, name numbers</td><td>Workspace + share</td><td><span class="m ok">✓</span> 2,105 rows, 0.4 s</td></tr>
+          <tr><td><input type="checkbox" checked></td><td>Character names<span class="qm" title="The name behind each name number - stays in the workspace, never in a share file">?</span></td>
+              <td><span class="from gd">Guided export</span></td><td>names, local only</td><td>Workspace</td>
+              <td>waiting for the export
+                <ol class="guided"><li>In Smithbox, open the Text Editor</li><li>Choose the container <code>item</code></li><li>Export</li><li>Save into <span class="mono ph">&lt;WORKSPACE&gt;\inbox</span></li></ol></td></tr>
+          <tr><td><input type="checkbox" checked></td><td>Dialogue links<span class="qm" title="TalkParam rows: row id and message number (signed)">?</span></td>
+              <td><span class="from srv">Server</span></td><td>row ids, message numbers</td><td>Workspace + share</td><td><span class="bar"><i style="width:38%"></i></span> 312 of 820</td></tr>
+          <tr class="off"><td><input type="checkbox" disabled></td><td>Map placements<span class="qm" title="Needs the maps loaded in Smithbox - DataPiler can load them through OpenResource, asking first above ten maps">?</span></td>
+              <td><span class="from srv">Server</span></td><td>entity, row, dialogue and model ids per map</td><td>Workspace + share</td><td>load the maps in Smithbox first</td></tr>
+          <tr><td><input type="checkbox"></td><td>Places<span class="qm" title="WorldMapPlaceNameParam and BonfireWarpParam numbers; place names by a guided export, local only">?</span></td>
+              <td><span class="from srv">Server</span> <span class="from gd">Guided</span></td><td>place and warp numbers</td><td>Workspace + share</td><td>-</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:12px;display:flex;gap:8px"><button class="pri">Run</button><button>Cancel</button></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Jobs -->
+  <section class="tab" id="t-jobs">
+    <div class="drop">Drop a job file here - or <button>Choose file</button><div style="margin-top:6px;font-size:12px">Checked at once; nothing runs until Start.</div></div>
+    <div class="jobcard">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <b>Roster: named characters per team</b><span class="pill mute">en-0007-roster-counts</span><span class="pill mute">datapiler-job/1</span>
+        <span class="pill ok">✓ checked</span><span class="mono" style="color:var(--mute)">sha256 4c1e…9a02</span>
+      </div>
+      <div class="cols3">
+        <div><b>Reads</b><ul><li>NpcParam rows: id, nameId, teamType, npcType</li><li>TalkParam rows: id, msgId</li></ul></div>
+        <div><b>Computes</b><ul><li>joins the character names - local</li><li>counts named characters per teamType</li></ul></div>
+        <div><b>Writes</b><ul><li>share file <code>roster-counts.json</code>: 1 table</li></ul></div>
+      </div>
+      <div style="display:flex;gap:8px"><button class="pri">Start</button><button>Remove</button></div>
+    </div>
+    <div class="jobcard">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>Placements of limgrave</b><span class="pill err">✗ refused</span></div>
+      <div style="margin-top:8px;color:var(--err)">ops[2].fields[1]: <code>modelName</code> is not a field DataPiler reads (ids and numbers only)</div>
+      <div style="margin-top:8px"><button>Remove</button></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Outputs -->
+  <section class="tab" id="t-outputs">
+    <div class="grid">
+      <div class="card"><h3>Workspace <span class="pill err">Local only - never share</span></h3>
+        <ul class="files"><li><span class="n mono">textdb.sqlite</span><span>3.1 MB</span><span class="pill mute">guided import</span></li>
+          <li><span class="n mono">npc_rows.json</span><span>212 KB</span><span class="pill mute">Extract</span></li>
+          <li><span class="n mono">npc_named.json</span><span>240 KB</span><span class="pill mute">en-0007</span></li></ul>
+        <div style="margin-top:10px"><button>Open folder</button></div></div>
+      <div class="card"><h3>Share <span class="pill ok">Passed the guard</span></h3>
+        <ul class="files"><li><span class="n mono">roster-counts.json</span><span>1.2 KB</span><span class="pill mute">en-0007</span><button>Show</button></li></ul>
+        <div style="margin:10px 0 6px;color:var(--mute);font-size:12px">roster-counts.json · sha256 9b2f…11c7 · checks 1-5 ✓</div>
+<div class="viewer mono">{
+  "format": "datapiler-share/1",
+  "job": {"id": "en-0007-roster-counts", "sha256": "…"},
+  "provenance": {"game_version": "…", "regulation_sha256": "…", "expansion": true,
+                 "language": "engus", "smithbox_build": "…", "datapiler": "0.1.0", "date": "2026-11-08"},
+  "tables": [{"name": "per_team",
+              "columns": [{"name": "teamType", "type": "int"}, {"name": "count", "type": "int"}],
+              "rows": [[0, 112], [6, 48], [24, 9]]}],
+  "notes": ["named_only"]
+}</div>
+        <div style="margin-top:10px;display:flex;gap:8px"><button>Copy path</button><button>Open folder</button></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Terminal -->
+  <section class="tab" id="t-terminal">
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <span class="chip on">INFO+</span><span class="chip">WARN+</span><span class="chip">link</span><span class="chip">extract</span><span class="chip">job</span><span class="chip">guard</span>
+      <div class="spacer"></div><button>Pause scroll</button><button>Copy for sharing</button></div>
+    <div class="term">
+      <div class="ln"><span class="t">2026-11-08 08:40:02.114</span>  INFO   <span class="src">app</span>      DataPiler 0.1.0 - page http://127.0.0.1:8831/</div>
+      <div class="ln"><span class="t">2026-11-08 08:40:02.390</span>  INFO   <span class="src">smithbox</span> found in &lt;SMITHBOX&gt; - running, server on, project &lt;PROJECT&gt;</div>
+      <div class="ln"><span class="t">2026-11-08 08:41:10.006</span>  INFO   <span class="src">link</span>     switched on for this session</div>
+      <div class="ln"><span class="t">2026-11-08 08:41:10.512</span>  INFO   <span class="src">extract</span>  NpcParam: 2,105 rows read in 0.4 s</div>
+      <div class="ln"><span class="t">2026-11-08 08:41:58.800</span>  INFO   <span class="src">extract</span>  TalkParam: 312 of 820 rows</div>
+      <div class="ln warn"><span class="t">2026-11-08 08:42:03.877</span>  WARN   <span class="src">link</span>     the game started - the server link is closed</div>
+      <div class="ln err"><span class="t">2026-11-08 08:43:10.002</span>  ERROR  <span class="src">guard</span>    test-share.json not written: check 3 at tables[0].rows[4][1]</div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Settings -->
+  <section class="tab" id="t-settings">
+    <div class="card"><div class="form">
+      <label>Smithbox folder</label><input type="text" value="&lt;SMITHBOX&gt; (your path here)">
+      <label>Game folder</label><input type="text" value="&lt;GAME&gt; (your path here)">
+      <label>Project folder</label><input type="text" value="&lt;PROJECT&gt; - outside the game's folder">
+      <label>Workspace</label><input type="text" value="workspace">
+      <label>Share folder</label><input type="text" value="share">
+      <label>Text language</label><input type="text" value="engus">
+      <label>Page port</label><input type="text" value="(any free one)">
+      <label>Log: size, files kept</label><input type="text" value="2 MB, 5">
+      <label>Server <span class="qm" title="Smithbox's own address - shown, never editable">?</span></label><span class="mono">127.0.0.1:22720</span>
+      <label>Server link this session</label><span><button>Switch on</button> <span style="color:var(--mute)">off at every start</span></span>
+    </div><div style="margin-top:12px"><button class="pri">Save</button></div></div>
+  </section>
+  <div class="mocknote">A static mock of the page in DataPiler-design-0001.md - its states are made up to show the layout, and it makes no network calls.</div>
+</main>
+<script>
+document.getElementById("tabs").addEventListener("click", function (e) {
+  var b = e.target.closest("button[data-t]"); if (!b) return;
+  document.querySelectorAll("#tabs button").forEach(function (x) { x.classList.toggle("on", x === b); });
+  document.querySelectorAll(".tab").forEach(function (s) { s.classList.toggle("on", s.id === "t-" + b.dataset.t); });
+});
+</script>
+</body>
+</html>

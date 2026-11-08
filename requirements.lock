@@ -1,0 +1,18 @@
+# datapiler-lock/1
+# pythons: 3.10 3.11 3.12 3.13 3.14 3.15
+# download-mb: 7
+# grpcio 1.85.1 Apache-2.0
+# protobuf 7.36.2 BSD-3-Clause
+# typing-extensions 4.16.0 PSF-2.0
+
+grpcio==1.85.1 \
+    --hash=sha256:aa41e010b528bc596fc7c3020640a84987a8f3d3c239a93336faa86ca41756a0 \
+    --hash=sha256:27b519f6594da04cf2dda1378f46811b2b6160d60a01f88a0ec4de009bbbfa46 \
+    --hash=sha256:eaad7e6aa9ac3aded4f6bc86a18bf2cff3de356f972bf32a5558df9788085b85 \
+    --hash=sha256:c17d61af28b322c48ab3881c685e5f6e7e367c56844cf589ee7707be9477b969 \
+    --hash=sha256:5f015600190124813032da0560ec950c13c257f77c1307abd77c393c0994f76f \
+    --hash=sha256:b32f39c56d22d2e8722eececd4376074d94e01595a29f4f944ae0b6cea1caa70
+protobuf==7.36.2 \
+    --hash=sha256:a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

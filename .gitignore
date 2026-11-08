@@ -1,0 +1,41 @@
+# Game data and Smithbox's files never enter the repository (CLAUDE.md, Game data)
+workspace/
+share/
+exports/
+**/game-export/
+*.csv
+*.fmg
+*.fmg.xml
+*.dcx
+*.bnd
+*.bdt
+*.bhd
+*.sl2
+regulation.bin
+oo2core*.dll
+
+# Logs and local state (DataPiler's run-time files, build plan §2)
+logs/
+*.log
+*.port
+settings.local.*
+.venv/
+/jobs/
+/settings.json
+/datapiler.lock
+**/__pycache__/
+
+# Build output
+/build/
+/dist/
+*.exe
+*.obj
+*.pdb
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

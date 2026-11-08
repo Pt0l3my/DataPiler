@@ -1,0 +1,85 @@
+# DataPiler's checks on every push and pull request (build plan §8.4; settled S14).
+# Every action is pinned by its commit; the tag it was read from is in the comment beside it.
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  repocheck:
+    name: The repository's own check (S14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: No run-time folder, game file, share file, IP address, user's folder or e-mail address in the tree
+        run: python -I tools/repocheck.py
+
+  tests-linux:
+    name: Tests on Linux, standard library only
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: The tests (the link tests skip without grpcio)
+        run: python -I -m unittest discover -s tests
+
+  tests-windows:
+    name: Tests on Windows, without and with the link's libraries
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: The tests, standard library only
+        run: python -I -m unittest discover -s tests
+      - name: A venv outside the checkout
+        run: python -m venv "${{ runner.temp }}\venv"
+      - name: The lock's libraries, installed as DataPiler.ps1 installs them
+        run: |
+          & "${{ runner.temp }}\venv\Scripts\python.exe" -m pip install --isolated --disable-pip-version-check --no-input --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r requirements.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: The tests with grpcio and protobuf (the link tests run)
+        run: |
+          & "${{ runner.temp }}\venv\Scripts\python.exe" -I -m unittest discover -s tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  launcher:
+    name: The launcher builds with BUILD.md's commands
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: MinGW-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64
+      - name: The launcher's tests, with the build itself
+        env:
+          DATAPILER_NEED_MINGW: "1"
+        run: python -I -m unittest discover -s tests -p test_launcher_src.py -v

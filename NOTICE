@@ -1,0 +1,89 @@
+DataPiler
+=========
+
+DataPiler is under the MIT licence in LICENSE. This file lists what it takes from others, with the terms each comes
+under. Every licence named here was read, from the files the project itself publishes, before it was listed.
+
+
+1. LLM Jobrunner 1.2 (the owner's own code)
+--------------------------------------------
+
+Copied and adapted under DataPiler's MIT licence (DataPiler's decision DP7; neither project depends on the other):
+
+- launcher-src/launcher.cpp, launcher-src/app.rc and launcher-src/app.manifest, from Jobrunner's launcher-src/,
+  and BUILD.md's commands, from its BUILD.md;
+- the page's safety parts and frame in datapiler/server.py (the Host, Origin and token guard, the headers and the
+  content-security policy with its nonce), the port file and the start log in datapiler.py, write_atomic in
+  datapiler/fileio.py, and parts of the page's markup, style and script in datapiler/page/;
+- the drop zone's check on arrival in datapiler/runner.py, the depth check in datapiler/jobs.py and the string walk
+  in datapiler/guard.py, all from llm_jobrunner.py.
+
+
+2. SoapstoneLib (MIT)
+---------------------
+
+soapstone/common_pb2.py, soapstone/internal_pb2.py and soapstone/soapstone_pb2.py are generated from SoapstoneLib's
+.proto files, as Smithbox's repository carries them at the commit soapstone/SOURCE.md names. SoapstoneLib's licence,
+as fetched, is soapstone/LICENSE:
+
+  MIT License
+
+  Copyright (c) 2022 thefifthmatt
+
+  Permission is hereby granted, free of charge, to any person obtaining
+  a copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to
+  the following conditions:
+
+  The above copyright notice and this permission notice shall be
+  included in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+  OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Smithbox itself is not part of DataPiler and is never bundled, downloaded or redistributed by it.
+
+
+3. The server link's libraries: downloaded, never shipped
+----------------------------------------------------------
+
+DataPiler does not include these. At the first start, once the owner answers Y, DataPiler.ps1 has pip download them
+from pypi.org into .venv in DataPiler's folder, each wheel checked against its sha256 in requirements.lock. Each
+package's own licence files come with it, in its .dist-info folder inside .venv.
+
+- grpcio 1.85.1: Apache License 2.0. Its licence file also carries a BSD 3-Clause licence (Copyright 2016,
+  Google Inc.), for gRPC's Objective-C build files, and the Mozilla Public License 2.0, for the root certificates
+  it ships (grpc/_cython/_credentials/roots.pem).
+- protobuf 7.36.2: BSD 3-Clause licence (Copyright 2008 Google Inc.).
+- typing-extensions 4.16.0: Python Software Foundation License Version 2 (PSF-2.0). grpcio needs it, so the lock
+  names it too.
+
+DataPiler imports them only in datapiler/link.py and soapstone/, and starts without them (no server link) when the
+owner answers N.
+
+
+4. The released DataPiler.exe: the MinGW-w64 runtime linked into it
+---------------------------------------------------------------------
+
+The repository holds no exe. The release workflow builds DataPiler.exe from launcher-src/ with MSYS2's MinGW-w64
+GCC, linked -static, so parts of the toolchain's runtime are inside the exe:
+
+- the mingw-w64 runtime (its CRT): under the Zope Public License 2.1, with parts in the public domain and parts
+  under other permissive licences; ZPL 2.1 and several of those ask that their copyright notices and disclaimers
+  go with a binary;
+- winpthreads, which MSYS2's GCC (its posix thread model) links for the C++ runtime: under the MIT (Expat) licence,
+  with parts under BSD 3-Clause licences, which ask the same;
+- GCC's own runtime libraries (libgcc, libstdc++): under the GPL version 3 with the GCC Runtime Library Exception,
+  which lets a program compiled with GCC be distributed under its own terms and asks for no notice.
+
+The release workflow copies the licence files of these parts from the toolchain that built the exe into
+THIRD-PARTY-NOTICES.txt and attaches that file to the release beside DataPiler.exe and its sha256. Those terms
+cover the runtime parts only; DataPiler's own code in the exe stays under the MIT licence in LICENSE.

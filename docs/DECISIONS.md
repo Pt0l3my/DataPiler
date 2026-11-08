@@ -9,7 +9,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 ## By date
 
 - **2026-11-08.** DP1 (what DataPiler is), DP2 (its name), DP3 (a public repository of its own), DP4 (the Smithbox
-  server link, game closed) and DP5 (the design asked of the PandorumLLM session).
+  server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
+  (Jobrunner's code copied).
 - **Open.** None.
 
 ## DP1
@@ -88,3 +89,29 @@ asked of the PandorumLLM session, whose LLM Jobrunner already has the same shape
 passes on: [requests/0001-design.md](requests/0001-design.md). DataPiler is built from its answer.
 
 **Owner's words.** "for the design you could ask PandorumLLM agent (write request)."
+
+## DP6
+
+**Design 0001 adopted** · *2026-11-08 · The owner's act*
+
+**Decision.** The PandorumLLM session's answer to request 0001, [design/0001-design.md](design/0001-design.md) with
+its mock [design/0001-mock.html](design/0001-mock.html), is DataPiler's design, which the owner brought back to be
+built from. What the designers settled from its open points is in [design/settled.md](design/settled.md) (S1 onwards).
+
+**Owner's words.** The owner passed on the design and its mock without comment, to be built from (DP5: "for the design
+you could ask PandorumLLM agent").
+
+## DP7
+
+**LLM Jobrunner's code copied** · *2026-11-08 · Decided by the owner, as recommended*
+
+**Question.** Design 0001 reuses the owner's LLM Jobrunner: the launcher (its C++ source, manifest, resource script and
+`BUILD.md`) and the page's safety parts (the local-only guard, the per-start token, the content-security policy, the
+port file, the drop zone and the Terminal tab). May they be copied into this public repository under its MIT licence,
+with a README line naming Jobrunner as the source, Jobrunner itself untouched and neither depending on the other? Or
+written afresh from the design?
+
+**Decision.** Copied, adapted for DataPiler (a visible PowerShell window, the single-instance check, a 60 s wait, its
+name and version), under DataPiler's MIT licence, with the README line.
+
+**Owner's words.** "Copy it (Recommended)".

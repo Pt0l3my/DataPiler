@@ -243,6 +243,13 @@ class Release(unittest.TestCase):
         self.assertEqual(self.wf["on"]["push"]["tags"], ["v*"])
         self.assertFalse(self.wf["on"]["workflow_dispatch"])  # no inputs: the version comes from VERSION
 
+    def test_a_published_tags_push_stops_at_the_gate(self):
+        gate = self.wf["jobs"]["gate"]
+        self.assertEqual(write_permissions(gate.get("permissions")), [])
+        self.assertIn("releases/tags/$GITHUB_REF_NAME", runs(gate))
+        self.assertEqual(self.wf["jobs"]["build"]["needs"], "gate")
+        self.assertEqual(self.wf["jobs"]["build"]["if"], "needs.gate.outputs.go == 'true'")
+
     def test_the_button_never_reuses_a_tag_and_targets_its_own_commit(self):
         text = "\n".join(runs(job) for job in self.wf["jobs"].values())
         self.assertIn("already exists", text)

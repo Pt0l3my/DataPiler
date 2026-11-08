@@ -17,8 +17,31 @@ on:
 permissions: {}
 
 jobs:
+  # Publishing a draft that Run workflow made creates its tag, and that tag's push starts this workflow again. A
+  # release published for the tag already holds everything, so the run stops here instead of failing later.
+  gate:
+    name: Stop if the tag's release is already published
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=true
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "the release for $GITHUB_REF_NAME is already published: nothing to do"
+            go=false
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build DataPiler.exe on Windows with MSYS2's MinGW-w64
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
     runs-on: windows-latest
     permissions:
       contents: read

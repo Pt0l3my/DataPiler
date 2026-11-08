@@ -1,7 +1,7 @@
-# DataPiler.exe, built from launcher-src/ when the owner pushes a version tag, and attached with its sha256 to a
-# draft release for that tag (settled S4; build plan P10), beside one zip of the whole app: the tagged source as
-# `git archive` makes it, with the built exe and the toolchain's notices placed in it, and its sha256 (settled S24),
-# so the owner downloads one file. Publishing the release stays the owner's act. It starts in either of two ways:
+# DataPiler.exe, built from launcher-src/ (settled S4; build plan P10), placed in one zip of the whole app: the
+# tagged source as `git archive` makes it, with the built exe and the toolchain's notices in it (settled S24). The
+# draft release carries the zip, its sha256 and the notices on their own too (DP9); the exe's sha256 is in this
+# workflow's log, so the owner downloads one file. Publishing the release stays the owner's act. It starts in either of two ways:
 # a version tag the owner pushes, or the owner's "Run workflow" button on GitHub's Actions page (settled S4's note),
 # which reads the version from datapiler/__init__.py and makes the draft for tag v<version>; GitHub creates that tag
 # when the owner publishes the draft.
@@ -164,5 +164,5 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then where="--verify-tag"; else where="--target=$GITHUB_SHA"; fi
           notes="src/docs/release-notes/${TAG#v}.md"
           if [ ! -s "$notes" ]; then echo "::error::no release notes at docs/release-notes/${TAG#v}.md"; exit 1; fi
-          { tr -d '\r' < "$notes"; printf '\n**Files**\n- `%s.zip`: the whole app, the source at this commit with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it; `%s.zip.sha256` holds its sha256.\n- `DataPiler.exe` and `DataPiler.exe.sha256`: the launcher, built by this workflow from `launcher-src/` at this commit; BUILD.md says how to compare it with your own build.\n- `THIRD-PARTY-NOTICES.txt`: the notices of the MinGW-w64 runtime parts linked into the exe.\n' "$app" "$app"; } > notes.md
-          gh release create "$TAG" DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft "$where" --title "DataPiler ${TAG#v}" --notes-file notes.md
+          { tr -d '\r' < "$notes"; printf '\n**Files**\n- `%s.zip`: the whole app, the source at this commit with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it; `%s.zip.sha256` holds its sha256.\n- `THIRD-PARTY-NOTICES.txt`: the notices of the MinGW-w64 runtime parts linked into the exe, also inside the zip.\n- The exe was built by this workflow from `launcher-src/` at this commit; its sha256 is in the run'"'"'s log (%s/%s/actions/runs/%s), and BUILD.md says how to compare it with your own build.\n' "$app" "$app" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"; } > notes.md
+          gh release create "$TAG" THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft "$where" --title "DataPiler ${TAG#v}" --notes-file notes.md

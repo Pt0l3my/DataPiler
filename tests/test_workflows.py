@@ -315,7 +315,10 @@ class Release(unittest.TestCase):
             "actions/upload-artifact@"))
         self.assertIn("build/THIRD-PARTY-NOTICES.txt", upload["with"]["path"])
         create = next(l for l in runs(self.wf["jobs"]["release"]).splitlines() if "gh release create" in l)
-        self.assertIn("DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt", create)
+        self.assertIn('gh release create "$TAG" THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft', create)
+        # DP9: the exe travels inside the zip only; its sha256 stays in the run's log, not among the assets
+        self.assertNotIn("DataPiler.exe ", create)
+        self.assertNotIn("DataPiler.exe.sha256", create)
         with open(os.path.join(_repo.ROOT, "NOTICE"), encoding="utf-8") as f:
             notice = f.read()
         self.assertIn("THIRD-PARTY-NOTICES.txt", notice)

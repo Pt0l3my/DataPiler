@@ -10,7 +10,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 
 - **2026-11-08.** DP1 (what DataPiler is), DP2 (its name), DP3 (a public repository of its own), DP4 (the Smithbox
   server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
-  (Jobrunner's code copied). DP8 (what a share file may hold).
+  (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries).
 - **Open.** None.
 
 ## DP1
@@ -141,3 +141,22 @@ that covers more than half of a game table's rows. The leads it allows go to a n
 **Owner's words.** "Only what a feature needs (Recommended)".
 
 **Follows from.** Request 0001's rules; CLAUDE.md, Game data; EldenNet ER08 §7 item 3.
+
+## DP9
+
+**What a release carries** · *2026-11-08 · Decided by the owner*
+
+**Question.** DataPiler 0.1.0's draft release carried the zip of the whole app (with the exe and the toolchain's
+notices inside), its sha256, and also the exe, the exe's sha256 and the notices on their own. Asked why the exe was
+attached separately, the assistant explained it was left over from S4, before the zip (S24), and proposed releases
+with only the zip and its sha256; asked what `THIRD-PARTY-NOTICES.txt` is, and whether it could live in the
+repository and the README instead, the assistant explained that the MinGW-w64 runtime's licences ask that the notices
+go with every copy of the exe, so they must stay in the zip, and recommended the zip only, with a README line.
+
+**Decision.** From the next release on, a release carries the zip (with the exe and the notices inside), the zip's
+sha256, and the notices as their own file too; the exe and its sha256 are no longer attached on their own, and the
+exe's sha256 is in the release workflow's log, which the release's notes link. The README's Licence section names
+the notices. 0.1.0's draft stays as it was built.
+
+**Owner's words.** "alright" (to the exe's explanation), then: "let's do both then (in future releases), as separate
+doc in github release and inside zip."

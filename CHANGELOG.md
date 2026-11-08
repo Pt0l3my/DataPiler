@@ -3,7 +3,13 @@
 All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init__.py`; a release is tagged
 `v<version>`.
 
-## 0.1.0 (unreleased)
+## Unreleased
+
+- **Releases carry fewer files (DP9):** the zip (with the exe and the notices inside), its sha256, and
+  `THIRD-PARTY-NOTICES.txt` on its own too; the exe's sha256 is in the release workflow's log, which the notes link.
+  The README's Licence section names the notices.
+
+## 0.1.0 (2026-11-08)
 
 The first version, built from [design 0001](docs/design/0001-design.md), what was settled from it and by the build
 ([docs/design/settled.md](docs/design/settled.md), S1 to S26) and the owner's decisions DP1 to DP8.

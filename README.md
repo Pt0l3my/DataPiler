@@ -106,4 +106,6 @@ DataPiler reads the file and never writes it.
 
 ## Licence
 
-[MIT](LICENSE). ELDEN RING is a trademark of FromSoftware and Bandai Namco.
+[MIT](LICENSE). The exe is linked with parts of the MinGW-w64 runtime, whose licences ask that their notices go with
+it: they are in `THIRD-PARTY-NOTICES.txt`, inside each release's zip and attached to the release beside it
+([NOTICE](NOTICE), section 4). ELDEN RING is a trademark of FromSoftware and Bandai Namco.

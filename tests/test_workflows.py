@@ -237,10 +237,17 @@ class Release(unittest.TestCase):
     def setUp(self):
         self.wf = load(RELEASE)
 
-    def test_only_on_tags(self):
-        self.assertEqual(list(self.wf["on"]), ["push"])
+    def test_only_on_tags_or_the_owners_button(self):
+        self.assertEqual(list(self.wf["on"]), ["push", "workflow_dispatch"])
         self.assertEqual(list(self.wf["on"]["push"]), ["tags"])
         self.assertEqual(self.wf["on"]["push"]["tags"], ["v*"])
+        self.assertFalse(self.wf["on"]["workflow_dispatch"])  # no inputs: the version comes from VERSION
+
+    def test_the_button_never_reuses_a_tag_and_targets_its_own_commit(self):
+        text = "\n".join(runs(job) for job in self.wf["jobs"].values())
+        self.assertIn("already exists", text)
+        self.assertIn("--target=$GITHUB_SHA", text)
+        self.assertIn("--verify-tag", text)
 
     def test_a_draft_only(self):
         text = "\n".join(runs(job) for job in self.wf["jobs"].values())

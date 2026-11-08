@@ -42,7 +42,10 @@ Put `DataPiler.exe` in DataPiler's folder, beside `DataPiler.ps1`.
 
 ## The release workflow
 
-`.github/workflows/release.yml` runs only when the owner pushes a version tag (`v0.1.0` for 0.1.0). On
+`.github/workflows/release.yml` runs when the owner pushes a version tag (`v0.1.0` for 0.1.0), or when the owner
+presses **Run workflow** on the workflow's page under GitHub's Actions tab, choosing the branch to release. The button
+takes the version from `VERSION` and makes the draft for tag `v<version>`, refusing a tag that already exists; GitHub
+creates the tag when the draft is published. On
 `windows-latest`, with MSYS2's MinGW-w64, it builds the exe from `launcher-src/` with the commands above, checks that
 the tag names `VERSION`, and prints the compiler's versions and the exe's sha256. The exe is linked `-static`, so
 parts of the MinGW-w64 runtime are inside it; the workflow copies their licence files from the toolchain into

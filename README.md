@@ -21,6 +21,9 @@ and what changed in [CHANGELOG.md](CHANGELOG.md).
 - **Get it:** each release has one zip of the whole app, `DataPiler-<version>.zip` (the source at that version with
   `DataPiler.exe` built into it), and its sha256 beside it. Download the zip, check it against its sha256, and unpack
   it anywhere you like.
+  - **Making a release:** on GitHub, open Actions › release › **Run workflow**, choose the branch, and run it. A few
+    minutes later a draft release `v<version>` holds the zip; publish it, or download it from the draft. Pushing a
+    `v<version>` tag does the same.
 - **Start:** double-click `DataPiler.exe` in the unpacked folder.
   - It opens a PowerShell window titled DataPiler, which checks Python and runs the app; the window shows the log.
   - Once the page is up, the exe opens it in your browser: `http://127.0.0.1:<port>/`.

@@ -38,3 +38,9 @@ EldenNet, and its personal list never leaves the owner's PC. So `tools/repocheck
 need no list of anyone's names: besides the run-time folders, game files, share files and IP addresses, a user's
 folder (unless its name is a placeholder or a generic one) and an e-mail address other than a noreply or an example
 one. The owner's personal words stay with the sweep's pre-push gate.
+
+**S4, note of 2026-11-08.** This session's git proxy refuses to push tags (HTTP 403), so the assistant cannot start a
+release. The release workflow therefore also has a **Run workflow** button (`workflow_dispatch`, no inputs): the owner
+chooses the branch, the version comes from `VERSION`, and the draft release targets that commit for tag
+`v<version>`, which GitHub creates when the owner publishes it; a tag that already exists is refused. Publishing stays
+the owner's act either way.

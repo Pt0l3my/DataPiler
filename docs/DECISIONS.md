@@ -12,7 +12,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
   (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries). DP10 (the zip's folder), DP11 (an update
   button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session. DP13 (design
-  0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page).
+  0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page). DP15 (Smithbox
+  seen by its process at all times).
 - **Open.** None.
 
 ## DP1
@@ -227,3 +228,16 @@ and the like in place of the owner's real folders (in Settings, the picker and D
 **Decision.** Yes, off by default.
 
 **Owner's words.** "Add it, off by default (Recommended)".
+
+## DP15
+
+**Smithbox seen by its process at all times** · *2026-11-08 · Decided by the owner*
+
+**Decision.** DataPiler watches for a running Smithbox from its start and all the time it runs, whatever its Settings
+say: the top bar and Status read "running" as soon as the process is seen, with its build, and say when it stops. When
+the Smithbox folder setting is blank, or differs from the running Smithbox's folder, the running one's folder is
+offered as Detect's find with Use; nothing is saved by itself. The folder shows on the local page only (masked under
+DP14) and is never logged. With a Smithbox folder known, Detect goes on to the project and game folders (DP13).
+
+**Owner's words.** "you could also add this process detection in general, so datapiler could see smithbox process
+right away"

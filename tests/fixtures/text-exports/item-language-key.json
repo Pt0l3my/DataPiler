@@ -1,0 +1,40 @@
+{
+  "Name": "item",
+  "SourceContainer": "item",
+  "SourceCategory": "Invented",
+  "FmgWrappers": [
+    {
+      "Name": "InventedCharacterNames",
+      "ID": 9001,
+      "Fmg": {
+        "Name": "InventedCharacterNames",
+        "Entries": [
+          {
+            "ID": 9000000,
+            "Text": "Quillon Marrowgate"
+          },
+          {
+            "ID": 9000001,
+            "Text": "the Lamplighter of Corrow"
+          },
+          {
+            "ID": 9000002,
+            "Text": ""
+          },
+          {
+            "ID": 9000003,
+            "Text": null
+          },
+          {
+            "ID": 9000004,
+            "Text": "Serevan the Unlit"
+          }
+        ],
+        "Version": 2,
+        "BigEndian": false,
+        "Unicode": true
+      }
+    }
+  ],
+  "InventedLanguage": "frafr"
+}

@@ -1,0 +1,104 @@
+# DataPiler.exe, built from launcher-src/ when the owner pushes a version tag, and attached with its sha256 to a
+# draft release for that tag (settled S4; build plan P10). Publishing the release stays the owner's act.
+# Every action is pinned by its commit; the tag it was read from is in the comment beside it.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build DataPiler.exe on Windows with MSYS2's MinGW-w64
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e  # v2.33.0
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+      - name: The tag names datapiler/__init__.py's VERSION
+        run: |
+          version=$(tr -d '\r' < datapiler/__init__.py | sed -n 's/^VERSION = "\([0-9][0-9.]*\)"$/\1/p')
+          if [ -z "$version" ]; then echo "::error::no VERSION line read from datapiler/__init__.py"; exit 1; fi
+          echo "VERSION $version, tag $GITHUB_REF_NAME"
+          test "v$version" = "$GITHUB_REF_NAME"
+      - name: Build as BUILD.md says
+        run: |
+          mkdir -p build
+          cp launcher-src/launcher.cpp launcher-src/app.rc launcher-src/app.manifest build/
+          cd build
+          windres app.rc -O coff -o app.res
+          g++ -std=c++17 -O2 -municode -mwindows -static -s -Wl,--no-insert-timestamp launcher.cpp app.res -o DataPiler.exe -lshell32 -lole32
+          g++ --version | head -n 1
+          ld --version | head -n 1
+          pacman -Q mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+          sha256sum DataPiler.exe | tee DataPiler.exe.sha256
+      # The exe is linked -static: parts of the mingw-w64 runtime (its CRT, and winpthreads with MSYS2's posix-thread
+      # GCC) are inside it, and their licences ask that their notices go with a binary (NOTICE, section 4).
+      - name: The toolchain's notices, which go with the exe
+        run: |
+          lic=/mingw64/share/licenses
+          ls "$lic"
+          out=build/THIRD-PARTY-NOTICES.txt
+          printf '%s\n\n' "DataPiler.exe is linked statically with MSYS2's MinGW-w64 toolchain. These are the notices of the runtime parts inside it, copied from the toolchain that built it (NOTICE, section 4)." > "$out"
+          found=""
+          for dir in "$lic"/*crt* "$lic"/*winpthread* "$lic"/gcc-libs; do
+            [ -d "$dir" ] || continue
+            d=$(basename "$dir")
+            found="$found $d"
+            for f in "$dir"/*; do
+              [ -f "$f" ] || continue
+              printf '==== %s/%s ====\n\n' "$d" "$(basename "$f")" >> "$out"
+              tr -d '\r' < "$f" >> "$out"
+              printf '\n\n' >> "$out"
+            done
+          done
+          echo "notices from:$found"
+          case "$found" in *crt*) ;; *) echo "::error::the mingw-w64 CRT's licence was not found in $lic"; exit 1;; esac
+          case "$found" in *winpthread*) ;; *) echo "::error::winpthreads' licence was not found in $lic"; exit 1;; esac
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: launcher
+          path: |
+            build/DataPiler.exe
+            build/DataPiler.exe.sha256
+            build/THIRD-PARTY-NOTICES.txt
+          if-no-files-found: error
+
+  release:
+    name: Attach it to a draft release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: launcher
+      - name: Check the exe
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum -c DataPiler.exe.sha256
+          file DataPiler.exe | grep -q "PE32+ executable (GUI) x86-64"
+          strings -a -el DataPiler.exe | grep -qx "${TAG#v}.0"
+          grep -q "==== crt/" THIRD-PARTY-NOTICES.txt
+      - name: A draft release for the tag, with the exe, its sha256 and the toolchain's notices
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt --draft --verify-tag --title "DataPiler ${TAG#v}" --notes "DataPiler.exe, built by the release workflow from launcher-src/ at this tag; DataPiler.exe.sha256 holds its sha256. BUILD.md says how to compare it with your own build. THIRD-PARTY-NOTICES.txt holds the notices of the MinGW-w64 runtime parts linked into the exe (NOTICE, section 4)."

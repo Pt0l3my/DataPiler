@@ -1,0 +1,23 @@
+{
+  "Name": "menu",
+  "SourceContainer": "menu",
+  "SourceCategory": "Invented",
+  "FmgWrappers": [
+    {
+      "Name": "InventedMenuWords",
+      "ID": 9003,
+      "Fmg": {
+        "Name": "InventedMenuWords",
+        "Entries": [
+          {
+            "ID": 9200000,
+            "Text": "Brightwater ledger"
+          }
+        ],
+        "Version": 2,
+        "BigEndian": false,
+        "Unicode": true
+      }
+    }
+  ]
+}

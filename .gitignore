@@ -14,12 +14,15 @@ exports/
 regulation.bin
 oo2core*.dll
 
-# Logs and local state
+# Logs and local state (DataPiler's run-time files, build plan §2)
 logs/
 *.log
 *.port
 settings.local.*
 .venv/
+/jobs/
+/settings.json
+/datapiler.lock
 **/__pycache__/
 
 # Build output

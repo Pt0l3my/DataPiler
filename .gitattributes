@@ -1,0 +1,9 @@
+# LF in every checkout, Windows included: Git for Windows defaults to core.autocrlf=true, and the tests read
+# requirements.lock's bytes (no CR) and the release workflow reads datapiler/__init__.py with sed (a CR stops its
+# match). Windows PowerShell 5.1 and PowerShell 7 both read LF scripts.
+* text=auto eol=lf
+
+*.exe binary
+*.ico binary
+*.res binary
+*.sqlite binary

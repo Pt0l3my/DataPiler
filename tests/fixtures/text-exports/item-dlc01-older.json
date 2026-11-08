@@ -1,0 +1,26 @@
+{
+  "Name": "item_dlc01",
+  "SourceCategory": "Invented",
+  "FmgWrappers": [
+    {
+      "Name": "InventedCharacterNames",
+      "ID": 9001,
+      "Fmg": {
+        "Name": "InventedCharacterNames",
+        "Entries": [
+          {
+            "ID": 9000010,
+            "Text": "Odrin Vellmoor"
+          },
+          {
+            "ID": 9000000,
+            "Text": "Quillon Marrowgate the Elder"
+          }
+        ],
+        "Version": 2,
+        "BigEndian": false,
+        "Unicode": true
+      }
+    }
+  ]
+}

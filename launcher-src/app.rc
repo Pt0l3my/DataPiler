@@ -1,0 +1,26 @@
+1 24 "app.manifest"
+
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "DataPiler"
+      VALUE "FileDescription", "DataPiler - extracts Elden Ring's data from your own install through Smithbox"
+      VALUE "FileVersion", "0.1.0.0"
+      VALUE "ProductName", "DataPiler"
+      VALUE "ProductVersion", "0.1.0.0"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Pt0l3my"
+      VALUE "InternalName", "DataPiler"
+      VALUE "OriginalFilename", "DataPiler.exe"
+      VALUE "Comments", "Starts DataPiler.ps1 and opens its page in your browser. Source: launcher-src/launcher.cpp, adapted from LLM Jobrunner's launcher"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

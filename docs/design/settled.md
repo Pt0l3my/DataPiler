@@ -20,3 +20,9 @@ becomes a DP question instead.
 | S12 | The network (§7.8) | None after the first start, and none at the first without the owner's Y; the page loads nothing from elsewhere | DP3, the owner's emphasis on privacy and security |
 | S13 | Versions (§7.9) | A job may say `"needs": "<version>"`; an older DataPiler refuses it, saying so | Jobs are written ahead of releases |
 | S14 | The repository's own check (§7.10) | A CI check fails any change that adds a file under `workspace/`, `share/`, `logs/` or `jobs/`, a share file, or a file the privacy sweep flags | It catches a forced add |
+
+**S14, note of 2026-11-08** (the build's review, SEC-8 and F9). CI cannot run the privacy sweep itself: it lives in
+EldenNet, and its personal list never leaves the owner's PC. So `tools/repocheck.py` carries the sweep's rules that
+need no list of anyone's names: besides the run-time folders, game files, share files and IP addresses, a user's
+folder (unless its name is a placeholder or a generic one) and an e-mail address other than a noreply or an example
+one. The owner's personal words stay with the sweep's pre-push gate.

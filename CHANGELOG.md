@@ -3,11 +3,95 @@
 All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init__.py`; a release is tagged
 `v<version>`.
 
-## Unreleased
+## Unreleased (0.2.0)
 
+Built from [design 0002](docs/design/0002-design.md) and its build plan
+([build-plan-0.2.md](docs/design/build-plan-0.2.md)), with the owner's decisions DP11 to DP15; what the build settled
+is S27 to S38 in [settled.md](docs/design/settled.md). Not yet tried on a real PC: see the release notes.
+
+- **The Update… button (DP11, S27 to S31, S37, S38).** Three presses: the check (`releases/latest` on GitHub's API),
+  the download into `update/<version>/`, and Install and restart. `datapiler/update.py` is the only module that opens
+  a connection to anywhere but `127.0.0.1`, reached only from `POST /api/update` (`test_update_static.py` holds it to
+  that): GitHub's four hosts, https only, every redirect checked, each call logged by host and path, an answer cached
+  for ten minutes and a failure never. The download is proved before anything is unpacked: its size, the release's
+  `.sha256`, GitHub's digest, the zip's shape and every file's sha256 in its manifest. Install proves it again,
+  extracts the helper, writes `update/pending.json` and exits with code 75.
+- **`update-helper.py`**, standard library only: the swap, run by `DataPiler.ps1` from the verified download with the
+  Python it found. It acts only on a fresh pending file naming its folder with DataPiler's mutex free, backs up every
+  file it will overwrite or remove, writes each new file beside its target and checks the landed file, moves removed
+  files into the backup, and puts everything back on any failure; its fixed list (workspace, share, logs, jobs,
+  update, the venvs, settings.json and the run-time files) and the workspace and share folders Settings names are never
+  touched. `--rollback` is the owner's R; `--check-zip` is the release workflow's check. The app loads the same file to
+  prove a download, so both prove a zip the same way.
+- **`datapiler/install.py`**: the pending and result files, the install check at each start (every file against
+  `manifest.sha256`, a statement, never a repair), and the clean-up once the page is up.
+- **`DataPiler.ps1`**: exit code 75 runs the helper, then the new script in the same window with `-AfterUpdate`; a
+  failed swap starts the old version again with the helper's reason. Every Y now builds `.venv.new` and swaps it in only
+  once pip and the marker succeed; after an update the old venv is kept as `.venv.prev` until the new version's page
+  is up. If the new version stops before its page comes up within 90 s, the window offers R.
+- **`datapiler.py`**: after an update it binds the old page's port first, so that page reloads itself (a new tab opens
+  when the port is taken); exit code 75; the install check, the result kept for the page, and the clean-up at page-up;
+  FOLDERS's Detect and UPDATE's Updater wired in.
+- **The launcher** says "DataPiler is updating - see its window." while an update runs, and opens nothing.
+- **The release** carries `DataPiler/manifest.sha256` (`tools/manifest.py`) and passes the helper's `--check-zip`
+  before the draft (S28). CI's Windows job builds the venv as `.venv.new` and renames it, as the script does.
+- **The pop-up** (`page/update.js`, `page/update.css`): every state of the design's mock; the release notes as a tree
+  of text, never HTML; the restarting wait and the result after the reload.
+- **Detect and Set folder… on Settings (DP12, DP13, S32 to S34).** Each of the three folder rows has Detect, Set
+  folder… and a live check line (✓, ! or ✗). Detect looks only in what the PC already records, never walking a drive:
+  the running Smithbox's own exe path (`QueryFullProcessImageNameW`), Smithbox's record of its projects for the project
+  and game folders (`datapiler/sbproject.py`, a lead until checked on the owner's PC; a form it does not recognise is
+  said so, with the picker offered), Steam's install path, `libraryfolders.vdf`, the game's app manifest and the
+  uninstall entry (`datapiler/steam.py`, registry values from a fixed table only) and the running game as further game
+  sources and the cross-check, and the folders used here before. The expansion comes from the app manifest's
+  `dlcappid` values, shown with their ids, never matched against a built-in one. Windows' record of programs started
+  is not read (DP13). Nothing is saved until Use, Choose this folder or Save; candidates live in memory only, and log
+  lines name the source and the count, never a path. The picker (`datapiler/dirs.py`, `page/folders.js`) is drawn in
+  the page: folder names only, never a file; it refuses relative and device paths, network shares and Windows' own
+  folder; a listing gets 3 s; New folder… in the project picker only. The project folder may not be the game's
+  folder, inside it, a folder that holds it, or DataPiler's own folder or inside it (S32).
+- **Smithbox seen by its process (DP15).** A watcher reads the process list every 2 s from the start, whatever
+  Settings say: the top bar's pill and the Status card read "running" as soon as Smithbox runs, name the exe and its
+  build, and say when it stops; two processes are both listed. A running Smithbox in another folder than the one set
+  is offered with Use. Smithbox is recognised by any `Smithbox*.exe` (`Smithbox.Vulkan.exe` and
+  `Smithbox.OpenGL.exe`, side by side in one folder on the owner's PC), in the folder check, the build, the
+  provenance, Detect and the picker.
+- **Mask paths on this page (DP14, S35)**, off by default: every path the page draws becomes the log's placeholder
+  (Settings, Detect's list, the picker's crumbs, Status), and the path fields turn read-only.
+- **Settings across versions (S36):** a key `settings.json` holds that this version does not know is dropped at load
+  with a warning, so a version rolled back to keeps the owner's folders; `recent` keeps five folders a row.
+- **Found by the integration run** (headless Chromium over invented folders and an invented release): off Windows the
+  page's server sets `SO_REUSEADDR`, so the page that asked for an update gets its port back past `TIME_WAIT`, as
+  Windows allows without it (still off on Windows); the page's own polls pause while an update restarts, so the old
+  page sends nothing with its old token; Detect's log lines say "1 place" and "1 DLC app"; the start line names
+  `Smithbox*.exe` when the folder holds no Smithbox exe.
+- **Found by the 0.2.0 reviews** (security and correctness):
+  - The swap holds off Ctrl+C (the helper ignores it, and the window makes it a key while the helper runs), and an
+    interrupt is put back like any failure. A swap cut off all the same (the window closed, the power cut) is put
+    back by the window from its backup, after the helper's exit or at the next start: `--rollback` now accepts an
+    unfinished backup while `update/pending.json` names the same update, and writes back only what differs.
+  - The old window offers R also when the new version's script stops before it starts its app, or cannot run (the
+    new script exits 76 when it has settled R itself); a failed R waits for Enter.
+  - The never-touched list is checked against the path as the file system resolves it, and a release may not name
+    an 8.3 short name (`~` and a digit; `tools/repocheck.py` fails one too); a file whose name changes only in case
+    is rewritten, never deleted after it.
+  - Mask paths: the picker draws each folder's name masked (the account's folder as `<HOME>`) and opens it by its
+    real path, and Up goes to the real parent; the folders Smithbox runs from are taught to the mask as soon as they
+    are seen; a folder's mask ends where its name ends (`...\Smithbox` no longer masks `...\Smithbox-old`), and a
+    known sibling is matched before a shorter named folder.
+  - The provenance's `smithbox_build` is the running Smithbox's, whatever its folder; Smithbox processes of
+    different builds refuse the write.
+  - Detect no longer proposes Yes for the expansion from any DLC app id: with ids listed, Yes and No are both offered
+    and neither is the primary button.
+  - The picker refuses Windows' own folder also with a trailing dot or space (`C:\Windows.`), waits for a drive's
+    listing under way instead of answering that the drive did not answer, and a folder on a mapped drive is saved
+    with its drive letter.
+  - S27 and S12 name pip's two hosts, used after an update whose libraries changed and the owner's Y.
+- **The version is 0.2.0**: `VERSION`, the launcher's resources, BUILD.md. A job's `needs` above 0.2.0 is refused.
 - **Releases carry fewer files (DP9):** the zip (with the exe and the notices inside), its sha256, and
   `THIRD-PARTY-NOTICES.txt` on its own too; the exe's sha256 is in the release workflow's log, which the notes link.
   The README's Licence section names the notices.
+- **The zip's one folder is `DataPiler` (DP10):** the zip's name keeps the version; the folder inside does not.
 
 ## 0.1.0 (2026-11-08)
 

@@ -26,6 +26,16 @@ class Proc:
     path: str | None        # full image path when readable
 
 
+@dataclass(frozen=True)
+class Drive:
+    name: str               # "C:"
+    path: str               # "C:\\"
+    kind: str               # "local", "removable", "network", "cdrom", "ram", "unknown"
+
+
+DRIVE_KINDS = ("local", "removable", "network", "cdrom", "ram", "unknown")
+
+
 class Holder(Protocol):
     def release(self) -> None: ...
 
@@ -43,6 +53,12 @@ class Backend(Protocol):
     def user_name(self) -> str | None: ...
     def pc_name(self) -> str | None: ...
     def home(self) -> str | None: ...
+    # 0.2.0 (build plan 0.2 §5.1): Detect and the picker
+    def registry_value(self, hive: str, key: str, name: str) -> str | None: ...
+    def drives(self) -> list[Drive]: ...
+    def windows_dir(self) -> str | None: ...
+    def hidden(self, path: str) -> bool: ...
+    def local_appdata(self) -> str | None: ...
 
 
 def _run_waiting(fn: Callable[[], None]) -> None:
@@ -200,6 +216,21 @@ class PortableBackend:
     def home(self) -> str | None:
         h = os.path.expanduser("~")
         return h if h and h != "~" else None
+
+    def registry_value(self, hive: str, key: str, name: str) -> str | None:
+        return None
+
+    def drives(self) -> list[Drive]:
+        return [Drive("/", "/", "local")]
+
+    def windows_dir(self) -> str | None:
+        return None
+
+    def hidden(self, path: str) -> bool:
+        return os.path.basename(os.path.normpath(path)).startswith(".")
+
+    def local_appdata(self) -> str | None:
+        return None
 
 
 # ---------------------------------------------------------------------------------------------------------- Windows
@@ -462,6 +493,92 @@ class WindowsBackend:  # pragma: no cover - exercised by the Windows run in CI
     def home(self) -> str | None:
         h = os.environ.get("USERPROFILE") or os.path.expanduser("~")
         return h if h and h != "~" else None
+
+    # ------------------------------------------------------------------------------ 0.2.0: Detect and the picker
+
+    HIVES = ("HKCU", "HKLM")
+    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM = 0x2, 0x4
+    INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+    _DRIVE_TYPES = {0: "unknown", 2: "removable", 3: "local", 4: "network", 5: "cdrom", 6: "ram"}   # 1: no root
+
+    def registry_value(self, hive: str, key: str, name: str) -> str | None:
+        """KEY_READ in the 64-bit view; a REG_SZ or REG_EXPAND_SZ as stored (never expanded), else None."""
+        import winreg
+        if hive not in self.HIVES:
+            return None
+        root = winreg.HKEY_CURRENT_USER if hive == "HKCU" else winreg.HKEY_LOCAL_MACHINE
+        try:
+            with winreg.OpenKey(root, key, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+                value, kind = winreg.QueryValueEx(k, name)
+        except OSError:
+            return None
+        if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and isinstance(value, str):
+            return value
+        return None
+
+    def drives(self) -> list[Drive]:
+        """GetLogicalDrives and GetDriveTypeW: the letter and the kind only, never a volume label."""
+        w, k = self._w, self._k
+        if not getattr(self, "_drives_ready", False):
+            k.GetLogicalDrives.argtypes = []
+            k.GetLogicalDrives.restype = w.DWORD
+            self._drives_ready = True
+        mask = k.GetLogicalDrives()
+        out: list[Drive] = []
+        for i in range(26):
+            if not mask & (1 << i):
+                continue
+            letter = chr(ord("A") + i) + ":"
+            t = k.GetDriveTypeW(letter + "\\")
+            if t == 1:
+                continue
+            out.append(Drive(letter, letter + "\\", self._DRIVE_TYPES.get(int(t), "unknown")))
+        return out
+
+    def windows_dir(self) -> str | None:
+        c, w, k = self._c, self._w, self._k
+        k.GetWindowsDirectoryW.argtypes = [w.LPWSTR, w.UINT]
+        k.GetWindowsDirectoryW.restype = w.UINT
+        buf = c.create_unicode_buffer(1024)
+        n = k.GetWindowsDirectoryW(buf, 1024)
+        if not n or n >= 1024:
+            return None
+        return buf.value or None
+
+    def hidden(self, path: str) -> bool:
+        w, k = self._w, self._k
+        k.GetFileAttributesW.argtypes = [w.LPCWSTR]
+        k.GetFileAttributesW.restype = w.DWORD
+        a = k.GetFileAttributesW(path)
+        if a == self.INVALID_FILE_ATTRIBUTES:
+            return False
+        return bool(a & (self.FILE_ATTRIBUTE_HIDDEN | self.FILE_ATTRIBUTE_SYSTEM))
+
+    def local_appdata(self) -> str | None:
+        """SHGetKnownFolderPath(FOLDERID_LocalAppData), as .NET finds it for Smithbox (smithbox-projects.md §2), not
+        the LOCALAPPDATA variable."""
+        c, w = self._c, self._w
+
+        class GUID(c.Structure):
+            _fields_ = [("Data1", w.DWORD), ("Data2", w.WORD), ("Data3", w.WORD), ("Data4", c.c_ubyte * 8)]
+
+        # FOLDERID_LocalAppData: {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}
+        fid = GUID(0xF1B32785, 0x6FBA, 0x4FCF, (c.c_ubyte * 8)(0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91))
+        sh = c.WinDLL("shell32", use_last_error=True)
+        ole = c.WinDLL("ole32", use_last_error=True)
+        sh.SHGetKnownFolderPath.argtypes = [c.POINTER(GUID), w.DWORD, w.HANDLE, c.POINTER(c.c_void_p)]
+        sh.SHGetKnownFolderPath.restype = c.c_long
+        ole.CoTaskMemFree.argtypes = [c.c_void_p]
+        ole.CoTaskMemFree.restype = None
+        out = c.c_void_p()
+        hr = sh.SHGetKnownFolderPath(c.byref(fid), 0, None, c.byref(out))
+        try:
+            if hr != 0 or not out.value:
+                return None
+            return c.wstring_at(out.value) or None
+        finally:
+            if out.value:
+                ole.CoTaskMemFree(out)
 
 
 # ---------------------------------------------------------------------------------------------------------- choice

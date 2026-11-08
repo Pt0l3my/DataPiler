@@ -10,7 +10,10 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 
 - **2026-11-08.** DP1 (what DataPiler is), DP2 (its name), DP3 (a public repository of its own), DP4 (the Smithbox
   server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
-  (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries).
+  (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries). DP10 (the zip's folder), DP11 (an update
+  button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session. DP13 (design
+  0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page). DP15 (Smithbox
+  seen by its process at all times).
 - **Open.** None.
 
 ## DP1
@@ -160,3 +163,81 @@ the notices. 0.1.0's draft stays as it was built.
 
 **Owner's words.** "alright" (to the exe's explanation), then: "let's do both then (in future releases), as separate
 doc in github release and inside zip."
+
+## DP10
+
+**The zip's folder has no version** · *2026-11-08 · Decided by the owner*
+
+**Decision.** From the next release, `DataPiler-<version>.zip` keeps the version in its name, and holds one folder
+named `DataPiler`, without the version (0.1.0's zip held `DataPiler-0.1.0/`).
+
+**Owner's words.** "For datapiler releases, can you make it so that the zip carries the version in title but not the
+folder inside, so e.g. currently we have DataPiler-0.1.0.zip and DataPiler-0.1.0 inside it. what I would like is
+DataPiler-<version>.zip and DataPiler folder inside it."
+
+## DP11
+
+**An update button** · *2026-11-08 · The owner's request; its design asked of the PandorumLLM session*
+
+**Decision.** DataPiler gains an update button: pressed, it opens a pop-up showing the latest release on GitHub and
+downloads it. The design is asked of the PandorumLLM session in [requests/0002-update-and-folders.md](requests/0002-update-and-folders.md).
+It amends S12 (no network after the first start): the update check and download run only when the owner presses
+the button, and only to GitHub.
+
+**Owner's words.** "Can you add update button to the UI, that the user could press, gets a pop up downloader UI that
+shows available update (latest) from github repo), ask the PandorumLLM agent about this (a request how exactly this is
+done, the layout, etc.)"
+
+## DP12
+
+**Folder detection and a folder picker** · *2026-11-08 · The owner's request; its design asked of the PandorumLLM session*
+
+**Decision.** Settings gains detection of the Smithbox folder, the game folder and the project folder, and a "Set
+folder" button beside each that opens a folder picker over the page. The design is asked of the PandorumLLM session in
+the same request.
+
+**Owner's words.** "on the settings page, can you add auto detect for Smithbox folder, Game folder, Project folder,
+and also set folder button that brings up over top UI index to select folder, again ask the PandorumLLM agent about
+this (a request how exactly this is done, the layout, etc.)"
+
+## DP13
+
+**Design 0002 adopted; Smithbox found from its running process** · *2026-11-08 · Decided by the owner*
+
+**Question.** Design 0002 ([design/0002-design.md](design/0002-design.md), with its mock) answers request 0002. For
+the Smithbox folder it proposed reading Windows' record of programs the owner started (MuiCache), since Smithbox has
+no installer: on by default, with a Settings switch.
+
+**Decision.** Design 0002 is DataPiler's design for the update button (DP11) and folder picking (DP12), with one
+change: Detect does not read Windows' record of programs started. Smithbox must be running anyway for the server link,
+so Detect reads the Smithbox folder from the running Smithbox's own process, and from it establishes the others: the
+project folder and the game (data) folder from Smithbox's own record of the open project, with Steam's library list as
+a cross-check for the game folder. No MuiCache, and no switch for it. The expansion's Steam app id (2778580 in the
+design, from memory) is read from the owner's own app manifest, never assumed.
+
+**Owner's words.** "what about a dependency for Smithbox process to run, then datapiler could detect the process and
+read path from that, then once the executable is found, the others can be also established."
+
+## DP14
+
+**Masking paths on the page** · *2026-11-08 · Decided by the owner, as recommended*
+
+**Question.** Should Settings have a "Mask paths on this page" switch that shows `<SMITHBOX>`, `<GAME>`, `<PROJECT>`
+and the like in place of the owner's real folders (in Settings, the picker and Detect's list), for screenshots?
+
+**Decision.** Yes, off by default.
+
+**Owner's words.** "Add it, off by default (Recommended)".
+
+## DP15
+
+**Smithbox seen by its process at all times** · *2026-11-08 · Decided by the owner*
+
+**Decision.** DataPiler watches for a running Smithbox from its start and all the time it runs, whatever its Settings
+say: the top bar and Status read "running" as soon as the process is seen, with its build, and say when it stops. When
+the Smithbox folder setting is blank, or differs from the running Smithbox's folder, the running one's folder is
+offered as Detect's find with Use; nothing is saved by itself. The folder shows on the local page only (masked under
+DP14) and is never logged. With a Smithbox folder known, Detect goes on to the project and game folders (DP13).
+
+**Owner's words.** "you could also add this process detection in general, so datapiler could see smithbox process
+right away"

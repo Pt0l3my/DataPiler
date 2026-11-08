@@ -54,15 +54,23 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: The tests, standard library only
         run: python -I -m unittest discover -s tests
-      - name: A venv outside the checkout
-        run: python -m venv "${{ runner.temp }}\venv"
-      - name: The lock's libraries, installed as DataPiler.ps1 installs them
+      # As DataPiler.ps1 does from 0.2.0 (build plan 0.2 section 4.11): the venv made as .venv.new, filled from the
+      # lock, then renamed .venv, and the renamed venv's Python still imports the link's libraries.
+      - name: A venv outside the checkout, made as .venv.new
         run: |
-          & "${{ runner.temp }}\venv\Scripts\python.exe" -m pip install --isolated --disable-pip-version-check --no-input --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r requirements.lock
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\dp" | Out-Null
+          python -m venv "${{ runner.temp }}\dp\.venv.new"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: The lock's libraries, installed as DataPiler.ps1 installs them, then .venv.new renamed .venv
+        run: |
+          & "${{ runner.temp }}\dp\.venv.new\Scripts\python.exe" -m pip install --isolated --disable-pip-version-check --no-input --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r requirements.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Rename-Item -LiteralPath "${{ runner.temp }}\dp\.venv.new" -NewName '.venv' -ErrorAction Stop
+          & "${{ runner.temp }}\dp\.venv\Scripts\python.exe" -c "import grpc, google.protobuf"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: The tests with grpcio and protobuf (the link tests run)
         run: |
-          & "${{ runner.temp }}\venv\Scripts\python.exe" -I -m unittest discover -s tests
+          & "${{ runner.temp }}\dp\.venv\Scripts\python.exe" -I -m unittest discover -s tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   launcher:

@@ -28,6 +28,17 @@ class PortableTest(unittest.TestCase):
             self.assertTrue(any(p.path and os.path.samefile(p.path, sys.executable) for p in procs
                                 if p.path and os.path.exists(p.path)) or procs)
 
+    def test_the_portable_answers_of_0_2(self):
+        """Build plan 0.2 §5.1: the registry, the Windows folder and Local AppData are not there; one drive, the root;
+        a name starting with a dot is hidden."""
+        self.assertIsNone(self.b.registry_value("HKCU", "Software\\Valve\\Steam", "SteamPath"))
+        self.assertEqual(self.b.drives(), [winapi.Drive("/", "/", "local")])
+        self.assertIsNone(self.b.windows_dir())
+        self.assertIsNone(self.b.local_appdata())
+        self.assertTrue(self.b.hidden("/somewhere/.config"))
+        self.assertTrue(self.b.hidden("/somewhere/.config/"))
+        self.assertFalse(self.b.hidden("/somewhere/visible"))
+
     def test_hold_mutex_twice(self):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "datapiler.lock"
@@ -74,6 +85,27 @@ class WindowsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertFalse(self.b.drive_is_remote(d))
         self.assertTrue(self.b.drive_is_remote("\\\\server.invalid\\share\\ws"))
+
+    def test_a_registry_value_every_windows_has(self):
+        v = self.b.registry_value("HKLM", "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "ProductName")
+        self.assertTrue(v)
+        self.assertIsNone(self.b.registry_value("HKLM", "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                                                "NoSuchValueHere"))
+        self.assertIsNone(self.b.registry_value("HKXX", "Software", "x"))
+
+    def test_drives_hold_a_local_c(self):
+        drives = self.b.drives()
+        self.assertIn(winapi.Drive("C:", "C:\\", "local"), drives)
+        self.assertTrue(all(d.kind in winapi.DRIVE_KINDS for d in drives))
+
+    def test_the_windows_folder_local_appdata_and_hidden(self):
+        win = self.b.windows_dir()
+        self.assertTrue(win and os.path.isdir(win))
+        local = self.b.local_appdata()
+        self.assertTrue(local and os.path.isdir(local))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(self.b.hidden(d))
+            self.assertFalse(self.b.hidden(os.path.join(d, "missing")))
 
     def test_python_has_a_file_version(self):
         v = self.b.file_version(sys.executable)

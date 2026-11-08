@@ -6,7 +6,9 @@ one's page and opens it, and starts nothing. Otherwise it starts `DataPiler.ps1`
 (PowerShell 7 from a folder on PATH, else Windows PowerShell 5.1 from the system folder: never a `pwsh.exe` lying in
 its own folder or the current one), waits for the port file the app writes once its page is up (never one older than
 this start) for as long as that window is open, as a first start may wait for the owner's answer and a download, and
-opens the browser there. It asks for no elevation (`asInvoker`), probes no socket and embeds no Python. Its source is
+opens the browser there. While an update runs (from Install and restart until the new version's page is up, while
+`update\pending.json` is there), a start only says "DataPiler is updating - see its window." and opens nothing. It
+asks for no elevation (`asInvoker`), probes no socket and embeds no Python. Its source is
 `launcher-src/launcher.cpp`, with `app.rc` (its name and version) and `app.manifest`; 0.1 has no icon.
 
 Two routes give the same exe: a local build with MinGW-w64, and the release workflow on GitHub.
@@ -34,7 +36,7 @@ Then check it:
   `PE32+ executable (GUI) x86-64 ...` and file 5.46 or later `PE32+ executable for MS Windows <version> (GUI),
   x86-64, ...`; `file -b DataPiler.exe | grep -Eq '^PE32\+ executable .*\(GUI\).*x86-64'` checks both, as the
   release workflow does.
-- `strings -a -el DataPiler.exe | grep 0.1.0.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
+- `strings -a -el DataPiler.exe | grep 0.2.0.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
 - `x86_64-w64-mingw32-objdump -p DataPiler.exe | grep "DLL Name"` lists only `KERNEL32.dll`, `msvcrt.dll`,
   `SHELL32.dll` and `USER32.dll`: no socket library.
 
@@ -50,8 +52,12 @@ creates the tag when the draft is published. On
 the tag names `VERSION`, and prints the compiler's versions and the exe's sha256. The exe is linked `-static`, so
 parts of the MinGW-w64 runtime are inside it; the workflow copies their licence files from the toolchain into
 `THIRD-PARTY-NOTICES.txt` (NOTICE, section 4). A second job makes `DataPiler-<version>.zip`, the whole app: the
-source at the tag as `git archive` makes it, with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it (it
-checks the exe in the zip against the exe's sha256), and its `.sha256`. It attaches the zip, the zip's sha256 and
+source at the tag as `git archive` makes it, in one folder named `DataPiler` without the version (DP10), with
+`DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it (it
+checks the exe in the zip against the exe's sha256), and its `.sha256`. From 0.2.0 the zip also carries
+`DataPiler/manifest.sha256`, every file's sha256 (`tools/manifest.py` writes it, settled S28), and the job checks it
+with `sha256sum -c` and passes the zip through `update-helper.py --check-zip`, the same checks the Update... button
+makes, before the zip's own sha256 is taken. It attaches the zip, the zip's sha256 and
 `THIRD-PARTY-NOTICES.txt` (also inside the zip) to a **draft** release for that tag (DP9); the exe's sha256 is in the
 run's log, which the release's notes link;
 publishing it stays the owner's act. The release's notes are `docs/release-notes/<version>.md` at that commit, with a

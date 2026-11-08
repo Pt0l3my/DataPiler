@@ -2,9 +2,13 @@
 
 It fails a tree that holds:
 
-- **run-time files**: a file under the top-level `workspace/`, `share/`, `logs/`, `jobs/` or `exports/` folder, or
-  DataPiler's local state at the top (`settings.json`, `datapiler.port`, `datapiler.lock`, `datapiler-start.log`,
-  `.venv/`). The same names deeper down, such as a test's fixtures, are not run-time folders and pass;
+- **run-time files**: a file under the top-level `workspace/`, `share/`, `logs/`, `jobs/`, `exports/` or `update/`
+  folder, or DataPiler's local state at the top (`settings.json`, `datapiler.port`, `datapiler.lock`,
+  `datapiler-start.log`, `manifest.sha256`, which only a release's zip carries, `.venv/`, `.venv.new/`,
+  `.venv.prev/`), or a `.dpnew` file the update helper writes while it swaps. The same names deeper down, such as a
+  test's fixtures, are not run-time folders and pass;
+- **a name no release can ship**: a part holding `~` and a digit, the shape of a Windows 8.3 short name
+  (`WORKSP~1`), which the update helper refuses as an alias of another name;
 - **game files**, by the kinds `.gitignore` keeps out (`*.csv`, `*.fmg`, `*.dcx`, `regulation.bin`, Oodle, ...);
 - **a share file**: a `.json` holding an object whose `format` is `datapiler-share/<n>`, or a `.json` that does not
   parse but names that format. The same string in any other file passes;
@@ -45,12 +49,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-RUNTIME_DIRS = {"workspace", "share", "logs", "jobs", "exports", ".venv"}
-RUNTIME_FILES = {"settings.json", "datapiler.port", "datapiler.lock", "datapiler-start.log"}
+RUNTIME_DIRS = {"workspace", "share", "logs", "jobs", "exports", ".venv", "update", ".venv.new", ".venv.prev"}
+RUNTIME_FILES = {"settings.json", "datapiler.port", "datapiler.lock", "datapiler-start.log", "manifest.sha256"}
 GAME_PATTERNS = ("*.csv", "*.fmg", "*.fmg.xml", "*.dcx", "*.bnd", "*.bdt", "*.bhd", "*.sl2", "regulation.bin",
                  "oo2core*.dll")
 GAME_DIRS = {"game-export"}
 SHARE_FORMAT = "datapiler-share/"
+SHORT_NAME_RX = re.compile(r"~[0-9]")      # update-helper.py's SHORT_RX
 MAX_BYTES = 20 * 1024 * 1024
 
 
@@ -119,6 +124,11 @@ def path_findings(rel: str) -> list[Finding]:
                            % low[0]))
     if len(parts) == 1 and low[0] in RUNTIME_FILES:
         out.append(Finding(rel, "DataPiler's local state, written at run time"))
+    if low[-1].endswith(".dpnew"):
+        out.append(Finding(rel, "a file the update helper writes while it swaps (build plan 0.2 section 4.6)"))
+    if any(SHORT_NAME_RX.search(p) for p in parts):
+        out.append(Finding(rel, "a name shaped like an 8.3 short name (~ and a digit), which the update helper "
+                                "refuses"))
     if any(p in GAME_DIRS for p in low[:-1]) or any(fnmatch.fnmatchcase(low[-1], g) for g in GAME_PATTERNS):
         out.append(Finding(rel, "a game file, by its kind (.gitignore keeps these out)"))
     return out

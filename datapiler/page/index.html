@@ -15,6 +15,7 @@
   <span class="pill mute" id="pGame">&#9679; Game</span>
   <span class="pill mute" id="pLink">&#9679; Server link off</span>
   <div class="spacer"></div>
+  <button id="btn-update" title="Ask GitHub for the latest DataPiler release - only when pressed">Update…</button>
   <button id="quit">Quit</button>
 </header>
 <div class="block" id="block" hidden></div>
@@ -87,25 +88,59 @@
 
   <!-- ===================================================== Settings -->
   <section class="tab" id="t-settings">
+    <div class="card fr-card" id="frCard">
+      <h3>Folders <span class="qm" title="Where DataPiler reads Smithbox, the game and your project from. Detect looks only in what this PC already records - the running Smithbox, Smithbox's own record of its projects, Steam's files and the folders you used here before - and never walks a drive. Nothing is saved until you press Use, choose a folder or press Save.">?</span></h3>
+      <div class="fr-masked" id="frMasked" hidden>Paths are masked on this page - switch Mask paths off to edit them.</div>
+
+      <div class="fr-row" data-key="smithbox_dir" data-want="smithbox">
+        <label class="fr-label" for="s_smithbox_dir">Smithbox folder <span class="qm" title="The folder that holds Smithbox's exe: Smithbox.Vulkan.exe, Smithbox.OpenGL.exe or another Smithbox*.exe. Detect reads the running Smithbox's own path (Smithbox must be running), then the folders you used here before.">?</span></label>
+        <div class="fr-line"><input type="text" id="s_smithbox_dir" spellcheck="false"><button class="sm" data-act="detect">Detect</button><button class="sm" data-act="pick">Set folder…</button></div>
+        <div class="fr-check" data-part="check"></div>
+        <div class="fr-found" data-part="found" hidden></div>
+        <div class="fr-recent" data-part="recent" hidden></div>
+      </div>
+
+      <div class="fr-row" data-key="game_dir" data-want="game">
+        <label class="fr-label" for="s_game_dir">Game folder <span class="qm" title="The game's Game folder - the one that holds eldenring.exe. Detect reads Smithbox's record of your project (the game folder it uses), Steam's library list and the game's app manifest, Windows' uninstall entry and the running game; Steam's list is the cross-check. It must never be your project folder.">?</span></label>
+        <div class="fr-line"><input type="text" id="s_game_dir" spellcheck="false"><button class="sm" data-act="detect">Detect</button><button class="sm" data-act="pick">Set folder…</button></div>
+        <div class="fr-check" data-part="check"></div>
+        <div class="fr-found" data-part="found" hidden></div>
+        <div class="fr-recent" data-part="recent" hidden></div>
+        <div class="fr-exp" data-key="expansion" data-want="expansion">
+          <label class="fr-label" for="s_expansion">Expansion installed <span class="qm" title="Say whether the game's expansion is installed. Share files record what you say here, and wait until you have said it. Detect reads the game's Steam app manifest and shows the DLC apps it lists as installed, by their ids; it never sets this by itself.">?</span></label>
+          <div class="fr-line"><select id="s_expansion"><option value="">Not stated yet</option><option value="yes">Yes</option><option value="no">No</option></select><button class="sm" data-act="detect">Detect</button></div>
+          <div class="fr-found" data-part="found" hidden></div>
+        </div>
+      </div>
+
+      <div class="fr-row" data-key="project_dir" data-want="project">
+        <label class="fr-label" for="s_project_dir">Project folder <span class="qm" title="Your Smithbox project: outside the game's folder, not a folder that holds it, and outside DataPiler's own folder. Detect reads Smithbox's own record of its projects (a lead until it has been checked on this PC); the one it marks is the project Smithbox opens at start, normally the one open.">?</span></label>
+        <div class="fr-line"><input type="text" id="s_project_dir" spellcheck="false"><button class="sm" data-act="detect">Detect</button><button class="sm" data-act="pick">Set folder…</button></div>
+        <div class="fr-check" data-part="check"></div>
+        <div class="fr-found" data-part="found" hidden></div>
+        <div class="fr-recent" data-part="recent" hidden></div>
+      </div>
+      <div class="mute fr-hint">Use and Choose this folder save their folder at once; a path typed by hand waits for Save.</div>
+    </div>
+
     <div class="card"><div class="form">
-      <label for="s_smithbox_dir">Smithbox folder</label><input type="text" id="s_smithbox_dir" spellcheck="false">
-      <label for="s_game_dir">Game folder</label><input type="text" id="s_game_dir" spellcheck="false">
-      <label for="s_project_dir">Project folder <span class="qm" title="Smithbox's project for the game - outside the game's folder">?</span></label><input type="text" id="s_project_dir" spellcheck="false">
       <label for="s_workspace_dir">Workspace <span class="qm" title="Local only: it holds game text. Relative to DataPiler's folder, or a full path">?</span></label><input type="text" id="s_workspace_dir" spellcheck="false">
       <label for="s_share_dir">Share folder <span class="qm" title="Only files that passed the guard. Outside the workspace">?</span></label><input type="text" id="s_share_dir" spellcheck="false">
       <label for="s_language">Text language <span class="qm" title="Smithbox's code, e.g. engus">?</span></label><input type="text" id="s_language" spellcheck="false">
-      <label for="s_expansion">Expansion installed <span class="qm" title="Say whether the game's expansion is installed. Share files record what you say here, and wait until you have said it">?</span></label><select id="s_expansion"><option value="">Not stated yet</option><option value="yes">Yes</option><option value="no">No</option></select>
       <label for="s_port">Page port <span class="qm" title="Blank for any free one; takes effect at the next start">?</span></label><input type="text" id="s_port" placeholder="(any free one)" spellcheck="false">
       <label for="s_log_max_mb">Log size, MB a file</label><input type="text" id="s_log_max_mb" spellcheck="false">
       <label for="s_log_keep">Log files kept</label><input type="text" id="s_log_keep" spellcheck="false">
       <label>Server <span class="qm" title="Smithbox's own address - shown, never editable">?</span></label><span class="mono" id="sServer"></span>
       <label>Server link this session</label><span><button id="sLink">Switch on</button> <span class="mute">off at every start</span></span>
       <label>DEBUG to the file this session</label><span><button id="sDebug">Switch on</button> <span class="mute">off at every start</span></span>
+      <label>Mask paths on this page <span class="qm" title="For screenshots: the page draws its placeholders (such as &lt;GAME&gt; and &lt;SMITHBOX&gt;) in place of folder paths, as the log does - in Settings, Detect's list, the picker and Status. Saved; off at first.">?</span></label><span><button id="sMask">Switch on</button> <span class="mute">saved - off at first</span></span>
     </div>
     <div class="errline" id="sErr"></div>
     <div class="actions"><button class="pri" id="sSave">Save</button></div></div>
   </section>
 </main>
+
+<div class="ov" id="ov" role="dialog" aria-modal="true" aria-labelledby="ovTitle"></div>
 
 <div class="shade" id="gone"><div class="modal"><b>DataPiler has stopped.</b>
   <div class="hint">Its files are kept in its folder. Start it again with DataPiler.exe; you can close this tab.</div></div></div>

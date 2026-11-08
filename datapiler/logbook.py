@@ -19,11 +19,11 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from . import NAME, VERSION, paths, winapi
 
-SOURCES = ("app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env")
+SOURCES = ("app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env", "update", "folders")
 LEVELS = ("DEBUG", "INFO", "WARN", "ERROR")
 RING = 5000
 
@@ -75,8 +75,19 @@ _V6_RX = re.compile(r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:\d{1,3}\.){3}\d
 _KEEP_IP = "127.0.0.1"
 
 
-def _folder_rx(folder: str) -> str | None:
-    """A folder as a pattern matching either slash; None for something that is not an absolute folder."""
+# Where a folder's name ends in a text (the correctness review's C6): never before a letter, a digit, a dash or a dot
+# that goes on, so a home folder ...\Al does not match ...\Alice\Mods, nor C:\Tools\Smithbox C:\Tools\Smithbox-old. A space
+# may follow a folder in a sentence, so it may end there; a sibling that only adds words (C:\Tools\Smithbox 2.2.6) is
+# masked as itself once it is known, as every folder is matched longest first.
+_FOLDER_END = r"(?![\w\-]|\.\w)"
+# The home folder ends only at a separator, the end of the text or a character that closes a quotation or a list: the
+# folder beside it with a space in its name is another account's.
+_HOME_END = r"(?=$|[\\/]|[\"'`<>|:*?,;)\]}]|\.(?![\w.]))"
+
+
+def _folder_rx(folder: str, end: str = _FOLDER_END) -> str | None:
+    """A folder as a pattern matching either slash, ending where the folder's name ends (end); None for something
+    that is not an absolute folder."""
     f = folder.strip()
     if not f or not _ABS_RX.match(f):
         return None
@@ -85,8 +96,9 @@ def _folder_rx(folder: str) -> str | None:
         pieces.pop()
     if not any(pieces):
         return None
-    return r"[\\/]+".join(re.escape(p) for p in pieces) if pieces[0] else r"[\\/]+" + r"[\\/]+".join(
+    body = r"[\\/]+".join(re.escape(p) for p in pieces) if pieces[0] else r"[\\/]+" + r"[\\/]+".join(
         re.escape(p) for p in pieces[1:])
+    return body + end
 
 
 def _folder_variants(folder: str) -> list[str]:
@@ -138,14 +150,12 @@ class _Mask:
 
 _mask = _Mask(None, {}, None, [])
 _mask_inputs: dict = {"folders": {}, "home": None, "user": None, "pc": None}
+FOUND = "<FOUND>"
+_found: dict[str, str] = {}          # Detect's candidates this session, by their case-folded form; never saved
+_mask_lock = threading.RLock()
 
 
-def set_masks(*, folders: Mapping[str, str | None], home: str | None, user: str | None, pc: str | None) -> None:
-    """folders maps "<GAME>", "<SMITHBOX>", "<PROJECT>", "<WORKSPACE>", "<SHARE>", "<DATAPILER>" to a folder (or None).
-    Rebuilds the mask: each folder in either slash, any case, and its 8.3 short form (winapi short_path), longest
-    first; then the home folder as <HOME>; then user and PC names as whole words (<USER>, <PC>); then any IPv4 or
-    IPv6 address other than 127.0.0.1 as <IP>. Called at start and on every settings.saved."""
-    global _mask
+def _entries(folders: Mapping[str, str | None]) -> list[tuple[int, str, str]]:
     entries: list[tuple[int, str, str]] = []
     for placeholder, folder in folders.items():
         if not folder:
@@ -155,6 +165,60 @@ def set_masks(*, folders: Mapping[str, str | None], home: str | None, user: str 
             if rx is not None:
                 entries.append((len(variant.rstrip("\\/")), rx, placeholder))
     entries.sort(key=lambda e: -e[0])
+    return entries
+
+
+def set_masks(*, folders: Mapping[str, str | None], home: str | None, user: str | None, pc: str | None) -> None:
+    """folders maps "<GAME>", "<SMITHBOX>", "<PROJECT>", "<WORKSPACE>", "<SHARE>", "<DATAPILER>" to a folder (or None).
+    Rebuilds the mask: each folder in either slash, any case, and its 8.3 short form (winapi short_path), with the
+    candidates Detect found this session (learn_found) as <FOUND>, all longest first, each ending where its name
+    ends (a sibling that only adds to a named folder's name is its own <FOUND>; a found folder inside a named one
+    comes after the named folders); then the home folder as <HOME>; then user and PC names as whole words (<USER>, <PC>); then any IPv4 or IPv6 address other than
+    127.0.0.1 as <IP>. Called at start and on every settings.saved."""
+    with _mask_lock:
+        _build(folders, home, user, pc)
+
+
+def learn_found(folders: Iterable[str]) -> None:
+    """Adds candidates Detect found (and the folders Smithbox runs from) to this session's mask as <FOUND>, longest
+    first with the named folders, so a candidate that is not yet a setting never reaches a line. Never cleared during a run; never saved."""
+    with _mask_lock:
+        added = False
+        for f in folders:
+            if not isinstance(f, str):
+                continue
+            t = f.strip()
+            if not t or not _ABS_RX.match(t):
+                continue
+            key = _SEP_RX.sub("\\\\", t).rstrip("\\").casefold()
+            if len([x for x in key.split("\\") if x]) < 2:
+                continue            # a drive or the root alone would mask every path on it
+            if key not in _found:
+                _found[key] = t
+                added = True
+        if added:
+            i = _mask_inputs
+            _build(i["folders"], i["home"], i["user"], i["pc"])
+
+
+def _folder_within(child: str, parent: str) -> bool:
+    """child lies inside parent (or is it), compared by its parts, case-folded, either slash."""
+    c = [x for x in _SEP_RX.split(str(child).strip().casefold()) if x]
+    p = [x for x in _SEP_RX.split(str(parent).strip().casefold()) if x]
+    return bool(p) and len(c) >= len(p) and c[:len(p)] == p
+
+
+def _build(folders: Mapping[str, str | None], home: str | None, user: str | None, pc: str | None) -> None:
+    global _mask
+    named = [f for f in folders.values() if f]
+    beside: dict[str, str] = {}             # found folders that lie inside no named folder
+    within: dict[str, str] = {}             # found folders inside a named one, which the named one masks first
+    for k, v in enumerate(_found.values()):
+        (within if any(_folder_within(v, f) for f in named) else beside)["%s#%d" % (FOUND, k)] = v
+    first = _entries(folders) + _entries(beside)
+    first.sort(key=lambda e: -e[0])         # stable: a named folder stays before a found one of its length
+    entries = first + _entries(within)
+    entries = [(n, rx, FOUND if ph.startswith(FOUND + "#") else ph) for n, rx, ph in entries]
     folder_map: dict[str, str] = {}
     alts: list[str] = []
     for i, (_, rx, placeholder) in enumerate(entries):
@@ -165,7 +229,8 @@ def set_masks(*, folders: Mapping[str, str | None], home: str | None, user: str 
 
     home_rx = None
     if home:
-        home_alts = sorted({rx for v in _folder_variants(str(home)) if (rx := _folder_rx(v))}, key=len, reverse=True)
+        home_alts = sorted({rx for v in _folder_variants(str(home)) if (rx := _folder_rx(v, _HOME_END))}, key=len,
+                           reverse=True)
         if home_alts:
             home_rx = re.compile("|".join("(?:%s)" % a for a in home_alts), re.IGNORECASE)
 

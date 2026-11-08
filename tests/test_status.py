@@ -44,7 +44,7 @@ class FakeLink:
         return [{"method": "ListParams", "for": "the names of the params"}]
 
 
-class StatusTest(unittest.TestCase):
+class StatusBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
@@ -94,6 +94,8 @@ class StatusTest(unittest.TestCase):
     def card(self, kind, cid):
         return next(c for c in self.st.cards()[kind] if c["id"] == cid)
 
+
+class StatusTest(StatusBase):
     def test_switch_states(self):
         for value, ok in ((True, True), (False, False), ("missing-file", None), ("broken", None), ("missing-key", None)):
             self.switch(value)
@@ -287,6 +289,193 @@ class StatusTest(unittest.TestCase):
         self.cfg = Settings()
         self.b.procs = []
         self.assertEqual(self.st.pills()["smithbox"], "not_found")
+
+
+class FakeFound:
+    def __init__(self, cands=None):
+        self.cands = cands or {}
+
+    def found(self, want):
+        return list(self.cands.get(want, []))
+
+
+class Status02Test(StatusBase):
+    """Build plan 0.2 §5.8 and DP15: Found n places, the project rules of S32, the open project's lead, the running
+    Smithbox by its exe, and Smithbox*.exe."""
+
+    def cand(self, path):
+        from datapiler import detect
+        return detect.Candidate(str(path), ("recent",), None, False, None)
+
+    def test_found_places_when_a_folder_is_blank_or_missing(self):
+        from datapiler.settings import with_values
+        self.st.attach(folders=FakeFound({"smithbox": [self.cand(self.sb)], "game": [self.cand(self.game),
+                                                                                       self.cand(self.sb)]}))
+        self.assertTrue(self.card("smithbox", "installed")["ok"])     # set and present: never second-guessed
+        self.cfg = with_values(self.cfg, smithbox_dir="", game_dir=str(Path(self.tmp.name) / "gone"))
+        c = self.card("smithbox", "installed")
+        self.assertEqual((c["ok"], c["text"], c["fix"]), ("warn", "Found 1 place - confirm it in Settings",
+                                                          "Open Settings and press Use."))
+        self.assertEqual(c["use"], {"key": "smithbox_dir", "path": str(self.sb), "shown": str(self.sb)})
+        g = self.card("game", "folder")
+        self.assertEqual((g["ok"], g["text"]), ("warn", "Found 2 places - confirm them in Settings"))
+        self.assertNotIn("use", g)                               # two: the owner chooses in Settings
+        self.assertEqual(self.cfg.smithbox_dir, "")
+
+    def test_the_project_rules_of_0_2(self):
+        root = Path(self.tmp.name) / "DataPiler"
+        (root / "projects").mkdir(parents=True)
+        self.st.attach(root=root)
+        for project, words in ((root, "DataPiler's own folder"), (root / "projects", "inside DataPiler's folder"),
+                               (Path(self.tmp.name), "holds the game's folder")):
+            with self.subTest(project=project.name):
+                self.cfg = Settings(game_dir=str(self.game), project_dir=str(project))
+                ok, why = self.st.project_ok()
+                self.assertFalse(ok)
+                self.assertIn(words, why)
+                self.assertFalse(self.card("project", "outside_game")["ok"])
+
+    def test_the_open_project_from_smithboxs_record(self):
+        """A lead (O48): the record's one marked Elden Ring project."""
+        from datapiler import sbproject
+        local = Path(self.tmp.name) / "Local"
+        folder = local / "Smithbox" / "Projects"
+        folder.mkdir(parents=True)
+
+        class WithLocal(FakeBackend):
+            def local_appdata(self):
+                return str(local)
+
+        def mark(project):
+            (folder / "p.json").write_text(json.dumps({"ProjectName": "Invented", "ProjectPath": str(project),
+                                                       "DataPath": str(self.game), "ProjectType": 8,
+                                                       "AutoSelect": True}), encoding="utf-8")
+            sbproject.forget()
+
+        b = WithLocal()
+        b.procs, b.versions = self.b.procs, self.b.versions
+        with winapi.use(b):
+            c = self.card("project", "open_project")
+            self.assertEqual((c["ok"], c["text"]), (None, "Which project Smithbox has open is not known yet"))
+            mark(self.project)
+            c = self.card("project", "open_project")
+            self.assertEqual((c["ok"], c["text"]), (True, "Smithbox's record marks <PROJECT> as the project it opens"))
+            self.assertIn("lead", c["fix"])
+            other = Path(self.tmp.name) / "Other"
+            other.mkdir()
+            mark(other)
+            c = self.card("project", "open_project")
+            self.assertEqual((c["ok"], c["text"], c["detail"]), ("warn", "Smithbox's record marks another project to "
+                                                                         "open", str(other)))
+        sbproject.forget()
+
+    def test_the_running_smithbox_by_its_exe(self):
+        """Smithbox.Vulkan.exe and Smithbox.OpenGL.exe in one folder is the normal case; Status names the one
+        running, with its build, and a second Smithbox elsewhere is listed too."""
+        (self.sb / "Smithbox.exe").unlink()
+        (self.sb / "Smithbox.Vulkan.exe").write_bytes(b"")
+        (self.sb / "Smithbox.OpenGL.exe").write_bytes(b"")
+        self.b.versions = {"eldenring.exe": "1.16.0.0", "smithbox.vulkan.exe": "2.2.6.0",
+                           "smithbox.opengl.exe": "2.2.6.0"}
+        self.assertTrue(self.card("smithbox", "installed")["ok"])
+        self.assertEqual(self.card("smithbox", "build")["text"], "Build 2.2.6.0")
+        self.assertEqual(self.card("smithbox", "running")["text"], "Not running")
+        self.b.procs = [Proc("smithbox.vulkan.exe", str(self.sb / "Smithbox.Vulkan.exe"))]
+        c = self.card("smithbox", "running")
+        self.assertEqual((c["ok"], c["text"], c["detail"]), (True, "Running: Smithbox.Vulkan.exe · build 2.2.6.0",
+                                                             str(self.sb)))
+        self.assertEqual(self.st.pills()["smithbox"], "running")
+        other = Path(self.tmp.name) / "Smithbox-old"
+        other.mkdir()
+        (other / "Smithbox.exe").write_bytes(b"")
+        self.b.procs.append(Proc("smithbox.exe", str(other / "Smithbox.exe")))
+        c = self.card("smithbox", "running")
+        self.assertEqual(c["text"], "Running: 2 Smithbox processes")
+        self.assertEqual(c["fix"], "Smithbox.Vulkan.exe · build 2.2.6.0; Smithbox.exe")
+        e = self.card("smithbox", "elsewhere")
+        self.assertEqual((e["ok"], e["detail"]), ("warn", str(other)))
+        self.assertEqual(e["use"]["path"], str(other))
+        # the Settings folder blank: the pill still says running (whatever the Settings say)
+        self.cfg = Settings(game_dir=str(self.game))
+        self.assertEqual(self.st.pills()["smithbox"], "running")
+
+    def test_builds_that_differ_and_the_provenance(self):
+        (self.sb / "Smithbox.exe").unlink()
+        (self.sb / "Smithbox.Vulkan.exe").write_bytes(b"")
+        (self.sb / "Smithbox.OpenGL.exe").write_bytes(b"")
+        self.b.versions = {"eldenring.exe": "1.16.0.0", "smithbox.vulkan.exe": "2.2.6.0",
+                           "smithbox.opengl.exe": "2.2.5.0"}
+        self.cfg = Settings(game_dir=str(self.game), smithbox_dir=str(self.sb), project_dir=str(self.project),
+                            expansion="no")
+        self.assertEqual(self.card("smithbox", "build")["ok"], "warn")
+        with self.assertRaises(status.ProvenanceMissing) as cm:
+            self.st.provenance()
+        self.assertIn("builds differ", str(cm.exception))
+        self.b.procs = [Proc("smithbox.opengl.exe", str(self.sb / "Smithbox.OpenGL.exe"))]
+        self.assertEqual(self.st.provenance()["smithbox_build"], "2.2.5.0")      # the running one's
+        self.b.procs = []
+        for f in self.sb.iterdir():
+            f.unlink()
+        with self.assertRaises(status.ProvenanceMissing) as cm:
+            self.st.provenance()
+        self.assertIn("Smithbox*.exe", str(cm.exception))
+        self.assertIn("Smithbox's exe is not in <SMITHBOX>", self.card("smithbox", "installed")["text"])
+
+    def test_the_provenance_has_the_running_smithboxs_build(self):
+        """Found by the correctness review (C1): the build of the folder in Settings was recorded while another
+        Smithbox, from another folder, served the link."""
+        self.b.versions = {"eldenring.exe": "1.16.0.0", "smithbox.exe": "2.2.5.0", "smithbox.vulkan.exe": "2.2.6.0"}
+        new = Path(self.tmp.name) / "Smithbox 2.2.6"
+        new.mkdir()
+        (new / "Smithbox.Vulkan.exe").write_bytes(b"")
+        self.cfg = Settings(game_dir=str(self.game), smithbox_dir=str(self.sb), project_dir=str(self.project),
+                            expansion="no")
+        self.assertEqual(self.st.provenance()["smithbox_build"], "2.2.5.0")      # none runs: the folder's
+        self.b.procs = [Proc("smithbox.vulkan.exe", str(new / "Smithbox.Vulkan.exe"))]
+        self.assertEqual(self.st.provenance()["smithbox_build"], "2.2.6.0")      # the running one's, elsewhere
+        self.b.procs.append(Proc("smithbox.exe", str(self.sb / "Smithbox.exe")))
+        with self.assertRaises(status.ProvenanceMissing) as cm:
+            self.st.provenance()
+        self.assertIn("different builds are running", str(cm.exception))
+        self.b.procs = [Proc("smithbox.exe", None)]                              # its path could not be read
+        with self.assertRaises(status.ProvenanceMissing) as cm:
+            self.st.provenance()
+        self.assertIn("the running Smithbox exe's version resource could not be read", str(cm.exception))
+
+    def test_a_running_smithbox_elsewhere_is_masked_without_detect(self):
+        """Found by the reviews (SEC-3, C4): with Mask paths on, Status drew the folder of a Smithbox running from
+        another folder in full until Settings or Detect had taught it to the mask."""
+        from datapiler import api, logbook
+        other = Path(self.tmp.name) / "OtherTools"
+        other.mkdir()
+        (other / "Smithbox.Vulkan.exe").write_bytes(b"")
+        self.b.procs = [Proc("smithbox.vulkan.exe", str(other / "Smithbox.Vulkan.exe"))]
+        self.cfg = Settings(game_dir=str(self.game), smithbox_dir=str(self.sb), project_dir=str(self.project),
+                            mask_paths=True)
+        logbook.set_masks(folders={"<SMITHBOX>": str(self.sb), "<GAME>": str(self.game)}, home=None, user=None,
+                          pc=None)
+        try:
+            cards = self.st.cards()
+            api._mask_cards(cards)
+            seen = {c["id"]: c for c in cards["smithbox"]}
+            self.assertEqual(seen["running"]["detail"], "<FOUND>")
+            self.assertEqual(seen["elsewhere"]["detail"], "<FOUND>")
+            self.assertEqual(seen["elsewhere"]["use"]["shown"], "<FOUND>")
+            for c in cards["smithbox"]:                         # drawn: every text but Use's value to save
+                drawn = {k: v for k, v in c.items() if k != "use"}
+                drawn["shown"] = (c.get("use") or {}).get("shown")
+                self.assertNotIn("OtherTools", json.dumps(drawn), c["id"])
+        finally:
+            logbook.set_masks(folders={}, home=None, user=None, pc=None)
+
+    def test_the_watcher_teaches_the_mask(self):
+        from datapiler import logbook
+        other = Path(self.tmp.name) / "Watched"
+        w = smithbox.Watch(read=lambda: [smithbox.Running("Smithbox.Vulkan.exe", str(other / "Smithbox.Vulkan.exe"),
+                                                            str(other), "2.2.6.0")])
+        self.assertEqual(logbook.mask(str(other) + "/x"), str(other) + "/x")
+        w.check_once()
+        self.assertEqual(logbook.mask(str(other) + "/x"), "<FOUND>/x")
 
 
 if __name__ == "__main__":

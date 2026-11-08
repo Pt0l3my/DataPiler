@@ -1,0 +1,27 @@
+// Invented: the newer libraryfolders.vdf, with path and apps blocks. No real install.
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"C:\\Steam"
+		"label"		""
+		"contentid"		"1000000000000000001"
+		"totalsize"		"0"
+		"apps"
+		{
+			"228980"		"100"
+			"9000002"		"200"
+		}
+	}
+	"1"
+	{
+		"path"		"C:\\Games\\SteamLibrary"
+		"label"		"games"
+		"contentid"		"1000000000000000002"
+		"totalsize"		"1000"
+		"apps"
+		{
+			"1245620"		"50000000000"
+		}
+	}
+}

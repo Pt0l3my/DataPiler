@@ -1368,7 +1368,14 @@ its first text is kept.
 
 - **P1. Smithbox's open project and its process name.** ER08 establishes only `Startup.json` and its switch. Where
   Smithbox records its open project is not known, so 0.1 checks the project folder set in Settings and
-  `smithbox.open_project()` returns None. `EXE_NAME = "Smithbox.exe"` is to be confirmed.
+  `smithbox.open_project()` returns None. `EXE_NAME = "Smithbox.exe"` is to be confirmed. **Closed (2026-11-08,
+  0.2.0):** the process name is a fact on the owner's PC: Smithbox 2.2.6 runs as `Smithbox.Vulkan.exe`, and the same
+  folder holds `Smithbox.OpenGL.exe` (`Smithbox.exe` stays a lead). From 0.2.0 DataPiler recognises Smithbox by any
+  exe named `Smithbox*.exe`, in any case, everywhere (`smithbox.EXE_RX`): the folder check, the process watcher
+  (DP15), the build read from the running exe's version resource (else the one the folder's exes share), the
+  provenance, Detect and the picker's mark. Where Smithbox records its open project is a lead in 0.2.0
+  (`sbproject`, smithbox-projects.md; build plan 0.2 §10 P1): `open_project()` reads its record's mark and informs
+  Status only, and the link's project question stays.
 - **P2. The expansion's files.** `game.EXPANSION_MARKERS` is empty until the files whose presence means the expansion
   is installed are confirmed on the owner's install. Until then `expansion` is null and every share write is refused
   by `ProvenanceMissing`: this blocks the tag, not the build. **Closed (S21, fix round 2):** the owner states it in

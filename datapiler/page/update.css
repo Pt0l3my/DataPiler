@@ -1,0 +1,30 @@
+/* The Update... pop-up's own parts, inside app.css's one overlay (build plan 0.2 sections 3.2 and 4.7): every class
+   here starts up-. No inline style anywhere; the progress bar is a <progress> element. */
+.up-kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; margin-bottom: 10px; }
+.up-k { color: var(--mute); }
+.up-box { margin-top: 10px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--edge); background: var(--card2); }
+.up-box.ok { color: var(--ok); border-color: rgba(79,209,139,.35); background: rgba(79,209,139,.06); }
+.up-box.warn { color: var(--warn); border-color: rgba(242,184,75,.35); background: rgba(242,184,75,.07); }
+.up-box.err { color: var(--err); border-color: rgba(255,107,107,.4); background: rgba(255,107,107,.07); }
+.up-line { margin-top: 10px; }
+.up-gap { margin-top: 8px; }
+.up-gap-b { margin-bottom: 6px; }
+.up-small { margin-top: 6px; font-size: 12px; }
+.up-err { color: var(--err); margin-top: 8px; min-height: 1em; }
+.up-err:empty { display: none; }
+.up-steps { list-style: none; margin: 0; padding: 0; }
+.up-steps li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
+.up-bar { width: 100%; height: 10px; accent-color: var(--acc); }
+.up-notes { margin-top: 6px; max-height: 260px; overflow: auto; padding: 8px 12px; border: 1px solid var(--edge);
+            border-radius: 8px; background: #0d0f12; }
+.up-notes .up-h { margin: 8px 0 4px; font-size: 13px; }
+.up-notes h5.up-h { font-size: 12.5px; color: var(--mute); }
+.up-notes p { margin: 4px 0; }
+.up-notes ul, .up-notes ol { margin: 4px 0; padding-left: 20px; }
+.up-notes code { font-family: var(--mono); font-size: 12px; background: var(--card2); padding: 0 3px; border-radius: 4px; }
+.up-code { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; margin: 6px 0; padding: 6px 8px;
+           background: var(--card2); border-radius: 6px; }
+.up-href { color: var(--mute); font-family: var(--mono); font-size: 11.5px; }
+.up-link { display: inline-block; color: var(--text); background: var(--card2); border: 1px solid var(--edge);
+           border-radius: 7px; padding: 5px 12px; text-decoration: none; }
+.up-link:hover { border-color: var(--acc); }

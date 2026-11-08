@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import VERSION, events, fileio, link as link_mod, logbook, paths as paths_mod, settings as settings_mod, winapi
+from . import (VERSION, detect as detect_mod, dirs as dirs_mod, events, fileio, link as link_mod, logbook,
+               paths as paths_mod, settings as settings_mod, winapi)
 from .logbook import own
 from .paths import Paths
 from .server import Bad
@@ -33,6 +34,9 @@ PROJECT_ASK = ("Is the project open in Smithbox the project folder set in Settin
                "project Smithbox has open, and the server link must never read a project in the game's own folder. "
                "OK switches the link on; you are asked once a session.")
 LEVELS = logbook.LEVELS
+ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths")
+FOLDER_WANTS = {"smithbox_dir": "smithbox", "game_dir": "game", "project_dir": "project"}
+_PATH_CONTROL_RX = re.compile(r"[\x00-\x1f\x7f]")
 
 # The owner rules of S11 for one log line (the guard's check 4 as it reads a line: the lines are masked already, so
 # a placeholder such as <WORKSPACE>\inbox and the page's own address pass).
@@ -130,8 +134,15 @@ def _str(body: dict, key: str, limit: int = 256) -> str:
 
 class Api:
     def __init__(self, *, live: Live, status, link, runner, textdb, guard, inbox, catalogue,
-                 stop: Callable[[], None], libs: bool):
+                 stop: Callable[[], None], libs: bool, updates=None, folders=None):
+        """updates: UPDATE's update.Updater, reached only through the three update routes (S27); folders: the
+        session's detect.Folders. Either may be None: the update routes then answer 404, Detect finds nothing."""
+        self.updates = updates
+        self.folders = folders
         self.live = live
+        if hasattr(status, "attach"):
+            status.attach(root=live.root, folders=folders)
+        _learn_recent(live.settings)
         self.status = status
         self.link = link
         self.runner = runner
@@ -151,8 +162,15 @@ class Api:
         self._unsub.append(events.subscribe("textdb.changed", self._on_text))
 
     def close(self) -> None:
+        """As 0.1, then updates.close() and folders.close() when given."""
         for u in self._unsub:
             u()
+        for part in (self.updates, self.folders):
+            if part is not None:
+                try:
+                    part.close()
+                except Exception as e:
+                    self._log.warn("a part did not close cleanly: %s", logbook.why(e))
 
     def _bump(self, topic: str, data: dict) -> None:
         with self._lock:
@@ -179,9 +197,16 @@ class Api:
         if path == "/api/log":
             return 200, self.log_lines(query.get("after", "0"))
         if path == "/api/settings":
-            s = self.live.session
-            return 200, {"settings": self.live.settings.as_dict(), "server": SERVER,
-                         "session": {"link": s.link, "debug": s.debug}}
+            return 200, self.settings_view()
+        # UPDATE's routes (build plan 0.2 §3.3): forwarded as they are, and nothing else of api.py reaches update.py.
+        if path == "/api/update":
+            if self.updates is None:
+                return 404, {"error": "not found"}
+            return 200, self.updates.get()
+        if path == "/api/update-result":
+            if self.updates is None:
+                return 404, {"error": "not found"}
+            return 200, self.updates.result()
         return 404, {"error": "not found"}
 
     def state(self) -> dict:
@@ -192,6 +217,9 @@ class Api:
                 extract["inbox"] = self.inbox.state()
             except Exception:
                 extract["inbox"] = []
+        status = self.status.cards()
+        if self.live.settings.mask_paths:
+            _mask_cards(status)
         block = self.status.block_line()
         if block is None:
             for j in jobs:
@@ -206,7 +234,7 @@ class Api:
             "version": VERSION,
             "pills": self.status.pills(),
             "block": block,
-            "status": self.status.cards(),
+            "status": status,
             "extract": extract,
             "jobs": jobs,
             "outputs_rev": self.outputs_rev,
@@ -358,6 +386,10 @@ class Api:
     # ------------------------------------------------------------------------------------------------ POST
 
     def post(self, path: str, body: dict) -> tuple[int, object, Callable[[], None] | None]:
+        if path == "/api/update":
+            if self.updates is None:
+                return 404, {"error": "not found"}, None
+            return self.updates.post(body)
         handler = self._posts().get(path)
         if handler is None:
             return 404, {"error": "not found"}, None
@@ -378,6 +410,12 @@ class Api:
             "/api/open": self.open_folder,
             "/api/copy-path": self.copy_path,
             "/api/settings": self.save_settings,
+            "/api/settings/one": self.save_one,
+            "/api/detect": self.detect,
+            "/api/dirs": self.dirs,
+            "/api/dirs/new": self.dirs_new,
+            "/api/dirs/check": self.dirs_check,
+            "/api/dirs/forget": self.dirs_forget,
             "/api/log/share": self.log_share,
         }
 
@@ -501,15 +539,102 @@ class Api:
             return {"ok": True}
         return {"ok": False, "error": "Copying a path works on Windows only."}
 
+    # ------------------------------------------------------------------------------------------------ Settings
+
+    def settings_view(self) -> dict:
+        """GET /api/settings (build plan 0.2 §6): the settings without recent, the server, the session's switches, and
+        for each folder its shown value, its check line, Detect's places and the recent ones; the expansion's places;
+        the workspace's and the share folder's shown values."""
+        s = self.live.settings
+        mask_on = bool(s.mask_paths)
+        root = self.live.root
+        cfg = s.as_dict()
+        cfg.pop("recent", None)
+        folders: dict = {}
+        for key, want in FOLDER_WANTS.items():
+            value = getattr(s, key)
+            found = self._found(want)
+            folders[key] = {
+                "shown": dirs_mod.shown(value, mask_on),
+                "check": dirs_mod.check(want, value, s, root).as_dict(),
+                "found": [detect_mod.view(want, c, s, root) for c in found],
+                "notes": self._notes(want),
+                "recent": [{"path": r, "shown": dirs_mod.shown(r, mask_on)} for r in s.recent.get(key, ())],
+            }
+        exp = [detect_mod.view("expansion", c, s, root) for c in self._found("expansion")]
+        sess = self.live.session
+        return {"settings": cfg, "server": SERVER, "session": {"link": sess.link, "debug": sess.debug},
+                "folders": folders, "expansion": {"found": exp, "notes": self._notes("expansion")},
+                "shown": {k: dirs_mod.shown(getattr(s, k), mask_on) for k in ("workspace_dir", "share_dir")}}
+
+    def _found(self, want: str) -> list:
+        if self.folders is None:
+            return []
+        try:
+            return list(self.folders.found(want))
+        except Exception as e:
+            self._log.warn("Detect's places could not be read: %s", logbook.why(e))
+            return []
+
+    def _notes(self, want: str) -> list[str]:
+        if self.folders is None:
+            return []
+        try:
+            return [logbook.mask(n) for n in self.folders.notes(want)]
+        except Exception:
+            return []
+
     def save_settings(self, body: dict):
+        _only(body, ("settings",))
         raw = body.get("settings")
         if not isinstance(raw, dict):
             raise Bad("settings must be an object")
+        if "recent" in raw:
+            return 400, {"error": settings_mod.NOT_PAGE, "field": "recent"}, None
+        # The body's keys laid over the current settings before the check (build plan 0.2 §6): a page that leaves
+        # out the fields it did not let the owner edit (Mask paths on) keeps them as they are.
+        merged = self.live.settings.as_dict()
+        merged.update(raw)
+        return self._save(merged)
+
+    def save_one(self, body: dict):
+        """POST /api/settings/one: Use, Choose and the mask switch save one setting at once (S34). A folder is saved as
+        the folder it resolves to, and refused on a ✗ check with its words."""
+        _only(body, ("key", "value"))
+        key = body.get("key")
+        if key == "recent":
+            return 400, {"error": settings_mod.NOT_PAGE, "field": "recent"}, None
+        if key not in ONE_KEYS:
+            raise Bad("key must be one of " + ", ".join(ONE_KEYS))
+        value = body.get("value")
+        if key in FOLDER_WANTS:
+            value = _path(body, "value")
+            value = value.strip()
+            if value:
+                c = dirs_mod.check(FOLDER_WANTS[key], value, self.live.settings, self.live.root)
+                if c.ok is False:
+                    return 400, {"error": str(c.text), "field": key}, None
+                if not dirs_mod.unc(value) and os.path.isdir(value):
+                    value = dirs_mod.resolved(value)
+        elif key == "expansion":
+            if not isinstance(value, str) or value not in settings_mod.EXPANSION:
+                raise Bad("value must be yes, no or blank")
+        elif not isinstance(value, bool):
+            raise Bad("value must be true or false")
+        merged = self.live.settings.as_dict()
+        merged[key] = value
+        out = self._save(merged)
+        if isinstance(out, tuple):
+            return out
+        return {"ok": True}
+
+    def _save(self, raw: dict):
         try:
             new = settings_mod.check(raw, root=self.live.root)
         except SettingsError as e:
             return 400, {"error": logbook.mask(e.rule), "field": e.field}, None
         old = self.live.settings
+        new = settings_mod.with_recent(old, new)
         diff = settings_mod.changed(old, new)
         if "share_dir" in diff and self.runner.busy():
             return 400, {"error": "the share folder cannot change while a job or an import runs",
@@ -531,13 +656,71 @@ class Api:
         if "project_dir" in diff:
             self.live.session.project_confirmed = False      # asked again for the new folder
         set_masks(self.live)
-        self._log.info("settings saved (%s changed)", logbook.n(len(diff)))
+        _learn_recent(new)
+        self._log.info("settings saved (%s changed)", logbook.n(len([k for k in diff if k != "recent"])))
         events.emit("settings.saved")
         later = [k for k in settings_mod.NEXT_START if k in diff and k != "workspace_dir"]
         out: dict = {"ok": True, "next_start": later + (["workspace_dir"] if moved else [])}
         if moved:
             out["note"] = WORKSPACE_MOVES
         return out
+
+    # ------------------------------------------------------------------------------------------------ Detect, picker
+
+    def detect(self, body: dict) -> dict:
+        _only(body, ("want",))
+        want = body.get("want")
+        if want not in detect_mod.WANTS:
+            raise Bad("want must be one of " + ", ".join(detect_mod.WANTS))
+        s, root = self.live.settings, self.live.root
+        if self.folders is None:
+            return {"want": want, "found": [], "notes": []}
+        found = self.folders.detect(want)
+        return {"want": want, "found": [detect_mod.view(want, c, s, root) for c in found],
+                "notes": self._notes(want)}
+
+    @staticmethod
+    def _want(body: dict, allowed: tuple[str, ...] = dirs_mod.WANTS) -> str:
+        want = body.get("want")
+        if want not in allowed:
+            raise Bad("want must be one of " + ", ".join(allowed))
+        return want
+
+    def dirs(self, body: dict) -> dict:
+        _only(body, ("path", "want", "filter"))
+        want = self._want(body)
+        path = _path(body, "path")
+        filt = body.get("filter", "")
+        if not isinstance(filt, str) or len(filt) > dirs_mod.FILTER_MAX or _PATH_CONTROL_RX.search(filt):
+            raise Bad("filter must be text")
+        return dirs_mod.listing(want, path, self.live.settings, self.live.root, filt=filt)
+
+    def dirs_new(self, body: dict) -> dict:
+        _only(body, ("parent", "name", "want"))
+        self._want(body, ("project",))
+        parent = _path(body, "parent")
+        name = body.get("name")
+        if not isinstance(name, str) or len(name) > dirs_mod.PATH_MAX:
+            raise Bad("name must be text")
+        return dirs_mod.new_folder(parent, name, self.live.settings, self.live.root)
+
+    def dirs_check(self, body: dict) -> dict:
+        _only(body, ("want", "path"))
+        want = self._want(body)
+        path = _path(body, "path")
+        return dirs_mod.check(want, path, self.live.settings, self.live.root).as_dict()
+
+    def dirs_forget(self, body: dict):
+        _only(body, ("key",))
+        key = body.get("key")
+        if key not in settings_mod.FOLDER_KEYS:
+            raise Bad("key must be one of " + ", ".join(settings_mod.FOLDER_KEYS))
+        new = settings_mod.forget_recent(self.live.settings, key)
+        settings_mod.save(self.live.paths.settings, new)
+        self.live.settings = new
+        self._log.info("the recent folders of one folder setting forgotten")
+        events.emit("settings.saved")
+        return {"ok": True}
 
     def log_share(self, body: dict) -> dict:
         after = _int_or_none(body, "after") or 0
@@ -562,6 +745,41 @@ class Api:
                 return {"ok": False, "refused": {"check": 4, "line": ln["seq"]}}
             out.append(text)
         return {"ok": True, "text": "\n".join(out) + ("\n" if out else "")}
+
+
+def _only(body: dict, allowed: tuple[str, ...]) -> None:
+    for k in body:
+        if k not in allowed:
+            raise Bad("not a key this request takes")
+
+
+def _path(body: dict, key: str) -> str:
+    v = body.get(key, "")
+    if not isinstance(v, str):
+        raise Bad("%s must be text" % key)
+    if len(v) > dirs_mod.PATH_MAX or _PATH_CONTROL_RX.search(v):
+        raise Bad("%s is not a folder path DataPiler takes" % key)
+    return v
+
+
+def _learn_recent(s: Settings) -> None:
+    """The folders used before are Detect's "recent" source: the mask learns them as <FOUND> (design 0002 §3.5)."""
+    logbook.learn_found([f for v in s.recent.values() for f in v])
+
+
+def _mask_cards(cards: dict) -> None:
+    """Mask paths on this page (DP14): every Status check's detail and offered folder drawn as the log's mask."""
+    for checks in cards.values():
+        if not isinstance(checks, list):
+            continue
+        for c in checks:
+            if not isinstance(c, dict):
+                continue
+            if isinstance(c.get("detail"), str):
+                c["detail"] = logbook.mask(c["detail"])
+            use = c.get("use")
+            if isinstance(use, dict) and isinstance(use.get("path"), str):
+                use["shown"] = logbook.mask(use["path"])
 
 
 def _same_folder(a: Path, b: Path) -> bool:

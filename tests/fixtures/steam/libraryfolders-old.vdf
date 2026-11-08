@@ -1,0 +1,8 @@
+// Invented: the old flat libraryfolders.vdf, without apps.
+"LibraryFolders"
+{
+	"TimeNextStatsReport"		"1000000000"
+	"ContentStatsID"		"-1000000000000000001"
+	"1"		"C:\\Games\\SteamLibrary"
+	"2"		"C:/Other Library"
+}

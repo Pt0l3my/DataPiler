@@ -1,8 +1,9 @@
-# What the designers settled from design 0001
+# What the designers settled from designs 0001 and 0002
 
 The owner's decisions are in [../DECISIONS.md](../DECISIONS.md); this is the designers' own log, one entry each (S1
-onwards), for points design 0001 left to us or suggested, and for what the build and its fix rounds settled (S15
-onwards). Each can be reopened; one that would change an owner's rule becomes a DP question instead.
+onwards), for points design 0001 left to us or suggested, for what the build and its fix rounds settled (S15
+onwards), and for what design 0002 and its build plan ([build-plan-0.2.md](build-plan-0.2.md) §9) settled for 0.2.0
+(S27 onwards). Each can be reopened; one that would change an owner's rule becomes a DP question instead.
 
 | # | Point | Settled | Why |
 |---|---|---|---|
@@ -32,6 +33,19 @@ onwards). Each can be reopened; one that would change an owner's rule becomes a 
 | S24 | The release (S4) | Besides `DataPiler.exe` and its sha256, the draft release carries one zip of the whole app, `DataPiler-<version>.zip`: the tagged source as `git archive` makes it, with the built exe and `THIRD-PARTY-NOTICES.txt` placed in it, and its sha256 | The owner downloads one file; the exe's notices go wherever the exe goes; publishing stays the owner's act |
 | S25 | Check 3 across separators and accents (fix round 3) | Check 3 compares each string value with the texts twice: case-folded as it is, and normalised (decomposed, accents dropped, case-folded, each run of spaces, `_`, `-` and other signs one space) against the texts normalised the same way, with the same three rules (equal; at 4 or more characters inside a text; holding a text of 4 or more characters). Copy for sharing's check of the log lines does the same | A table name (`a-z`, `0-9`, `_`) or a job id (`a-z`, `0-9`, `-`) can hold neither a space nor an accent, so a name is naturally written `white_mask_varre`; a value with no sign between its words compares as before, so S20's ordinary words are unaffected |
 | S26 | Check 4's owner words (fix round 3) | The user name and the PC name are each found from their letters and digits, with any signs between them or none (`[\W_]*`), as a whole word, case-folded: `DESKTOP-XXXXXXX` as `desktop_xxxxxxx` too, and a two-part user name with `_`, `-` or nothing between. Copy for sharing uses the same patterns (`guard.owner_patterns`) | A PC name's `-` cannot stand in a table name, and a user name's space in neither a table name nor a job id |
+| S27 | S12a (DP11; design 0002 §2.3) | DataPiler reaches the internet after the first start only when the owner presses Update... (the check), Download and Install: `api.github.com`, `github.com` and GitHub's two asset hosts, https only, every redirect checked again, each call logged by host and path. `datapiler/update.py` is the only module that opens a connection to anywhere but `127.0.0.1`, and its calls are reached only from `POST /api/update`; nothing checks on its own, and a download stops when the pop-up has not polled for 5 s. S12 reads "none after the first start, except S27" | DP11: on the press only. A test reads the code's shape (`test_update_static.py`), so the rule cannot drift by care alone; there is no "check automatically" setting, as a setting is the first step away from the press |
+| S28 | The release (design 0002 §2.5, "What the release must carry") | From 0.2.0 the zip carries `DataPiler/manifest.sha256` (every file but itself, in `sha256sum`'s format, written by `tools/manifest.py`) and `DataPiler/update-helper.py`; the release workflow passes the zip through the helper's own `--check-zip` before the draft | The button and the helper prove each file against the manifest; the workflow proves the zip the same way before the owner can publish it |
+| S29 | The swap (design 0002 §2.5) | Install re-proves the zip, extracts the helper, writes `update/pending.json` (relative paths, the folder's fingerprint, the port, a nonce) and exits 75; the old window runs the helper with its Python; the helper acts only on a pending file under ten minutes old that names this folder, with the mutex free; it backs up, writes, checks each landed file, moves removed files into the backup, and puts everything back on any failure; it never touches its fixed list or settings' workspace and share folders inside DataPiler's. Only a copy unpacked from a release (with `manifest.sha256`) installs from the button; a job or Extract run blocks Install; the result is shown once, matched by the nonce | The app cannot replace its own files while its Python runs them, and the window outlives the app; the helper is not a general file replacer left in the folder |
+| S30 | Rollback (design 0002 §2.5, "When the new version does not start") | The owner's R, offered when the new version exits non-zero within 90 s while `pending.json` is still there (its page never came up); never automatic | A start can fail for reasons the old version shares (a missing Python, a port in use), so going back is the owner's key |
+| S31 | The venv (design 0002 §2.5) | Every Y builds `.venv.new` and swaps it in only after pip and the marker succeed; the old one is removed at once, or after an update kept as `.venv.prev` until the new version's page has come up, and put back by R | A failed pip never leaves DataPiler without a working environment, and R needs the old one |
+| S32 | The project folder (design 0002 §4.3) | Not the game's folder or inside it (design 0001), not a folder that holds the game's folder, not DataPiler's folder or inside it; `settings.check`, Status and New folder enforce all three | A project that holds the game, or sits in DataPiler's folder, would mix Smithbox's writes with the game's files or with an update's swap |
+| S33 | Detect (DP13; design 0002 §3.4) | Smithbox from the running Smithbox's own process path, then the folders used before; no record of programs started, and no switch for one. The project and game folders from Smithbox's record of its projects (`<Local AppData>\Smithbox\Projects`, from the known folder, read only, as smithbox-projects.md §6), the one marked Elden Ring record tagged as the one Smithbox opens, a format not recognised said so with the picker offered; Steam (its install path in the registry, `libraryfolders.vdf`, the app manifest, the uninstall entry) and the running game as further game sources and the cross-check. The expansion from the app manifest's `dlcappid` values, shown with their ids, never matched against a built-in id. Registry reads only from a fixed table; candidates in memory only, logged as source and count, masked as `<FOUND>`; detection at start for a folder blank or missing; nothing saved without Use, Choose or Save | DP13, the owner's answer: Windows' record of programs started is not read. Smithbox's record of its projects is a lead until verified on the owner's PC (O48) |
+| S34 | Check lines and the picker (design 0002 §3.1 to §3.3) | ✓, ! and ✗; ✗ refuses Use and Choose in the app and Save on the page for a changed folder, and the app refuses the project rules on every save; ! saves. A typed path is saved as typed; Use and Choose save the folder a link resolves to. The picker lists folder names only, answers its refusals as `refused`, gives a listing 3 s and a drive one listing at a time; New folder for the project only. Recent: five a folder, kept by the app | A picker drawn in the page opens in front of it, which a Windows dialog does not; folder names are all it needs, and a slow drive never holds it |
+| S35 | Mask paths on this page (DP14; design 0002 §3.5) | `mask_paths`, saved, off by default; on, every path the page draws is the log's mask of it (Settings, Detect's list, the picker, Status's details), the path fields are read-only and Save leaves them as they are | DP14: the owner shares screenshots of the page |
+| S36 | Settings across versions | From 0.2.0, a key `settings.json` holds that this version does not know is dropped at load with a warning naming it, so a version rolled back to keeps the owner's folders; a save from the page still refuses an unknown key, and lays its keys over the current settings | R, or an update that adds a key, must never cost the owner their settings |
+| S37 | "The Python libraries change" (design 0002 §2.1) | Known only once the download is verified (its `requirements.lock` against this one), so shown in the ready state; before the download the pop-up says that a `.sha256` and a GitHub digest are published, and the ready state shows them checked | The API names no file inside the zip; DataPiler reads nothing of a download before it is proved |
+| S38 | The window's words during an update | The helper's console lines are ASCII (`ok`, `!`, `x`), as `DataPiler.ps1` is | Windows PowerShell 5.1 shows the PC's code page; ✓ and ✗ would come out wrong |
+| S39 | The page across an update's restart (the 0.2.0 integration run) | The page's server never sets `SO_REUSEADDR` on Windows, and sets it elsewhere, so the port of the page that asked for the update binds again while the old run's closed connections wait out `TIME_WAIT`; a port another program listens on is refused either way. While the Update… pop-up waits for the restart (`holdHeartbeat(true)`), the page's own polls ask nothing, and only its probe of `/` does | On Windows the option would let another program bind the page's port beside DataPiler, and Windows binds past `TIME_WAIT` without it; on Linux the new run otherwise lost the port for a minute and opened a new tab. The old page's polls carry the old token, which the new app answers with 403 |
 
 **S14, note of 2026-11-08** (the build's review, SEC-8 and F9). CI cannot run the privacy sweep itself: it lives in
 EldenNet, and its personal list never leaves the owner's PC. So `tools/repocheck.py` carries the sweep's rules that
@@ -48,3 +62,54 @@ the owner's act either way.
 **S24, note of 2026-11-08 (DP9).** From the release after 0.1.0, the draft carries the zip, its sha256 and
 `THIRD-PARTY-NOTICES.txt` (also inside the zip); the exe and its sha256 are not attached on their own. The exe's
 sha256 is printed in the release workflow's log, which the release's notes link, and BUILD.md compares with it.
+
+**S12, note of 2026-11-08 (DP11, S27).** S12 now reads: "None after the first start, except S27, and none at the first
+without the owner's Y; the page loads nothing from elsewhere."
+
+**S33, note of 2026-11-08 (DP15).** DataPiler also watches for a running Smithbox from its start and all the time it
+runs, by any exe whose name matches `Smithbox*.exe` (`Smithbox.Vulkan.exe` and `Smithbox.OpenGL.exe` on the owner's
+PC; `Smithbox.exe` a lead), whatever the Settings say. The folder it runs from is offered as Detect's find with Use,
+and is never saved by itself; two Smithbox processes are both listed, and neither is chosen. A log line names the
+event and the exe, never the folder.
+
+**S27 and S12, note of 2026-11-08 (the 0.2.0 security review, SEC-7).** After the first start DataPiler reaches one
+more pair of hosts than S27 named: after an update whose `requirements.lock` changed, the new version's window asks Y,
+as at the first start, and pip then fetches the locked libraries from `pypi.org` and `files.pythonhosted.org`, each
+file checked by its sha256 (S31; design 0002 §2.5, step 4). S12 now reads: "None after the first start, except S27 and,
+after an update whose libraries changed, pip after the owner's Y; none at the first without the owner's Y; the page
+loads nothing from elsewhere."
+
+**S29, note of 2026-11-08 (the 0.2.0 reviews, SEC-1, C2, SEC-5, SEC-6).** The helper holds off Ctrl+C from its backup
+to the end of the swap, and the window makes Ctrl+C a key like any other while the helper runs; an interrupt that
+reaches the swap is put back like any failure (exit 1). A swap cut off all the same (the window closed, the power
+cut) leaves `backup.json` unfinished and no `result.json` for its nonce: the window then runs `--rollback`, after the
+helper's exit or at the next start, which accepts an unfinished backup only while `update/pending.json` names the
+same update and writes back only the files that differ from their copies. The plan checks the never-touched list
+against each path as the file system resolves it too, and a path with `~` and a digit (an 8.3 short name's shape) is
+never one a release may name. A name whose case alone changes between releases is rewritten under its new name and
+never removed after it.
+
+**S30, note of 2026-11-08 (the correctness review, C3).** R is also offered, by the window's first script, when the new
+version's script stops before it starts its app (a Python too old for it, its `datapiler.py` missing) or cannot run
+at all; the new script exits with 76 when it has reached its app and settled R itself, so R is never asked twice. R
+stays the owner's key: only a swap cut off part way (S29's note) is put back without it.
+
+**S33, note of 2026-11-08 (the correctness review, C1, C7).** The provenance's `smithbox_build` is the build of the
+Smithbox that runs, whatever its folder; Smithbox processes of different builds, or a running exe whose build cannot
+be read, refuse the write; with none running, the Smithbox folder's rule applies. With any DLC app listed in the
+game's app manifest, Detect offers the expansion's Yes and No both, with the ids, and proposes neither: a DLC app may
+be an edition's artbook or soundtrack, and the expansion's id is not assumed (DP13).
+
+**S34, note of 2026-11-08 (the 0.2.0 reviews, SEC-4, C8, C10).** Windows' own folder is refused also when a part ends
+in a dot or a space, which Windows drops when it opens a path, and on Windows also as the path resolves. A listing of
+a drive whose listing is under way waits for it, at most 3 s, then has its own 3 s; only a listing that has run 3 s
+answers that the drive did not answer. A folder on a drive letter whose resolved path is a network path (a mapped
+drive) is saved as it was chosen.
+
+**S35, note of 2026-11-08 (the 0.2.0 reviews, SEC-2, SEC-3, C4, C5, C6, C9).** With Mask paths on, the picker draws each
+folder it lists as the placeholder the mask makes of its full path when it hides it whole (the account's folder as
+`<HOME>`), else as the mask of its name, and sends the real path beside it for opening; Up, Backspace and Alt+Up open
+the real parent. The folders Smithbox runs from are taught to the mask (`<FOUND>`) as soon as the watcher or a
+reading sees them. A folder's mask ends where its name ends (never before a letter, a digit, a dash or a dot that
+goes on; the home folder only at a separator, the end or a closing sign), and a known folder that only adds to a
+named one's name is matched before it.

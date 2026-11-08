@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataPiler 0002 (mock)</title>
+<style>
+:root {
+  --bg: #111317; --card: #181b21; --card2: #1e222a; --edge: #2a2f39; --text: #e6e8ec; --mute: #8d94a3;
+  --acc: #b5f320; --acc-ink: #1a2200; --ok: #4fd18b; --warn: #f2b84b; --err: #ff6b6b; --run: #59a8ff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--edge);
+         position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 15px; } .brand span { color: var(--acc); }
+.ver { color: var(--mute); font-size: 11px; margin-right: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--edge);
+        font-size: 11.5px; background: var(--card2); white-space: nowrap; }
+.pill.ok { color: var(--ok); border-color: rgba(79,209,139,.4); }
+.pill.warn { color: var(--warn); border-color: rgba(242,184,75,.4); }
+.pill.err { color: var(--err); border-color: rgba(255,107,107,.45); }
+.pill.mute { color: var(--mute); }
+.spacer { flex: 1; }
+button { font: inherit; color: var(--text); background: var(--card2); border: 1px solid var(--edge); border-radius: 7px; padding: 5px 12px; cursor: pointer; }
+button:hover { border-color: var(--acc); }
+button.pri { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); font-weight: 600; }
+button.sm { padding: 3px 9px; font-size: 12px; }
+button[disabled] { opacity: .45; cursor: default; }
+.tabs { display: flex; gap: 4px; padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
+.tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 9px 12px; color: var(--mute); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--acc); }
+main { padding: 16px; max-width: 1180px; }
+.card { background: var(--card); border: 1px solid var(--edge); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+.card h3 { margin: 0 0 10px; font-size: 13.5px; }
+.qm { display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; font-size: 10.5px; font-weight: 800;
+      border-radius: 50%; color: var(--acc); background: rgba(181,243,32,.13); margin-left: 6px; cursor: help; vertical-align: 1px; }
+code, .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.m.ok { color: var(--ok); } .m.bad { color: var(--err); } .m.warn { color: var(--warn); }
+.mute { color: var(--mute); }
+/* the mock's own strip - not part of DataPiler's page */
+.mockbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 14px; padding: 8px 10px; border: 1px dashed #3a404c;
+           border-radius: 8px; color: var(--mute); font-size: 12px; }
+.mockbar b { color: var(--text); font-weight: 600; margin-right: 4px; }
+.chip { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--edge); background: var(--card2); cursor: pointer; font-size: 12px; color: var(--text); }
+.chip.on { color: var(--acc); border-color: rgba(181,243,32,.45); }
+/* Settings: the folder rows */
+.frow { padding: 10px 0 12px; border-top: 1px solid #20242c; }
+.frow:first-of-type { border-top: none; padding-top: 2px; }
+.flabel { font-weight: 600; margin-bottom: 5px; }
+.fline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fline input[type=text] { flex: 1; min-width: 260px; background: var(--card2); border: 1px solid var(--edge); color: var(--text); border-radius: 6px;
+                          padding: 5px 8px; font: 12px Consolas, monospace; }
+.fline input.bad { border-color: rgba(255,107,107,.6); }
+.fcheck { margin-top: 5px; font-size: 12.5px; }
+.fsrc { color: var(--mute); font-size: 12px; margin-top: 2px; }
+.found { margin-top: 8px; background: var(--card2); border: 1px solid var(--edge); border-radius: 8px; padding: 6px 10px; }
+.found .hd { color: var(--mute); font-size: 12px; margin-bottom: 2px; }
+.found .it { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 5px 0; border-top: 1px solid #262b34; }
+.found .it:first-of-type { border-top: none; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; border: 1px solid var(--edge); color: var(--mute); white-space: nowrap; }
+.tag.acc { color: var(--acc); border-color: rgba(181,243,32,.4); }
+.check { display: inline-flex; gap: 6px; align-items: center; }
+.form2 { display: grid; grid-template-columns: 210px 1fr; gap: 8px 12px; align-items: center; margin-top: 6px; }
+.form2 input[type=text] { width: 100%; background: var(--card2); border: 1px solid var(--edge); color: var(--text); border-radius: 6px; padding: 5px 8px; font: 12px Consolas, monospace; }
+/* overlays */
+.ov { position: fixed; inset: 0; background: rgba(5,7,10,.62); display: none; align-items: flex-start; justify-content: center; padding: 56px 16px 16px; z-index: 20; overflow: auto; }
+.ov.on { display: flex; }
+.modal { background: var(--card); border: 1px solid var(--edge); border-radius: 12px; width: 100%; max-width: 680px; box-shadow: 0 14px 50px rgba(0,0,0,.5); }
+.modal .mh { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--edge); font-weight: 700; font-size: 14px; }
+.modal .mb { padding: 14px 16px; }
+.modal .mf { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--edge); flex-wrap: wrap; }
+.modal .mf .left { margin-right: auto; }
+.x { margin-left: auto; background: none; border: none; color: var(--mute); font-size: 16px; padding: 0 4px; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; align-items: baseline; }
+.kv > div:nth-child(odd) { color: var(--mute); }
+.notes { margin-top: 12px; background: #0e1014; border: 1px solid var(--edge); border-radius: 8px; padding: 10px 14px; max-height: 210px; overflow: auto; }
+.notes h4 { margin: 4px 0 6px; font-size: 13px; } .notes ul { margin: 0 0 6px; padding-left: 18px; } .notes p { margin: 0 0 6px; }
+.notes .lnk { color: var(--mute); }
+.bar { height: 8px; background: #252a33; border-radius: 4px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--acc); }
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li { display: grid; grid-template-columns: 20px 1fr; gap: 6px; padding: 4px 0; border-top: 1px solid #20242c; }
+.steps li:first-child { border-top: none; }
+.box { margin-top: 12px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--edge); background: var(--card2); font-size: 12.5px; }
+.box.warn { color: var(--warn); border-color: rgba(242,184,75,.35); background: rgba(242,184,75,.06); }
+.box.err { color: var(--err); border-color: rgba(255,107,107,.4); background: rgba(255,107,107,.06); }
+.box.ok { color: var(--ok); border-color: rgba(79,209,139,.35); background: rgba(79,209,139,.06); }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid #3a404c; border-top-color: var(--acc); border-radius: 50%; animation: s 1s linear infinite; vertical-align: -2px; }
+@keyframes s { to { transform: rotate(360deg); } }
+/* the picker */
+.crumbs { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; font-size: 12.5px; }
+.crumbs a { color: var(--text); text-decoration: none; padding: 1px 5px; border-radius: 5px; cursor: pointer; }
+.crumbs a:hover { background: var(--card2); }
+.crumbs .sep { color: var(--mute); }
+.places { display: flex; gap: 6px; margin: 10px 0 8px; flex-wrap: wrap; }
+.filter { width: 100%; background: var(--card2); border: 1px solid var(--edge); color: var(--text); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.list { margin-top: 8px; border: 1px solid var(--edge); border-radius: 8px; background: #0f1319; height: 238px; overflow: auto; padding: 4px; }
+.row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: default; }
+.row:hover { background: #171c24; }
+.row.sel { background: rgba(181,243,32,.10); outline: 1px solid rgba(181,243,32,.35); }
+.row .ico { color: #d9b04a; }
+.row .nm { flex: 1; }
+.chosen { margin-top: 10px; font-size: 12.5px; }
+.term { background: #0b0d10; border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; font: 12px Consolas, monospace; white-space: pre; overflow: auto; color: #cfd3da; }
+.term .g { color: var(--ok); } .term .y { color: var(--warn); } .term .d { color: #6f7683; }
+.tab { display: none; } .tab.on { display: block; }
+.mocknote { color: var(--mute); font-size: 11.5px; margin-top: 18px; }
+@media (max-width: 720px) { .kv { grid-template-columns: 1fr; } .form2 { grid-template-columns: 1fr; } .found .it { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Data<span>Piler</span></div><div class="ver">0.2.0 (mock)</div>
+  <span class="pill ok">● Smithbox running</span>
+  <span class="pill ok">● Game closed</span>
+  <span class="pill mute">● Server link off</span>
+  <div class="spacer"></div>
+  <button id="btn-update" title="Ask GitHub for the latest DataPiler release - only when pressed">Update…</button>
+  <button>Quit</button>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-t="status">Status</button><button data-t="extract">Extract</button><button data-t="jobs">Jobs</button>
+  <button data-t="outputs">Outputs</button><button data-t="terminal">Terminal</button><button data-t="settings" class="on">Settings</button>
+</nav>
+<main>
+  <div class="mockbar" id="mockbar">
+    <b>Mock states:</b>
+    <span class="chip" data-u="checking">Update: checking</span>
+    <span class="chip" data-u="latest">up to date</span>
+    <span class="chip" data-u="new">a newer release</span>
+    <span class="chip" data-u="dl">downloading</span>
+    <span class="chip" data-u="ready">verified - ready</span>
+    <span class="chip" data-u="restart">restarting</span>
+    <span class="chip" data-u="done">updated</span>
+    <span class="chip" data-u="offline">no network</span>
+    <span class="chip" data-u="rolled">rolled back</span>
+    <span class="chip" data-p="game">Picker: game folder</span>
+    <span class="chip" data-p="project">Picker: project folder</span>
+    <span class="chip" data-w="1">The window during an update</span>
+  </div>
+
+  <!-- ===================================================== Settings (the tab this request changes) -->
+  <section class="tab on" id="t-settings">
+    <div class="card">
+      <h3>Folders<span class="qm" title="Where DataPiler reads Smithbox, the game and your project from. Detect looks in places Windows and Steam already record, on this PC only; nothing is saved until you press Use or choose a folder.">?</span></h3>
+
+      <div class="frow">
+        <div class="flabel">Smithbox folder<span class="qm" title="The folder that holds Smithbox.exe. Detect reads the running Smithbox's own path, then the folders Windows records programs were started from, then the ones you used here before.">?</span></div>
+        <div class="fline">
+          <input type="text" value="C:\Tools\Smithbox">
+          <button class="sm" data-act="detect">Detect</button><button class="sm" data-p="smithbox">Set folder…</button>
+        </div>
+        <div class="fcheck"><span class="m ok">✓</span> Smithbox.exe is here · build 2.x (placeholder)</div>
+        <div class="found">
+          <div class="hd">Detect found 2 places - choose one, or leave the folder as it is</div>
+          <div class="it"><span class="mono">C:\Tools\Smithbox</span><span class="tag acc">the running Smithbox</span><span class="mute">in use</span></div>
+          <div class="it"><span class="mono">C:\Old\Smithbox-1.0</span><span class="tag">a program Windows recorded</span><button class="sm">Use</button></div>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="flabel">Game folder<span class="qm" title="The game's Game folder - the one that holds eldenring.exe. Detect reads Steam's install path from the registry, its library list (libraryfolders.vdf) and the game's app manifest. It must never be your project folder.">?</span></div>
+        <div class="fline">
+          <input type="text" value="">
+          <button class="sm" data-act="detect">Detect</button><button class="sm" data-p="game">Set folder…</button>
+        </div>
+        <div class="fcheck"><span class="m warn">!</span> Not set - Detect found one place</div>
+        <div class="found">
+          <div class="hd">Detect found 1 place</div>
+          <div class="it"><span class="mono">C:\Games\SteamLibrary\steamapps\common\ELDEN RING\Game</span><span class="tag acc">Steam's library list</span><button class="sm pri">Use</button></div>
+        </div>
+        <div class="form2">
+          <label>Expansion installed<span class="qm" title="Shadow of the Erdtree. Detect reads Steam's app manifest for the expansion's depot, and the game folder for its files.">?</span></label>
+          <span><label class="check"><input type="checkbox"> installed</label> <span class="mute">· detected: Steam lists the expansion as installed</span> <button class="sm">Use</button></span>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="flabel">Project folder<span class="qm" title="Your Smithbox project. It must be outside the game's folder, and outside DataPiler's own folder. Detect reads Smithbox's own record of its projects (where it keeps it is still to be confirmed).">?</span></div>
+        <div class="fline">
+          <input type="text" class="bad" value="C:\Games\SteamLibrary\steamapps\common\ELDEN RING\Game\mod">
+          <button class="sm" data-act="detect">Detect</button><button class="sm" data-p="project">Set folder…</button>
+        </div>
+        <div class="fcheck"><span class="m bad">✗</span> Inside the game's folder - choose a folder outside it. Nothing is saved while this shows.</div>
+        <div class="fsrc">Recent: <span class="mono">C:\Mods\ER project</span> <button class="sm">Use</button> · <a class="mute" style="cursor:pointer">forget recent folders</a></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>The rest of Settings (unchanged from design 0001)</h3>
+      <div class="form2">
+        <label>Workspace</label><input type="text" value="workspace">
+        <label>Share folder</label><input type="text" value="share">
+        <label>Text language</label><input type="text" value="engus">
+        <label>Page port</label><input type="text" value="(any free one)">
+      </div>
+      <div style="margin-top:12px"><button class="pri">Save</button> <span class="mute">Use and Choose save their folder at once; a path typed by hand waits for Save.</span></div>
+    </div>
+  </section>
+  <section class="tab" id="t-status"><div class="card mute">Status - as in design 0001.</div></section>
+  <section class="tab" id="t-extract"><div class="card mute">Extract - as in design 0001.</div></section>
+  <section class="tab" id="t-jobs"><div class="card mute">Jobs - as in design 0001.</div></section>
+  <section class="tab" id="t-outputs"><div class="card mute">Outputs - as in design 0001.</div></section>
+  <section class="tab" id="t-terminal"><div class="card mute">Terminal - as in design 0001.</div></section>
+  <div class="mocknote">A static mock for DataPiler-design-0002.md. Versions, sizes, dates and paths are made up to show the layout; it makes no network calls.</div>
+</main>
+
+<!-- ===================================================== the update pop-up -->
+<div class="ov" id="ov-update"><div class="modal">
+  <div class="mh">Update DataPiler <button class="x" data-close>×</button></div>
+
+  <div class="u" data-s="checking"><div class="mb"><span class="spin"></span> Asking GitHub for the latest release <span class="mute">(api.github.com)</span>…</div>
+    <div class="mf"><button data-close>Cancel</button></div></div>
+
+  <div class="u" data-s="latest"><div class="mb">
+      <div class="kv"><div>This version</div><div>0.2.0</div><div>Latest release</div><div>0.2.0 · published 12 Nov 2026</div></div>
+      <div class="box ok">✓ You have the latest release.</div>
+    </div>
+    <div class="mf"><button class="left">Open the release page ↗</button><button data-close>Close</button></div></div>
+
+  <div class="u" data-s="new"><div class="mb">
+      <div class="kv">
+        <div>This version</div><div>0.2.0</div>
+        <div>Latest release</div><div><b>0.3.0</b> · published 20 Nov 2026</div>
+        <div>Download</div><div><span class="mono">DataPiler-0.3.0.zip</span> · 1.9 MiB (2.0 MB)</div>
+        <div>Checksum</div><div><span class="m ok">✓</span> published beside it (<span class="mono">DataPiler-0.3.0.zip.sha256</span>), and GitHub's own digest agrees</div>
+        <div>Python libraries</div><div><span class="m warn">!</span> changed - after the restart the window asks <b>Y</b> to fetch them from pypi.org, as at the first start</div>
+      </div>
+      <div class="notes">
+        <h4>What's new</h4>
+        <ul><li>Folder picker on Settings, with Detect</li><li>Extract: Places bundle reads place names too</li></ul>
+        <h4>Fixed</h4>
+        <ul><li>A guided export with a BOM was not recognised</li></ul>
+        <p>Full list: <span class="lnk">github.com/Pt0l3my/DataPiler/compare/v0.2.0...v0.3.0</span></p>
+      </div>
+      <div class="mute" style="margin-top:6px;font-size:12px">The notes are the release's own text, shown as text: headings, lists, bold, code. Links show their address and do not open from here.</div>
+    </div>
+    <div class="mf"><button class="left">Open the release page ↗</button><button data-close>Close</button><button class="pri" data-u="dl">Download 1.9 MiB</button></div></div>
+
+  <div class="u" data-s="dl"><div class="mb">
+      <div style="margin-bottom:6px">Downloading <span class="mono">DataPiler-0.3.0.zip</span> into <span class="mono">update\0.3.0\</span></div>
+      <div class="bar"><i style="width:62%"></i></div>
+      <div class="mute" style="margin-top:4px">1.2 of 1.9 MiB · 640 KiB/s · from GitHub's release files</div>
+    </div>
+    <div class="mf"><button data-u="new">Cancel</button></div></div>
+
+  <div class="u" data-s="ready"><div class="mb">
+      <ul class="steps">
+        <li><span class="m ok">✓</span><span>2,004,112 bytes - the size the release states</span></li>
+        <li><span class="m ok">✓</span><span>sha256 matches <span class="mono">DataPiler-0.3.0.zip.sha256</span> <span class="mono mute">9f2c…41ab</span></span></li>
+        <li><span class="m ok">✓</span><span>and matches GitHub's digest for the file</span></li>
+        <li><span class="m ok">✓</span><span>one folder, <span class="mono">DataPiler</span>, 61 files - nothing outside it, no links</span></li>
+        <li><span class="m ok">✓</span><span>its manifest: every file's sha256 checked; version inside: 0.3.0</span></li>
+      </ul>
+      <div class="box"><b>Install and restart</b> stops DataPiler. Its window then replaces 41 files, adds 6 and removes 2 (kept in the backup),
+        and starts 0.3.0. Your workspace, share, logs, jobs, settings and Python environment stay as they are. If any step fails,
+        the window puts 0.2.0 back and starts it.</div>
+      <div class="box warn">DataPiler.exe is not code-signed. This one was built by the release workflow from the repository's source, and
+        its checksum is the release's. Nothing downloaded starts until you press Install and restart.</div>
+    </div>
+    <div class="mf"><button class="left" data-u="new">Discard the download</button><button data-close>Later</button><button class="pri" data-u="restart">Install and restart</button></div></div>
+
+  <div class="u" data-s="restart"><div class="mb">
+      <ul class="steps">
+        <li><span class="m ok">✓</span><span>DataPiler 0.2.0 stopped</span></li>
+        <li><span class="spin"></span><span>The DataPiler window is replacing files - it shows each step</span></li>
+        <li><span class="mute">○</span><span class="mute">Waiting for DataPiler 0.3.0 to answer on this address</span></li>
+      </ul>
+      <div class="mute" style="margin-top:8px">This page reloads by itself when DataPiler is back.</div>
+    </div></div>
+
+  <div class="u" data-s="done"><div class="mb">
+      <div class="box ok">✓ Updated to 0.3.0 - 41 files written, 6 added, 2 removed. All 61 files match the release.</div>
+      <div class="mute" style="margin-top:8px">0.2.0's files are kept in <span class="mono">update\backup-0.2.0\</span> until the next update. <span class="mono">logs\update.log</span> has each step.</div>
+    </div>
+    <div class="mf"><button data-close>Close</button></div></div>
+
+  <div class="u" data-s="offline"><div class="mb">
+      <div class="box err">GitHub could not be reached - no internet, a firewall, or a proxy that refused it. Nothing was downloaded or changed.</div>
+      <div class="mute" style="margin-top:8px">Only api.github.com was asked. DataPiler makes no other call.</div>
+    </div>
+    <div class="mf"><button data-close>Close</button><button data-u="checking">Check again</button></div></div>
+
+  <div class="u" data-s="rolled"><div class="mb">
+      <div class="box err">The update stopped while writing files: <span class="mono">datapiler\jobs.py</span> could not be written (in use by another program).
+        Every file was put back - you are on 0.2.0.</div>
+      <div class="mute" style="margin-top:8px"><span class="mono">logs\update.log</span> has each step. The download is kept, so Install and restart can be tried again without fetching it.</div>
+    </div>
+    <div class="mf"><button data-close>Close</button><button data-u="ready">Try again</button></div></div>
+</div></div>
+
+<!-- ===================================================== the folder picker -->
+<div class="ov" id="ov-pick"><div class="modal">
+  <div class="mh"><span id="pk-title">Set the game folder</span><button class="x" data-close>×</button></div>
+  <div class="mb">
+    <div class="crumbs" id="pk-crumbs"></div>
+    <div class="places">
+      <span class="chip">This PC (drives)</span><span class="chip on" id="pk-det">Detected (1)</span><span class="chip">Recent (1)</span>
+      <span class="spacer"></span><button class="sm" id="pk-new" style="display:none">New folder…</button>
+    </div>
+    <input class="filter" placeholder="Type to filter this folder">
+    <div class="list" id="pk-list"></div>
+    <div class="chosen" id="pk-chosen"></div>
+    <div class="mute" style="font-size:11.5px;margin-top:6px">↑ ↓ move · Enter opens · Backspace goes up · Ctrl+Enter chooses the folder shown · Esc closes. Folders only - no file is listed.</div>
+  </div>
+  <div class="mf"><button class="left">↑ Up</button><button data-close>Cancel</button><button class="pri" id="pk-choose">Choose this folder</button></div>
+</div></div>
+
+<!-- ===================================================== the window during an update -->
+<div class="ov" id="ov-win"><div class="modal" style="max-width:820px">
+  <div class="mh">The DataPiler window (PowerShell) during an update <button class="x" data-close>×</button></div>
+  <div class="mb"><div class="term"><span class="d">2026-11-20 18:02:11.410  INFO   app      update requested: 0.3.0 - stopping (exit code 75)</span>
+DataPiler stopped to update to 0.3.0.
+<span class="d">[18:02:12]</span> update helper 0.3.0 (from the verified download)
+<span class="d">[18:02:12]</span> <span class="g">✓</span> DataPiler-0.3.0.zip verified again (9f2c…41ab)
+<span class="d">[18:02:12]</span> <span class="g">✓</span> backed up 43 file(s) to update\backup-0.2.0\
+<span class="d">[18:02:13]</span> <span class="g">✓</span> wrote 41, added 6, removed 2 (in the backup), 12 already current - each checked after writing
+<span class="d">[18:02:13]</span> <span class="g">✓</span> kept: workspace, share, logs, jobs, settings.json, .venv
+<span class="d">[18:02:13]</span> <span class="y">!</span> requirements.lock changed - the Python environment is made again next
+Starting DataPiler 0.3.0...
+The Python libraries changed. DataPiler will fetch from pypi.org over https:
+  grpcio 1.7x.x (Apache-2.0), protobuf 6.x.x (BSD-3-Clause) - about 7 MiB, each file checked against requirements.lock
+Fetch them now? [Y/N] <span class="g">Y</span>
+<span class="g">✓</span> environment made (.venv); the old one removed
+<span class="d">2026-11-20 18:02:41.902  INFO   app      DataPiler 0.3.0 - page: http://127.0.0.1:51824/ (the open page reloads)</span>
+<span class="d">2026-11-20 18:02:41.950  INFO   app      install check: all 61 files match the release</span></div></div>
+  <div class="mf"><button data-close>Close</button></div>
+</div></div>
+
+<script>
+(function () {
+  var $ = function (s) { return document.querySelector(s); };
+  document.getElementById("tabs").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-t]"); if (!b) return;
+    document.querySelectorAll("#tabs button").forEach(function (x) { x.classList.toggle("on", x === b); });
+    document.querySelectorAll(".tab").forEach(function (s) { s.classList.toggle("on", s.id === "t-" + b.dataset.t); });
+  });
+  function closeAll() { document.querySelectorAll(".ov").forEach(function (o) { o.classList.remove("on"); }); }
+  function showUpdate(s) {
+    closeAll(); $("#ov-update").classList.add("on");
+    document.querySelectorAll("#ov-update .u").forEach(function (u) { u.style.display = u.dataset.s === s ? "" : "none"; });
+  }
+  var PK = {
+    game: { title: "Set the game folder", crumbs: ["This PC", "C:", "Games", "SteamLibrary", "steamapps", "common", "ELDEN RING"],
+            rows: [["Game", "eldenring.exe", true], ["EasyAntiCheat", "", false], ["_CommonRedist", "", false]],
+            chosen: '<span class="mono">C:\\Games\\SteamLibrary\\steamapps\\common\\ELDEN RING\\Game</span> - <span class="m ok">✓</span> eldenring.exe is here',
+            ok: true, newf: false },
+    project: { title: "Set the project folder", crumbs: ["This PC", "C:", "Mods"],
+            rows: [["ER project", "project.json", true], ["Music", "", false], ["Tools", "", false]],
+            chosen: '<span class="mono">C:\\Mods\\ER project</span> - <span class="m ok">✓</span> outside the game\'s folder · a Smithbox project file is here',
+            ok: true, newf: true },
+    smithbox: { title: "Set the Smithbox folder", crumbs: ["This PC", "C:", "Tools"],
+            rows: [["Smithbox", "Smithbox.exe", true], ["7-Zip", "", false]],
+            chosen: '<span class="mono">C:\\Tools\\Smithbox</span> - <span class="m ok">✓</span> Smithbox.exe is here', ok: true, newf: false }
+  };
+  function showPick(k) {
+    var p = PK[k]; closeAll(); $("#ov-pick").classList.add("on");
+    $("#pk-title").textContent = p.title;
+    $("#pk-crumbs").innerHTML = p.crumbs.map(function (c, i) { return (i ? '<span class="sep">›</span>' : "") + "<a>" + c + "</a>"; }).join("");
+    $("#pk-list").innerHTML = p.rows.map(function (r, i) {
+      return '<div class="row' + (i === 0 ? " sel" : "") + '"><span class="ico">📁</span><span class="nm">' + r[0] + "</span>"
+        + (r[2] ? '<span class="tag acc">' + r[1] + "</span>" : "") + "</div>";
+    }).join("");
+    $("#pk-chosen").innerHTML = p.chosen;
+    $("#pk-new").style.display = p.newf ? "" : "none";
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t.closest("[data-close]")) { closeAll(); return; }
+    if (t.id === "btn-update") { showUpdate("new"); return; }
+    var u = t.closest("[data-u]"); if (u) { showUpdate(u.dataset.u); return; }
+    var p = t.closest("[data-p]"); if (p) { showPick(p.dataset.p); return; }
+    var w = t.closest("[data-w]"); if (w) { closeAll(); $("#ov-win").classList.add("on"); return; }
+    if (t.classList.contains("ov")) closeAll();
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeAll(); });
+})();
+</script>
+</body>
+</html>

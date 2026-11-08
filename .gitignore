@@ -23,6 +23,14 @@ settings.local.*
 /jobs/
 /settings.json
 /datapiler.lock
+
+# The update button's run-time files (build plan 0.2 section 2): the downloads, pending and result files and the
+# backups, a release's own manifest, the venv while it is rebuilt or kept for R, and a file the helper is writing
+/update/
+/manifest.sha256
+/.venv.new/
+/.venv.prev/
+*.dpnew
 **/__pycache__/
 
 # Build output

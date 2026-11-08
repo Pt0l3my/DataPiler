@@ -82,7 +82,8 @@ class CleanTree(TreeCase):
 
 class RunTimeFolders(TreeCase):
     def test_top_level_run_time_folders_fail(self):
-        for folder in ("workspace", "share", "logs", "jobs", "exports", ".venv", "Workspace"):
+        for folder in ("workspace", "share", "logs", "jobs", "exports", ".venv", "Workspace", "update", ".venv.new",
+                       ".venv.prev"):
             with self.subTest(folder=folder):
                 path = self.put(folder + "/some.json", "{}")
                 found = self.rules()
@@ -97,12 +98,38 @@ class RunTimeFolders(TreeCase):
             self.put("docs/%s/notes.md" % folder, "notes\n")
         self.assertEqual(self.findings(), [])
 
+    def test_the_update_helpers_files_fail(self):
+        """Build plan 0.2 §4.6: the helper writes <target>.dpnew beside a file while it swaps."""
+        self.put("datapiler/api.py.dpnew", "x\n")
+        self.assertIn("datapiler/api.py.dpnew: a file the update helper writes while it swaps (build plan 0.2 section "
+                      "4.6)", self.rules())
+
+    def test_a_short_name_fails(self):
+        """The helper refuses an 8.3 short name's ~<digit> (the security review's SEC-5), so none may ship."""
+        self.put("docs/NOTES~1.md", "x\n")
+        self.assertIn("docs/NOTES~1.md: a name shaped like an 8.3 short name (~ and a digit), which the update "
+                      "helper refuses", self.rules())
+        from test_archive import helper
+        self.assertEqual(repocheck.SHORT_NAME_RX.pattern, helper().SHORT_RX.pattern)
+
+    def test_the_update_names_deeper_pass(self):
+        self.put("tests/fixtures/update/pending.json", "{}")
+        self.put("docs/manifest.sha256", "x\n")
+        self.put("update-helper.py", "# the helper itself\n")
+        self.assertEqual(self.findings(), [])
+
+    def test_the_gitignore_keeps_the_update_files_out(self):
+        with open(os.path.join(_repo.ROOT, ".gitignore"), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        for want in ("/update/", "/manifest.sha256", "/.venv.new/", "/.venv.prev/", "*.dpnew"):
+            self.assertIn(want, lines)
+
     def test_a_top_level_file_named_like_a_folder_passes(self):
         self.put("jobs", "not a folder\n")
         self.assertEqual(self.findings(), [])
 
     def test_local_state_at_the_top_fails(self):
-        for name in ("settings.json", "datapiler.port", "datapiler.lock", "datapiler-start.log"):
+        for name in ("settings.json", "datapiler.port", "datapiler.lock", "datapiler-start.log", "manifest.sha256"):
             with self.subTest(name=name):
                 path = self.put(name, "{}" if name.endswith(".json") else "1")
                 self.assertIn("%s: DataPiler's local state, written at run time" % name, self.rules())

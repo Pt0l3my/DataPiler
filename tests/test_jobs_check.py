@@ -8,7 +8,7 @@ import json
 import os
 import unittest
 
-from datapiler import fields, jobs
+from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
@@ -34,7 +34,7 @@ EXPECTED = {
     "bad-text-local-share.json": ("ops[4].columns.named_rows[1]", "`name` holds local text (the names) and never "
                                                                   "goes into a share file"),
     "bad-raw-share.json": ("ops[1].tables[0]", "`npc` comes straight from fetch_rows (ops[0]) - " + jobs.DP8_RULE),
-    "bad-needs-newer.json": ("needs", "this job needs DataPiler 0.2 or newer; this is 0.1.0"),
+    "bad-needs-newer.json": ("needs", "this job needs DataPiler 0.3 or newer; this is %s" % VERSION),
     "bad-extract-prefix.json": ("id", "`extract-roster`: ids starting `extract` are kept for Extract's own jobs"),
     "bad-load-all.json": ("ops[0].maps", "\"all\" cannot be loaded in 0.1: none of the allowed calls lists every map - "
                                          "name the maps by id"),
@@ -331,7 +331,8 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.0.9", True), ("0.1.1", False), ("1.0", False)):
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.1", False),
+                          ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
             raw = json.dumps(doc).encode()

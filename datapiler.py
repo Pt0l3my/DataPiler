@@ -6,9 +6,11 @@
 --console: this console is the app's own (colours, the close event). --no-browser: the launcher opens the page.
 --no-link: the owner answered N, so grpc is never imported.
 
-Exit codes: 0 stopped; 1 a crash; 2 the page's port did not open; 3 already running.
+Exit codes: 0 stopped; 1 a crash; 2 the page's port did not open; 3 already running; 75 update requested
+(Install and restart: DataPiler.ps1 then runs the helper from the verified download, build plan 0.2 §4.8).
 
-The start and stop sequence is build plan §4.11. `start_log`, `running_port`, the bind, nonce, hosts, origins and port
+The start and stop sequence is build plan §4.11, with build plan 0.2 §3.4 and §4.8: the port of the page that asked
+for an update, the install check, the clean-up and Detect at start once the page is up. `start_log`, `running_port`, the bind, nonce, hosts, origins and port
 file of `main` and the crash catch at the bottom are adapted from LLM Jobrunner 1.2 (build plan §7.1)."""
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from datapiler import NAME, VERSION, env, events, fileio, logbook, paths, settings, winapi  # noqa: E402
+from datapiler import NAME, VERSION, env, events, fileio, install, logbook, paths, settings, winapi  # noqa: E402
 from datapiler.api import Api, Live, set_masks  # noqa: E402
 from datapiler.logbook import own  # noqa: E402
 from datapiler.server import App, Server  # noqa: E402
@@ -35,6 +37,7 @@ from datapiler.status import Status  # noqa: E402
 
 MUTEX = "Local\\DataPiler"
 CLOSE_WAIT = 4.3
+EXIT_UPDATE = 75            # Install and restart: the window swaps the files (design 0002 §2.5)
 
 log = logbook.get("app")
 
@@ -137,6 +140,16 @@ class RealParts:
         from datapiler import catalogue
         return catalogue
 
+    def folders(self, live: Live):
+        from datapiler import detect
+        return detect.Folders(live)
+
+    def updater(self, run: "Run"):
+        # The one network module (S27): built here, reached only through POST /api/update.
+        from datapiler import update
+        return update.Updater(root=run.root, version=VERSION, port=lambda: run.port, busy=run.runner.busy,
+                              request_exit=run.request_update_exit)
+
 
 # ---------------------------------------------------------------------------------------------------------- the run
 
@@ -155,6 +168,9 @@ class Run:
         self.textdb = self.guard = self.link = self.runner = self.inbox = None
         self.status: Status | None = None
         self.api: Api | None = None
+        self.folders = self.updates = None
+        self.pending: install.Pending | None = None
+        self.exit_code = 0
         self.page_up = False
         self._stop_lock = threading.Lock()
         self._stopping = False
@@ -187,6 +203,8 @@ class Run:
         log.info("%s %s starting", own(NAME), own(VERSION))
         for problem in problems:
             log.warn("%s", problem)
+        # an update's request, written at Install by the version before (any age; checked field by field)
+        pending = self.pending = install.read_pending(self.root)
         try:
             remote = winapi.backend().drive_is_remote(str(p.workspace))
         except Exception:
@@ -214,14 +232,31 @@ class Run:
         self.inbox = parts.inbox(live, self.textdb)
         self.inbox.start()
         self._smithbox_line(live)
+        # FOLDERS's Detect and UPDATE's Updater; a part list without them (older tests' fakes) gives None
+        self.folders = parts.folders(live) if hasattr(parts, "folders") else None
+        self.updates = parts.updater(self) if hasattr(parts, "updater") else None
         self.api = Api(live=live, status=status, link=self.link, runner=self.runner, textdb=self.textdb,
                        guard=self.guard, inbox=self.inbox, catalogue=parts.catalogue(), stop=self.request_stop,
-                       libs=libs)
-        # 6. the page's port
-        port = self.args.port if self.args.port is not None else cfg.port
+                       libs=libs, updates=self.updates, folders=self.folders)
+        # 6. the page's port: --port, else the port of the page that asked for the update, else Settings', else any
+        reloads = False
+        if self.args.port is not None:
+            port = self.args.port
+        elif pending is not None and pending.port:
+            port, reloads = pending.port, True
+        else:
+            port = cfg.port
         app = App(self.api)
         try:
-            self.httpd = Server(port, app)
+            try:
+                self.httpd = Server(port, app)
+            except OSError:
+                if not reloads:
+                    raise
+                reloads = False
+                log.warn("the page's port before the update was taken - a new tab opens")
+                port = cfg.port if cfg.port != pending.port else 0
+                self.httpd = Server(port, app)
         except OSError as e:
             start_log(self.root, "the page's port %d did not open: %s" % (port, logbook.why(e)))
             log.error("the page's port %s did not open: %s - set another in Settings or use --port",
@@ -235,12 +270,16 @@ class Run:
         fileio.write_atomic(p.port_file, str(self.port).encode("ascii"))
         self.page_up = True
         url = "http://127.0.0.1:%d/" % self.port
-        log.info("Page: http://127.0.0.1:%s/ (the browser opens it)", self.port)
+        if reloads:
+            log.info("Page: http://127.0.0.1:%s/ (the open page reloads)", self.port)
+        else:
+            log.info("Page: http://127.0.0.1:%s/ (the browser opens it)", self.port)
         if not self.args.console:
             print("%s %s - %s (Quit on the page, or Ctrl+C here, stops it)" % (NAME, VERSION, url), flush=True)
-        if not self.args.no_browser:
+        if not self.args.no_browser and not reloads:
             import webbrowser
             threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+        self._after_page_up(pending)
         # 8. the close event, then the page until Quit
         if self.args.console:
             winapi.backend().on_console_close(self.window_closed)
@@ -250,7 +289,28 @@ class Run:
             log.info("Ctrl+C - stopping")
         finally:
             self.stop()
-        return 0
+        return self.exit_code
+
+    def _after_page_up(self, pending: install.Pending | None) -> None:
+        """Once the page is up (build plan 0.2 §4.8): the install check, an update's result kept for the page,
+        update/pending.json removed, the clean-up of update/, then Detect for the folders still to find."""
+        try:
+            check = install.install_check(self.root)
+            install.check_line(check)
+            if self.updates is not None:
+                self.updates.came_back(pending, check)
+        except Exception as e:
+            log.warn("the install check failed: %s", logbook.why(e))
+        install.remove_pending(self.root)
+        try:
+            install.cleanup(self.root)
+        except Exception as e:
+            log.warn("the clean-up of update/ failed: %s", logbook.why(e))
+        if self.folders is not None:
+            try:
+                self.folders.at_start()
+            except Exception as e:
+                logbook.get("folders").warn("Detect at start failed: %s", logbook.why(e))
 
     def _env_lines(self, p: paths.Paths) -> None:
         e = logbook.get("env")
@@ -272,7 +332,7 @@ class Run:
                 sb.info("the Smithbox folder is not set - set it in Settings")
                 return
             if not smithbox.installed(s.smithbox_dir):
-                sb.warn("Smithbox.exe is not in <SMITHBOX> - check the folder in Settings")
+                sb.warn("no Smithbox exe (Smithbox*.exe) is in <SMITHBOX> - check the folder in Settings")
                 return
             run = smithbox.running(s.smithbox_dir)
             sw = smithbox.read_switch(smithbox.startup_json())
@@ -289,6 +349,12 @@ class Run:
         httpd = self.httpd
         if httpd is not None:
             httpd.shutdown()
+
+    def request_update_exit(self) -> None:
+        """Install and restart, after its answer: the stop as Quit does it, then exit code 75, on which
+        DataPiler.ps1 runs the helper (update.py logs the update requested line)."""
+        self.exit_code = EXIT_UPDATE
+        self.request_stop()
 
     def window_closed(self) -> None:
         """The console's close, logoff or shutdown event: stop, and wait for it (Windows allows about 5 s)."""

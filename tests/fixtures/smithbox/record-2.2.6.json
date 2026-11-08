@@ -1,0 +1,16 @@
+{
+  "ProjectGUID": "00000000-0000-4000-8000-000000000001",
+  "ProjectName": "Example project",
+  "ProjectPath": "C:\\Mods\\ExampleProject",
+  "DataPath": "C:\\Games\\SteamLibrary\\steamapps\\common\\ELDEN RING\\Game",
+  "ProjectType": 8,
+  "ImportedParamRowNames": false,
+  "AutoSelect": true,
+  "FolderTag": "",
+  "EnableExternalMaterialData": true,
+  "EnableParamEditor": true,
+  "EnableMapDataEditor": true,
+  "PinnedParams": [],
+  "PinnedRows": {},
+  "PinnedFields": {}
+}

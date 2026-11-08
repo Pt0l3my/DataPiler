@@ -36,7 +36,7 @@ Then check it:
   `PE32+ executable (GUI) x86-64 ...` and file 5.46 or later `PE32+ executable for MS Windows <version> (GUI),
   x86-64, ...`; `file -b DataPiler.exe | grep -Eq '^PE32\+ executable .*\(GUI\).*x86-64'` checks both, as the
   release workflow does.
-- `strings -a -el DataPiler.exe | grep 0.2.0.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
+- `strings -a -el DataPiler.exe | grep 0.2.1.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
 - `x86_64-w64-mingw32-objdump -p DataPiler.exe | grep "DLL Name"` lists only `KERNEL32.dll`, `msvcrt.dll`,
   `SHELL32.dll` and `USER32.dll`: no socket library.
 

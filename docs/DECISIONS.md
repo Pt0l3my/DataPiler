@@ -241,3 +241,13 @@ DP14) and is never logged. With a Smithbox folder known, Detect goes on to the p
 
 **Owner's words.** "you could also add this process detection in general, so datapiler could see smithbox process
 right away"
+
+## DP16
+
+**An Imported tab** · *2026-11-08 · Decided by the owner*
+
+**Decision.** The page gets a tab that lists the text containers imported and available to jobs (settled S41).
+
+**Owner's words.** "we could also add extracted data/entries that are available, because currently nothing let's the
+user know that for example item_dlc2 has been added and is available for jobs to work with. so we could add a imported
+containers tab."

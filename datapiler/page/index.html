@@ -20,7 +20,7 @@
 </header>
 <div class="block" id="block" hidden></div>
 <nav class="tabs" id="tabs">
-  <button data-t="status" class="on">Status</button><button data-t="extract">Extract</button><button data-t="jobs">Jobs</button>
+  <button data-t="status" class="on">Status</button><button data-t="extract">Extract</button><button data-t="imported">Imported</button><button data-t="jobs">Jobs</button>
   <button data-t="outputs">Outputs</button><button data-t="terminal">Terminal</button><button data-t="settings">Settings</button>
 </nav>
 <main>
@@ -45,6 +45,18 @@
         <button class="pri" id="run">Run</button><button id="cancel">Cancel</button>
         <label class="mute"><input type="checkbox" id="loadMaps"> Let DataPiler load the maps in Smithbox (it asks above ten)</label>
       </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Imported -->
+  <section class="tab" id="t-imported">
+    <div class="card"><h3>Imported text <span class="pill err">Local only - never share</span></h3>
+      <div class="hint" id="impReady"></div>
+      <div class="tscroll"><table>
+        <thead><tr><th>Container</th><th>Language</th><th>Wrappers</th><th>Entries</th><th>Placeholders left out</th><th>Holds</th><th>Imported</th><th></th></tr></thead>
+        <tbody id="impRows"></tbody>
+      </table></div>
+      <div class="hint">Counts only. The texts stay in the workspace's text database; Remove takes an import out of it, and its export file stays in workspace\imported.</div>
     </div>
   </section>
 

@@ -616,7 +616,8 @@ class Runner:
                 st.entries += entries if isinstance(entries, int) and not isinstance(entries, bool) else 0
                 done = len(r.containers) - len(st.waiting_for)
                 st.progress = {"done": done, "of": len(r.containers), "unit": "containers"}
-                if not st.waiting_for:
+                if not st.waiting_for or done >= 1:      # one export suffices (S42): any of its containers
+                    st.waiting_for.clear()
                     st.state = "done"
                     st.progress = None
                     st.result = {"count": st.entries, "unit": "entries", "secs": round(time.time() - st.started, 1)}

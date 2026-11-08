@@ -737,7 +737,7 @@ class ExtractTest(RunnerBase):
             events.emit("inbox.import", container=own(c), ok=True, entries=5)
         rows = {x["id"]: x for x in self.r.extract_state()["rows"]}
         self.assertEqual(rows["character_names"]["state"], "done")
-        self.assertEqual(rows["character_names"]["result"]["count"], 15)
+        self.assertEqual(rows["character_names"]["result"]["count"], 5)   # one export suffices (S42)
 
     def test_unknown_rows_and_grey_rows(self):
         with self.assertRaises(ValueError):

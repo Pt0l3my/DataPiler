@@ -1,0 +1,38 @@
+# Game data and Smithbox's files never enter the repository (CLAUDE.md, Game data)
+workspace/
+share/
+exports/
+**/game-export/
+*.csv
+*.fmg
+*.fmg.xml
+*.dcx
+*.bnd
+*.bdt
+*.bhd
+*.sl2
+regulation.bin
+oo2core*.dll
+
+# Logs and local state
+logs/
+*.log
+*.port
+settings.local.*
+.venv/
+**/__pycache__/
+
+# Build output
+/build/
+/dist/
+*.exe
+*.obj
+*.pdb
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

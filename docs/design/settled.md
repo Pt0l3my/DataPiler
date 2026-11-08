@@ -44,3 +44,7 @@ release. The release workflow therefore also has a **Run workflow** button (`wor
 chooses the branch, the version comes from `VERSION`, and the draft release targets that commit for tag
 `v<version>`, which GitHub creates when the owner publishes it; a tag that already exists is refused. Publishing stays
 the owner's act either way.
+
+**S24, note of 2026-11-08 (DP9).** From the release after 0.1.0, the draft carries the zip, its sha256 and
+`THIRD-PARTY-NOTICES.txt` (also inside the zip); the exe and its sha256 are not attached on their own. The exe's
+sha256 is printed in the release workflow's log, which the release's notes link, and BUILD.md compares with it.

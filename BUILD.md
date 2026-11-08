@@ -50,7 +50,8 @@ creates the tag when the draft is published. On
 the tag names `VERSION`, and prints the compiler's versions and the exe's sha256. The exe is linked `-static`, so
 parts of the MinGW-w64 runtime are inside it; the workflow copies their licence files from the toolchain into
 `THIRD-PARTY-NOTICES.txt` (NOTICE, section 4). A second job makes `DataPiler-<version>.zip`, the whole app: the
-source at the tag as `git archive` makes it, with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it (it
+source at the tag as `git archive` makes it, in one folder named `DataPiler` without the version (DP10), with
+`DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it (it
 checks the exe in the zip against the exe's sha256), and its `.sha256`. It attaches the zip, the zip's sha256 and
 `THIRD-PARTY-NOTICES.txt` (also inside the zip) to a **draft** release for that tag (DP9); the exe's sha256 is in the
 run's log, which the release's notes link;

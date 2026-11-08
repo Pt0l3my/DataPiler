@@ -10,7 +10,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 
 - **2026-11-08.** DP1 (what DataPiler is), DP2 (its name), DP3 (a public repository of its own), DP4 (the Smithbox
   server link, game closed) and DP5 (the design asked of the PandorumLLM session). DP6 (design 0001 adopted) and DP7
-  (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries).
+  (Jobrunner's code copied). DP8 (what a share file may hold). DP9 (what a release carries). DP10 (the zip's folder), DP11 (an update
+  button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session.
 - **Open.** None.
 
 ## DP1
@@ -160,3 +161,39 @@ the notices. 0.1.0's draft stays as it was built.
 
 **Owner's words.** "alright" (to the exe's explanation), then: "let's do both then (in future releases), as separate
 doc in github release and inside zip."
+
+## DP10
+
+**The zip's folder has no version** · *2026-11-08 · Decided by the owner*
+
+**Decision.** From the next release, `DataPiler-<version>.zip` keeps the version in its name, and holds one folder
+named `DataPiler`, without the version (0.1.0's zip held `DataPiler-0.1.0/`).
+
+**Owner's words.** "For datapiler releases, can you make it so that the zip carries the version in title but not the
+folder inside, so e.g. currently we have DataPiler-0.1.0.zip and DataPiler-0.1.0 inside it. what I would like is
+DataPiler-<version>.zip and DataPiler folder inside it."
+
+## DP11
+
+**An update button** · *2026-11-08 · The owner's request; its design asked of the PandorumLLM session*
+
+**Decision.** DataPiler gains an update button: pressed, it opens a pop-up showing the latest release on GitHub and
+downloads it. The design is asked of the PandorumLLM session in [requests/0002-update-and-folders.md](requests/0002-update-and-folders.md).
+It amends S12 (no network after the first start): the update check and download run only when the owner presses
+the button, and only to GitHub.
+
+**Owner's words.** "Can you add update button to the UI, that the user could press, gets a pop up downloader UI that
+shows available update (latest) from github repo), ask the PandorumLLM agent about this (a request how exactly this is
+done, the layout, etc.)"
+
+## DP12
+
+**Folder detection and a folder picker** · *2026-11-08 · The owner's request; its design asked of the PandorumLLM session*
+
+**Decision.** Settings gains detection of the Smithbox folder, the game folder and the project folder, and a "Set
+folder" button beside each that opens a folder picker over the page. The design is asked of the PandorumLLM session in
+the same request.
+
+**Owner's words.** "on the settings page, can you add auto detect for Smithbox folder, Game folder, Project folder,
+and also set folder button that brings up over top UI index to select folder, again ask the PandorumLLM agent about
+this (a request how exactly this is done, the layout, etc.)"

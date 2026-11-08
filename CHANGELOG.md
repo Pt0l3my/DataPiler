@@ -8,6 +8,7 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 - **Releases carry fewer files (DP9):** the zip (with the exe and the notices inside), its sha256, and
   `THIRD-PARTY-NOTICES.txt` on its own too; the exe's sha256 is in the release workflow's log, which the notes link.
   The README's Licence section names the notices.
+- **The zip's one folder is `DataPiler` (DP10):** the zip's name keeps the version; the folder inside does not.
 
 ## 0.1.0 (2026-11-08)
 

@@ -331,12 +331,16 @@ class Release(unittest.TestCase):
         self.assertEqual(len(checkout), 1)
         self.assertEqual(checkout[0]["with"].get("persist-credentials"), "false")
         text = runs(rel)
-        self.assertIn('git -C src archive --format=zip --prefix="$app/" -o "../$app.zip" HEAD', text)
+        self.assertIn('git -C src archive --format=zip --prefix="DataPiler/" -o "../$app.zip" HEAD', text)
         self.assertIn('app="DataPiler-${TAG#v}"', text)
-        self.assertIn('zip -X -q "../$app.zip" "$app/DataPiler.exe" "$app/THIRD-PARTY-NOTICES.txt"', text)
+        self.assertIn('zip -X -q "../$app.zip" "DataPiler/DataPiler.exe" "DataPiler/THIRD-PARTY-NOTICES.txt"', text)
+        # DP10: the zip's name carries the version, its one folder does not
+        self.assertIn('app="DataPiler-${TAG#v}"', text)
+        self.assertNotIn('--prefix="$app/"', text)
+        self.assertIn('cut -d / -f 1 | sort -u)" = "DataPiler"', text)
         self.assertIn('sha256sum "$app.zip" | tee "$app.zip.sha256"', text)
         # the exe inside the zip is the exe that was checked against its own sha256
-        self.assertIn('unzip -p "$app.zip" "$app/DataPiler.exe" | sha256sum', text)
+        self.assertIn('unzip -p "$app.zip" "DataPiler/DataPiler.exe" | sha256sum', text)
         # the zip is made only from the commit the tag names
         self.assertIn('rev-parse "$TAG^{commit}"', text)
         create = next(l for l in text.splitlines() if "gh release create" in l)

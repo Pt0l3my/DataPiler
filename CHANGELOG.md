@@ -53,5 +53,8 @@ The first version, built from [design 0001](docs/design/0001-design.md), what wa
   sha256 and the MinGW-w64 runtime's notices to a draft release (S4), beside one zip of the whole app (the tagged
   source with the exe and its notices placed in it) and its sha256 (S24). The exe's check reads `file`'s wording of
   5.45 and of 5.46 and later alike. `.gitattributes` keeps every checkout LF.
+- **A refused upload gets its answer**: a request refused before its body is read (too large, no token, no length)
+  now has its answer sent, then the rest of its body read and dropped (up to 8 MB or 3 s) before the connection
+  closes; closing with the body unread let Windows reset the connection before the client read the answer.
 - **Releases**: a draft release can also be started with the release workflow's Run workflow button (the session
   that builds DataPiler cannot push tags); its notes come from `docs/release-notes/<version>.md`.

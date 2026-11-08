@@ -10,6 +10,7 @@ import hmac
 import http.server
 import json
 import secrets
+import socket
 import socketserver
 import sys
 import threading
@@ -26,6 +27,11 @@ TOKEN_HEADER = "X-DataPiler-Token"
 DROP_PATH = "/api/jobs/drop"
 DROP_MAX = 400 * 1024           # a 256 KB job in base64, and its name
 POST_MAX = 64 * 1024
+# A request refused before its body is read: the answer is sent, then whatever of the body is still arriving is read
+# and dropped, up to these limits, before the connection closes. Closing with it unread makes Windows send a reset,
+# which a client may meet before it reads the answer (WinError 10053); Linux's client meets a broken pipe instead.
+LINGER_BYTES = 8 * 1024 * 1024
+LINGER_SECONDS = 3.0
 CSP = ("default-src 'none'; script-src 'nonce-%s'; style-src 'nonce-%s'; connect-src 'self'; img-src 'self' data:; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 # A browser that closes or resets a connection mid-answer (a reload, a closed tab): dropped without a line.
@@ -103,6 +109,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a: object) -> None:
         pass
 
+    def setup(self) -> None:
+        super().setup()
+        self._unread = 0
+
+    def _will_not_read(self) -> None:
+        """This request's body will not be read: drain it after the answer (LINGER_BYTES, LINGER_SECONDS)."""
+        self.close_connection = True
+        headers = getattr(self, "headers", None)  # the standard library's errors can come before the headers
+        try:
+            n = int(headers.get("Content-Length") or 0) if headers is not None else 0
+        except ValueError:
+            n = LINGER_BYTES
+        if headers is not None and headers.get("Transfer-Encoding"):
+            n = LINGER_BYTES
+        self._unread = max(0, min(n, LINGER_BYTES))
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            if self._unread:
+                self._drain()
+
+    def _drain(self) -> None:
+        sock = self.connection
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            return
+        left = self._unread
+        end = time.monotonic() + LINGER_SECONDS
+        try:
+            while left > 0:
+                wait = end - time.monotonic()
+                if wait <= 0:
+                    break
+                sock.settimeout(min(wait, 0.5))
+                chunk = sock.recv(min(65536, left))
+                if not chunk:
+                    break
+                left -= len(chunk)
+        except OSError:
+            pass
+
     def version_string(self) -> str:
         return self.server_version
 
@@ -131,7 +181,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
         """The standard library's own errors (a bad request line, a method it lacks) with DataPiler's headers."""
         try:
-            self.close_connection = True
+            self._will_not_read()
             self.send(code, {"error": "not understood" if code < 500 else "failed"})
         except OSError:
             pass
@@ -151,8 +201,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _refuse(self, why: str) -> None:
         _refusals.note(why)
         # A refused request's body is never read, so the connection cannot carry another request: on a kept-alive
-        # connection the unread body would be read as the next request line.
-        self.close_connection = True
+        # connection the unread body would be read as the next request line. What is still arriving is drained.
+        self._will_not_read()
         self.send(403, {"error": why}, extra={"Connection": "close"})
 
     def _error(self, e: BaseException) -> None:
@@ -201,7 +251,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._refuse(why)
         path = self.path.split("?")[0]
         if self.headers.get("Transfer-Encoding"):
-            self.close_connection = True
+            self._will_not_read()
             return self.send(400, {"error": "a request needs its length"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -209,10 +259,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             n = -1
         cap = DROP_MAX if path == DROP_PATH else POST_MAX
         if n < 0:
-            self.close_connection = True
+            self._will_not_read()
             return self.send(400, {"error": "no length"})
         if n > cap:
-            self.close_connection = True
+            self._will_not_read()
             return self.send(413, {"error": "too large"})
         try:
             raw = self.rfile.read(n) if n else b""
@@ -242,7 +292,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         why = self.guard(False)
         if why:
             return self._refuse(why)
-        self.close_connection = True
+        self._will_not_read()
         self.send(405, {"error": "not allowed"})
 
     do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _no

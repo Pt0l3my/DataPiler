@@ -151,6 +151,23 @@ class ServerTest(unittest.TestCase):
         r, _ = self.req("POST", server.DROP_PATH, {"data": "a" * (server.DROP_MAX + 10)})
         self.assertEqual(r.status, 413)
 
+    def test_a_refused_upload_still_gets_its_answer(self):
+        """A body the server refuses unread used to be cut off by a reset on Windows (WinError 10053) before the
+        client read the answer; the server now reads and discards what is still arriving before it closes."""
+        for i in range(40):
+            r, raw = self.req("POST", "/api/echo", {"x": "a" * (server.POST_MAX * 8)})
+            self.assertEqual(r.status, 413, i)
+            self.assertEqual(json.loads(raw), {"error": "too large"})
+        for i in range(10):
+            r, raw = self.req("POST", "/api/echo", {"x": "a" * (server.POST_MAX * 8)}, token="wrong")
+            self.assertEqual(r.status, 403, i)
+
+    def test_a_bad_request_line_is_answered(self):
+        import socket as _socket
+        with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
+            c.sendall(b"NONSENSE\r\n\r\n")
+            self.assertIn(b" 400 ", c.recv(4096).split(b"\r\n")[0] + b" ")
+
     def test_body_must_be_an_object(self):
         for body in (b"[1, 2]", b"\"text\"", b"{broken", b"\xff\xfe"):
             r, raw = self.req("POST", "/api/echo", body)

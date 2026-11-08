@@ -125,7 +125,7 @@ function cardFor(kind, body) {
   return card;
 }
 const LINK_WORDS = { off: "Off", on: "On for this session", blocked: "Blocked - the game is running",
-                     no_libs: "Off - the server link needs its two libraries: restart DataPiler and answer Y" };
+                     no_libs: "Off - the server link needs its libraries (grpcio and protobuf, and typing-extensions, which grpcio needs): restart DataPiler and answer Y" };
 function linkCard(l, session) {
   const out = [];
   const row = el("div", "check");
@@ -236,7 +236,7 @@ function paintExtract(s) {
       const name = add(el("td"), row.name, qm(grey ? row.help + " - " + grey : row.help));
       const from = el("td");
       row.sources.forEach((src) => add(from, el("span", "from " + (src === "server" ? "srv" : "gd"), src === "server" ? "Server" : "Guided export")));
-      add(tr, add(el("td"), box), name, from, el("td", null, row.gives), el("td", null, row.goes_to === "workspace" ? "Workspace" : "Workspace + share"),
+      add(tr, add(el("td"), box), name, from, el("td", null, row.gives), el("td", null, row.goes_to === "workspace" ? "Workspace" : "Workspace + share (counts only)"),
           progressCell(s, row, rs));
       add(tb, tr);
     });
@@ -403,7 +403,7 @@ function openShare(name) {
   api("/api/share?name=" + encodeURIComponent(name)).then((v) => {
     VIEW = v.name;
     const allOk = v.checks.length && v.checks.every((c) => c.ok);
-    $("vhead").textContent = v.name + " · " + fmtSize(v.size) + " · sha256 " + v.sha256 + " · checks 1-5 " + (allOk ? "✓" : "✗");
+    $("vhead").textContent = v.name + " · " + fmtSize(v.size) + " · sha256 " + v.sha256 + " · checks 1-6 " + (allOk ? "✓" : "✗");
     const ch = clear($("vchecks"));
     v.checks.forEach((c) => add(ch, add(el("span"), mark(c.ok), " " + c.check + " " + c.name + (c.ok || !c.where ? "" : " at " + c.where))));
     $("vtext").textContent = v.text;
@@ -472,7 +472,7 @@ function copyForSharing() {
 }
 
 // ---- Settings
-const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "port", "log_max_mb", "log_keep"];
+const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "expansion", "port", "log_max_mb", "log_keep"];
 const NUMS = { port: true, log_max_mb: true, log_keep: true };
 function loadSettings() {
   return api("/api/settings").then((r) => {

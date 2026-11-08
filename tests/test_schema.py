@@ -22,7 +22,7 @@ SCHEMA_CATCHES = {"bad-not-object.json", "bad-too-deep.json", "bad-wrong-format.
                   "bad-unquoted-value.json", "bad-path-name.json", "bad-extract-prefix.json", "bad-load-all.json",
                   "bad-missing-title.json"}
 CHECK_ONLY = {"bad-duplicate-key.json", "bad-as-twice.json", "bad-later-table.json", "bad-two-write-share.json",
-              "bad-text-local-share.json", "bad-needs-newer.json", "bad-where-type.json"}
+              "bad-text-local-share.json", "bad-needs-newer.json", "bad-where-type.json", "bad-raw-share.json"}
 NOT_JSON = {"bad-not-json.json"}
 
 KNOWN = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "const", "enum", "pattern", "minLength",
@@ -261,6 +261,26 @@ class SchemaTest(unittest.TestCase):
             bad = json.loads(json.dumps(doc))
             mutate(bad)
             self.assertFalse(self.v.valid(bad, self.schema))
+
+    def test_filters_explicit_list_of_ids(self):
+        doc = {"format": jobs.FORMAT, "id": "test-0006-pick", "title": "Pick", "ops": [
+            {"op": "fetch_rows", "as": "t", "param": "TalkParam", "fields": ["msgId"]},
+            {"op": "filter", "as": "p", "rows": "t", "ids": [9000001, 9000002]},
+            {"op": "write_share", "name": "picked", "tables": ["p"], "columns": {"p": ["id", "msgId"]}}]}
+        self.assertTrue(self.v.valid(doc, self.schema))
+        jobs.check(json.dumps(doc).encode(), known_ids=(), share_names={})
+        for mutate in (lambda d: d["ops"][1].pop("ids"),                         # neither where nor ids
+                       lambda d: d["ops"][1].update(ids=[]),
+                       lambda d: d["ops"][1].update(ids=[1.5]),
+                       lambda d: d["ops"][1].update(ids=list(range(1001))),
+                       lambda d: d["ops"][1].update(ids=[2 ** 31]),
+                       lambda d: (d["ops"][1].pop("ids"), d["ops"][1].update(key="id", where={"msgId": 1}))):
+            bad = json.loads(json.dumps(doc))
+            mutate(bad)
+            with self.subTest(op=bad["ops"][1]):
+                self.assertFalse(self.v.valid(bad, self.schema))
+                with self.assertRaises(jobs.JobRefused):
+                    jobs.check(json.dumps(bad).encode(), known_ids=(), share_names={})
 
     def test_names_windows_keeps_for_devices_are_refused(self):
         doc = {"format": jobs.FORMAT, "id": "test-0005-names", "title": "Names", "ops": [

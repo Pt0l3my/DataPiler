@@ -7,7 +7,13 @@ an Extract run go first. Everything is thread-safe behind one lock, which is nev
   when `link.state` turns `on`; an operation cut off by the link going off is run again from its start.
 - Cancel stops between calls. A failed job writes no share file and names the operation and the reason; a guard
   failure names the check and the place, never the value.
-- The share file goes through `Guard.write` only, after every other operation has passed.
+- The share file goes through `Guard.write` only, after every other operation has passed. The runner hands the guard
+  each share table's row counts for check 6 (DP8, settled S19): the game table it came from (a param, or the
+  placements), that table's rows (a param's rows as Smithbox lists them; the placements of every map the job read,
+  each map once) and what to measure, from the job's lineage; and it keeps them in the workspace
+  (`guard.record_counts`) so Outputs can run check 6 again.
+- `join_names` uses the names' wrapper leads only once at least half of the rows' non-negative name numbers resolve
+  in them (P3, settled S22); the share file's provenance records the share that resolved.
 - Each job logs to `logbook.for_job(id)`; Extract rows log to the `extract` source. Log lines hold ids, counts,
   times, operation names and DataPiler's own words: never a title, a refusal's text or a value from a table.
 
@@ -28,7 +34,7 @@ from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
 from . import catalogue, events, fields, fileio, jobs, logbook, paths as paths_mod
 from . import link as link_mod
-from .guard import GuardFailed
+from .guard import WORDS as GUARD_WORDS, GuardFailed
 from .logbook import Own, own
 
 if TYPE_CHECKING:
@@ -45,7 +51,7 @@ WAIT_POLL = 0.5
 LINK_WAITS = {
     "off": "the server link is off",
     "blocked": "the game is running",
-    "no_libs": "the server link needs its two libraries - restart DataPiler and answer Y",
+    "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
 UNITS = {"fetch_rows": "rows", "load_maps": "maps", "read_placements": "maps", "join_names": "rows",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
@@ -133,10 +139,28 @@ class _Ctx:
     on_op: Callable[[int, str, int, int | None, float | None], None]
     on_wait: Callable[[str | None], bool]
     tables: dict = field(default_factory=dict)
+    sources: dict = field(default_factory=dict)      # op index -> _Source: the game table it read (check 6)
+    placed: dict = field(default_factory=dict)       # map -> the placements read on it, each map once (check 6)
+    names: dict = field(default_factory=dict)        # text set -> provenance.names's record (P3)
     local: list = field(default_factory=list)
     share: tuple | None = None
     fetched: int = 0
     unit: str = "rows"
+
+
+@dataclass(frozen=True)
+class _Source:
+    """The game table a fetch_rows or read_placements read, for check 6: its name (the param, or PLACEMENTS), its rows
+    (a param's as Smithbox lists them, each row id once; None for the placements, which add up per map in
+    _Ctx.placed), and whether no row id repeats among the rows the operation read, so that a share table's distinct
+    row ids are its rows."""
+    table: str
+    of: int | None
+    unique: bool
+
+
+PLACEMENTS = "placements"           # check 6's name for the placements' game table
+UNKNOWN_SOURCE = "unknown"          # a table whose source's rows were not counted: measured against 0
 
 
 def _ops_public(job: jobs.Job) -> list[dict]:
@@ -906,8 +930,7 @@ class Runner:
                     return "cancelled", None
                 except GuardFailed as e:
                     ctx.on_op(i, "failed", 0, None, round(time.monotonic() - t0, 1))
-                    return "failed", {"op": i, "why": "the guard refused the share file: %s" % e,
-                                      "check": e.check, "where": e.where or None}
+                    return "failed", {"op": i, "why": _guard_why(e), "check": e.check, "where": e.where or None}
                 except _Fail as e:
                     ctx.on_op(i, "failed", 0, None, round(time.monotonic() - t0, 1))
                     return "failed", {"op": i, "why": str(e.why), "check": e.check, "where": e.where}
@@ -928,19 +951,24 @@ class Runner:
                                  logbook.n(secs))
                 break
         if ctx.share is not None:
-            i, name, data, declared = ctx.share
+            i, name, data, declared, coverage = ctx.share
             try:
-                written = self.guard.write(self.paths.share, name, data, declared=declared)
+                written = self.guard.write(self.paths.share, name, data, declared=declared, coverage=coverage)
             except GuardFailed as e:
                 ctx.share = None
                 ctx.on_op(i, "failed", 0, None, None)
-                return "failed", {"op": i, "why": "the guard refused the share file: %s" % e, "check": e.check,
-                                  "where": e.where or None}
+                return "failed", {"op": i, "why": _guard_why(e), "check": e.check, "where": e.where or None}
             except OSError as e:
                 ctx.share = None
                 ctx.on_op(i, "failed", 0, None, None)
                 return "failed", {"op": i, "why": "the share file could not be written: %s" % logbook.why(e),
                                   "check": None, "where": None}
+            try:
+                from .guard import record_counts
+                record_counts(self.paths.share_counts, written.name, written.sha256, coverage)
+            except (OSError, ValueError) as e:
+                ctx.log.warn("the share file's row counts could not be kept, so Outputs lists it apart until the job "
+                             "runs again: %s", logbook.why(e))
             ctx.share = {"name": written.name, "size": written.size, "sha256": written.sha256}
         return "done", None
 
@@ -958,8 +986,13 @@ class Runner:
             return self._join_names(ctx, i, o)
         if op == "filter":
             cols, rows = ctx.tables[o["rows"]]
-            keep = _predicate(o["where"], cols)
-            out = [r for r in rows if keep(r)]
+            keep = _predicate(o.get("where"), cols)
+            if o.get("ids") is not None:
+                j = [c for c, _ in cols].index(o["key"])
+                picked = frozenset(o["ids"])
+                out = [r for r in rows if r[j] in picked and keep(r)]
+            else:
+                out = [r for r in rows if keep(r)]
             ctx.tables[o["as"]] = (list(cols), out)
             return len(out), len(rows)
         if op == "count":
@@ -980,10 +1013,15 @@ class Runner:
         param = o["param"]
         cols = [("id", "int")] + [(f, fields.PARAMS[param][f]) for f in o["fields"] if f != "id"]
         ids = o.get("ids")
+        listed: int | None = None
         if isinstance(ids, list):
             row_ids = list(dict.fromkeys(ids))
+            # Check 6 measures a share table against the whole param's rows, as Smithbox lists them.
+            if ctx.job.share_name is not None:
+                listed = len(self.link.list_param_rows(param))
         else:
             every = self.link.list_param_rows(param)
+            listed = len(every)
             row_ids = [x for x in every if ids["from"] <= x <= ids["to"]] if isinstance(ids, dict) else list(every)
         ctx.on_op(i, "running", 0, len(row_ids), None)
         t0 = time.monotonic()
@@ -999,6 +1037,10 @@ class Runner:
                 row.append(v)
             rows.append(tuple(row))
         ctx.tables[o["as"]] = (cols, rows)
+        if listed is not None:
+            # Smithbox lists each row id once, but a row id may be held by more than one row: the share tables of this
+            # read are measured by their ids only when no id repeats among the rows it read (S19).
+            ctx.sources[i] = _Source(param, listed, len({r[0] for r in rows}) == len(rows))
         if ctx.builtin:
             ctx.fetched += len(rows)
             ctx.unit = "rows"
@@ -1016,17 +1058,25 @@ class Runner:
         else:
             maps = list(o["maps"])
         rows: list[tuple] = []
+        per_map: dict[str, int] = {}
         ctx.on_op(i, "running", 0, len(maps), None)
         for k, m in enumerate(maps):
             if ctx.cancel.is_set():
                 raise _Cancelled()
+            n = 0
             for p in self.link.placements(m):
                 row = (p.map, p.entity_id, p.npc_param_id, p.talk_id, p.model)
                 if not all(_type_ok("int", v) for v in row):
                     raise _Fail("the server sent a placement that is not numbers only")
                 rows.append(row)
+                n += 1
+            per_map[m] = min(n, per_map.get(m, n))
             ctx.on_op(i, "running", k + 1, len(maps), None)
         ctx.tables[o["as"]] = (list(jobs.PLACEMENT_COLUMNS), rows)
+        # Check 6: the placements of every map the job read, a map read twice counted once (the lower count).
+        for m, n in per_map.items():
+            ctx.placed[m] = min(n, ctx.placed.get(m, n))
+        ctx.sources[i] = _Source(PLACEMENTS, None, False)
         if ctx.builtin:
             ctx.fetched += len(rows)
             ctx.unit = "placements"
@@ -1038,14 +1088,33 @@ class Runner:
         words = jobs.TEXT_WORDS[text]
         pairs = textdb_mod.TEXT_SETS.get(text) or ()
         if not pairs:
-            raise _Fail("which text entries hold %s is not confirmed yet, so join_names cannot run in 0.1" % words)
+            raise _Fail("which text entries hold %s is not known, so join_names cannot run" % words)
         lang = self.language()
-        if not any(self.textdb.has(c, lang) for c, _ in pairs):
+        if not any(self.textdb.has(c, lang) for c in dict.fromkeys(c for c, _ in pairs)):
             raise _Fail("%s are not imported yet - run Extract's guided row for them first" % words.capitalize())
         ids = self.textdb.ids(text, lang)
-        names = self.textdb.names(text, lang)
         cols, rows = ctx.tables[o["rows"]]
         k = [c for c, _ in cols].index(o["key"])
+        # P3: the wrappers are ER01's leads, used only once the owner's own numbers resolve in them.
+        wrappers = self.textdb.wrappers(text)
+        numbers = {r[k] for r in rows if isinstance(r[k], int) and not isinstance(r[k], bool) and r[k] >= 0}
+        if not numbers:
+            raise _Fail("none of the rows joined has a name number (0 or above), so the wrapper leads of %s "
+                        "cannot be verified - join_names stops" % words)
+        resolved = len(numbers & ids)
+        if resolved * 2 < len(numbers):
+            raise _Fail("only %s%% of the rows' name numbers (%s of %s) resolve in the wrappers %s of %s: at least "
+                        "half must, so the leads do not hold for this data and join_names stops"
+                        % (resolved * 100 // len(numbers), "{:,}".format(resolved), "{:,}".format(len(numbers)),
+                           jobs._and([str(w) for w in wrappers]), words))
+        share = math.floor(resolved * 1000 / len(numbers)) / 1000      # never above what resolved
+        record = ctx.names.get(text)
+        if record is None or share < record["resolved"]:
+            ctx.names[text] = {"wrappers": wrappers, "verified": True, "resolved": share}
+        ctx.log.info("op %s join_names: the wrapper leads %s verified, %s of %s name numbers resolve (%s%%)", i,
+                     own(jobs._and([str(w) for w in wrappers])), logbook.n(resolved), logbook.n(len(numbers)),
+                     logbook.n(resolved * 100 // len(numbers)))
+        names = self.textdb.names(text, lang)
         out = [tuple(r) + (r[k] in ids, names.get(r[k]) if r[k] in ids else None) for r in rows]
         ctx.tables[o["as"]] = (list(cols) + [("named", "bool"), ("name", "text_local")], out)
         return len(out), len(rows)
@@ -1104,26 +1173,58 @@ class Runner:
         except ImportError:                                  # pragma: no cover - CORE's module is always there
             ProvenanceMissing = ValueError                   # noqa: N806
         try:
-            prov = self.provenance()
+            prov = dict(self.provenance())
         except ProvenanceMissing as e:
             raise _Fail("the provenance block is not complete: %s" % e) from None
+        prov["names"] = {k: dict(v) for k, v in sorted(ctx.names.items())}
         chosen = self._select(ctx, o["tables"], o["columns"])
         tables = []
         declared: dict[str, list[str]] = {}
+        coverage: dict[str, tuple[str | None, int, str] | None] = {}
         for t, cols, rows in chosen:
             if any(typ not in ("int", "number", "bool") for _, typ in cols):
                 raise _Fail("a column of local text cannot go into a share file")
             tables.append({"name": t, "columns": [{"name": c, "type": typ} for c, typ in cols],
                            "rows": [list(r) for r in rows]})
             declared[t] = [c for c, _ in cols]
+            coverage[t] = self._coverage(ctx, t, declared[t])
         data = self.guard.build(job_id=ctx.job.id, job_sha256=ctx.job.sha256, provenance=prov, tables=tables,
                                 notes=list(o.get("notes") or []))
-        results = self.guard.check(data, declared=declared)
+        results = self.guard.check(data, declared=declared, coverage=coverage)
         if not all(r.ok for r in results):
             # The guard logs the refusal and writes nothing.
-            self.guard.write(self.paths.share, o["name"], data, declared=declared)
-        ctx.share = (i, o["name"], data, declared)
+            self.guard.write(self.paths.share, o["name"], data, declared=declared, coverage=coverage)
+        ctx.share = (i, o["name"], data, declared, coverage)
         return 1, 1
+
+    @staticmethod
+    def _coverage(ctx: _Ctx, table: str, columns: list[str]) -> tuple[str | None, int, str] | None:
+        """What check 6 measures for one share table (DP8, settled S19), as (column, of, source): source the game
+        table it came from (a param, or PLACEMENTS), which the guard measures with the file's other tables from it;
+        of that game table's rows. A table of counts alone (a count's `count`, without its groups) is not measured:
+        None. Every other table is measured by its rows, one per row of its source or one per group of a count or a
+        distinct (column None), but for a table that keeps a param's row id when no row id repeats among the rows
+        its fetch_rows read: then by its distinct ids (column `id`), so that rows shared in two tables count once.
+        Placements are always measured by their rows, as their entity ids can repeat. A table whose source's rows
+        were not counted is measured against 0, so it fails unless it is empty."""
+        lin = ctx.job.lineage.get(table)
+        if lin is not None and not lin.per_row and list(columns) == ["count"]:
+            return None
+        src = ctx.sources.get(lin.source) if lin is not None and lin.source is not None else None
+        if lin is None or src is None:
+            return (None, 0, UNKNOWN_SOURCE)
+        if src.table == PLACEMENTS:
+            return (None, sum(ctx.placed.values()), PLACEMENTS)
+        of = src.of if src.of is not None else 0
+        if src.unique and lin.id_col is not None and lin.id_col in columns:
+            return (lin.id_col, of, src.table)
+        return (None, of, src.table)
+
+
+def _guard_why(e: GuardFailed) -> str:
+    """The card's and the log's words for a guard failure: the check, the place and what the check is about, never
+    the value."""
+    return "the guard refused the share file: %s (%s)" % (e, GUARD_WORDS.get(e.check, "a check"))
 
 
 def _sort_key(key: tuple) -> tuple:

@@ -1,5 +1,6 @@
 """The job check (build plan §4.6, §8.3): the design's example passes; each refusal from a fixture, with its exact
-text; a value that is not identifier-shaped is never quoted."""
+text; a value that is not identifier-shaped is never quoted; DP8's lineage (settled S18): only narrowed and
+aggregate tables reach write_share, and filter's explicit list of ids."""
 
 import _repo  # noqa: F401
 
@@ -7,7 +8,7 @@ import json
 import os
 import unittest
 
-from datapiler import jobs
+from datapiler import fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
@@ -30,8 +31,9 @@ EXPECTED = {
     "bad-later-table.json": ("ops[1].rows", "`npc_named` is made by a later operation (ops[2]) - an operation reads "
                                             "only the tables made before it"),
     "bad-two-write-share.json": ("ops[5]", "a job writes one share file at most - ops[4] writes one already"),
-    "bad-text-local-share.json": ("ops[3].columns.npc_named[1]", "`name` holds local text (the names) and never goes "
-                                                                 "into a share file"),
+    "bad-text-local-share.json": ("ops[4].columns.named_rows[1]", "`name` holds local text (the names) and never "
+                                                                  "goes into a share file"),
+    "bad-raw-share.json": ("ops[1].tables[0]", "`npc` comes straight from fetch_rows (ops[0]) - " + jobs.DP8_RULE),
     "bad-needs-newer.json": ("needs", "this job needs DataPiler 0.2 or newer; this is 0.1.0"),
     "bad-extract-prefix.json": ("id", "`extract-roster`: ids starting `extract` are kept for Extract's own jobs"),
     "bad-load-all.json": ("ops[0].maps", "\"all\" cannot be loaded in 0.1: none of the allowed calls lists every map - "
@@ -88,6 +90,178 @@ class ExampleTest(unittest.TestCase):
         raw = json.dumps(doc).encode()
         self.assertEqual(check(raw, builtin=True).id, "extract-character_rows")
         self.assertEqual([r.where for r in refusals(raw)], ["id"])
+
+
+def job(ops: list, jid: str = "test-0200-lineage") -> bytes:
+    return json.dumps({"format": jobs.FORMAT, "id": jid, "title": "Lineage (invented)", "ops": ops}).encode()
+
+
+NPC = {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId", "teamType"]}
+JOIN = {"op": "join_names", "as": "npc_named", "rows": "npc", "key": "nameId", "text": "character_names"}
+PLACED = {"op": "read_placements", "as": "placed", "maps": "all"}
+
+
+def share(*tables: str, cols=None) -> dict:
+    return {"op": "write_share", "name": "lineage", "tables": list(tables),
+            "columns": {t: (cols or {}).get(t, ["teamType"] if t != "placed_x" else ["map"]) for t in tables}}
+
+
+class LineageTest(unittest.TestCase):
+    """DP8 (settled S18): raw tables, and filters and distincts of them, never reach write_share; the named rows, an
+    explicit list of ids and a count do. The refusal names the operation and the rule."""
+
+    def refused_at(self, ops: list) -> list:
+        return [(r.where, r.text) for r in refusals(job(ops))]
+
+    def test_what_is_refused(self):
+        rule = jobs.DP8_RULE
+        cases = [
+            ([NPC, share("npc")], "`npc` comes straight from fetch_rows (ops[0])"),
+            ([NPC, JOIN, share("npc_named")],
+             "`npc_named` is join_names (ops[1]) of rows straight from fetch_rows (ops[0]): it keeps every row, named "
+             "or not"),
+            ([NPC, {"op": "filter", "as": "f", "rows": "npc", "where": {"teamType": {"ge": 6}}}, share("f")],
+             "`f` is a filter (ops[1]) of rows straight from fetch_rows (ops[0]), never narrowed"),
+            ([NPC, JOIN, {"op": "filter", "as": "f", "rows": "npc_named", "where": {"named": False}}, share("f")],
+             "`f` is a filter (ops[2]) of rows straight from fetch_rows (ops[0]), never narrowed"),
+            ([NPC, {"op": "filter", "as": "f", "rows": "npc", "where": {"id": {"in": [1, 2]}}}, share("f")],
+             "`f` is a filter (ops[1]) of rows straight from fetch_rows (ops[0]), never narrowed"),
+            ([NPC, {"op": "distinct", "as": "d", "rows": "npc", "by": ["teamType"]}, share("d")],
+             "`d` is a distinct (ops[1]) of rows straight from fetch_rows (ops[0])"),
+            ([NPC, {"op": "count", "as": "c", "rows": "npc", "by": ["id"]}, share("c", cols={"c": ["id", "count"]})],
+             "`c` is a count (ops[1]) by `id`, the row id of rows straight from fetch_rows (ops[0]): one row per row "
+             "id"),
+            ([PLACED, {"op": "distinct", "as": "placed_x", "rows": "placed", "by": ["map"]}, share("placed_x")],
+             "`placed_x` is a distinct (ops[1]) of rows straight from read_placements (ops[0])"),
+            ([PLACED, share("placed", cols={"placed": ["map"]})],
+             "`placed` comes straight from read_placements (ops[0])"),
+            # P15: a count of a raw table by a column of other tables' ids is that column, with counts
+            ([NPC, {"op": "count", "as": "c", "rows": "npc", "by": ["nameId"]},
+              share("c", cols={"c": ["nameId", "count"]})],
+             "`c` is a count (ops[1]) by `nameId`, a column of ids, of rows straight from fetch_rows (ops[0]): one row "
+             "per id it holds"),
+            ([NPC, {"op": "count", "as": "c", "rows": "npc", "by": ["teamType", "nameId"]},
+              share("c", cols={"c": ["teamType", "count"]})],
+             "`c` is a count (ops[1]) by `nameId`, a column of ids, of rows straight from fetch_rows (ops[0]): one row "
+             "per id it holds"),
+            ([NPC, JOIN, {"op": "count", "as": "c", "rows": "npc_named", "by": ["nameId"], "where": {"named": True}},
+              share("c", cols={"c": ["nameId", "count"]})],
+             "`c` is a count (ops[2]) by `nameId`, a column of ids, of rows straight from fetch_rows (ops[0]): one row "
+             "per id it holds"),
+            ([{"op": "fetch_rows", "as": "talk", "param": "TalkParam", "fields": ["msgId"]},
+              {"op": "count", "as": "c", "rows": "talk", "by": ["msgId"]},
+              {"op": "distinct", "as": "d", "rows": "c", "by": ["msgId"]}, share("d", cols={"d": ["msgId"]})],
+             "`d` is a distinct (ops[2]) of rows straight from fetch_rows (ops[0])"),
+            ([PLACED, {"op": "count", "as": "c", "rows": "placed", "by": ["map", "npcParamId", "talkId", "model"]},
+              share("c", cols={"c": ["map", "count"]})],
+             "`c` is a count (ops[1]) by `npcParamId`, a column of ids, of rows straight from read_placements "
+             "(ops[0]): one row per id it holds"),
+            ([PLACED, {"op": "count", "as": "c", "rows": "placed", "by": ["model"]},
+              share("c", cols={"c": ["model", "count"]})],
+             "`c` is a count (ops[1]) by `model`, a column of ids, of rows straight from read_placements (ops[0]): "
+             "one row per id it holds"),
+        ]
+        for ops, how in cases:
+            with self.subTest(how=how):
+                got = self.refused_at(ops)
+                self.assertEqual(got, [("ops[%d].tables[0]" % (len(ops) - 1), how + " - " + rule)])
+
+    def test_what_passes(self):
+        ok = [
+            [NPC, {"op": "count", "as": "c", "rows": "npc", "by": ["teamType"]}, share("c")],
+            [NPC, {"op": "count", "as": "c", "rows": "npc"}, share("c", cols={"c": ["count"]})],
+            [NPC, JOIN, {"op": "filter", "as": "n", "rows": "npc_named", "where": {"named": True}}, share("n")],
+            [NPC, JOIN, {"op": "filter", "as": "n", "rows": "npc_named", "where": {"named": {"eq": True}}}, share("n")],
+            [NPC, JOIN, {"op": "filter", "as": "n", "rows": "npc_named", "where": {"named": {"ne": False}}},
+             {"op": "distinct", "as": "d", "rows": "n", "by": ["teamType"]}, share("d")],
+            [NPC, {"op": "filter", "as": "p", "rows": "npc", "ids": [9000001]},
+             {"op": "filter", "as": "q", "rows": "p", "where": {"teamType": 1}}, share("q")],
+            [NPC, {"op": "filter", "as": "p", "rows": "npc", "ids": [9000001]},
+             {"op": "count", "as": "c", "rows": "p", "by": ["id"]}, share("c", cols={"c": ["id", "count"]})],
+            [PLACED, {"op": "filter", "as": "p", "rows": "placed", "key": "npcParamId", "ids": [9000001]},
+             share("p", cols={"p": ["map", "entityId"]})],
+            [PLACED, {"op": "filter", "as": "p", "rows": "placed", "ids": [9001000]},
+             share("p", cols={"p": ["map", "npcParamId"]})],
+            # a count by columns that hold no ids, or by ids of rows already picked
+            [PLACED, {"op": "count", "as": "c", "rows": "placed", "by": ["map"]},
+             share("c", cols={"c": ["map", "count"]})],
+            [NPC, JOIN, {"op": "filter", "as": "n", "rows": "npc_named", "where": {"named": True}},
+             {"op": "count", "as": "c", "rows": "n", "by": ["nameId"]}, share("c", cols={"c": ["nameId", "count"]})],
+            [PLACED, {"op": "filter", "as": "p", "rows": "placed", "key": "npcParamId", "ids": [9000001]},
+             {"op": "count", "as": "c", "rows": "p", "by": ["talkId"]}, share("c", cols={"c": ["talkId", "count"]})],
+        ]
+        for ops in ok:
+            with self.subTest(ops=[o["op"] for o in ops]):
+                check(job(ops))
+
+    def test_the_columns_of_ids_are_listed_for_every_param(self):
+        """fields.REFERENCES names, for every param DataPiler reads, which of its fields hold other tables' ids (P15),
+        and the placements' are their reference columns."""
+        self.assertEqual(set(fields.REFERENCES), set(fields.PARAMS))
+        for param, refs in fields.REFERENCES.items():
+            for f in refs:
+                self.assertEqual(fields.PARAMS[param].get(f), "int", (param, f))
+                self.assertNotEqual(f, "id")
+        self.assertEqual(set(jobs.PLACEMENT_REFERENCES) | {"map", "entityId"}, {c for c, _ in jobs.PLACEMENT_COLUMNS})
+        j = check(job([NPC, PLACED, {"op": "write_local", "name": "x", "tables": ["npc", "placed"]}]))
+        self.assertEqual(j.lineage["npc"].refs, ("nameId",))
+        self.assertEqual(j.lineage["placed"].refs, ("npcParamId", "talkId", "model"))
+
+    def test_the_lineage_on_the_job(self):
+        j = check(fixture("good-picked.json"))
+        got = {t: (lin.kind, lin.source, lin.id_col, lin.per_row) for t, lin in j.lineage.items()}
+        self.assertEqual(got, {"npc": ("raw", 0, "id", True), "npc_named": ("raw", 0, "id", True),
+                               "named_rows": ("narrowed", 0, "id", True), "picked": ("narrowed", 0, "id", True),
+                               "placed": ("raw", 4, "entityId", True),
+                               "placed_picked": ("narrowed", 4, "entityId", True)})
+        # filter's `ids` without `key` picks by the row id, and the checked op says so
+        self.assertEqual(j.ops[3]["key"], "id")
+        self.assertEqual(j.ops[5]["key"], "npcParamId")
+
+    def test_ids_rules(self):
+        self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc"}, share("f")])[0],
+                         ("ops[1]", "a filter needs `where`, `ids` or both"))
+        self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc", "key": "id",
+                                                "where": {"teamType": 1}},
+                                          {"op": "count", "as": "c", "rows": "f"}, share("c", cols={"c": ["count"]})]),
+                         [("ops[1].key", "`key` names the column `ids` picks by - give `ids` too")])
+        self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc", "key": "nameId",
+                                                "ids": [1]}, {"op": "count", "as": "c", "rows": "f"},
+                                          share("c", cols={"c": ["count"]})]),
+                         [("ops[1].key", "`nameId` is not a column ids can pick npc's rows by (id)")])
+        got = self.refused_at([NPC, {"op": "count", "as": "c", "rows": "npc", "by": ["teamType"]},
+                               {"op": "filter", "as": "f", "rows": "c", "ids": [1]}, share("f")])
+        self.assertEqual(got, [("ops[2].ids", "`c` has no row-id column to pick by (`id` from fetch_rows, `entityId` "
+                                              "or `npcParamId` from read_placements) - a count or a distinct keeps "
+                                              "none")])
+        for bad, text in (([], "must be a list of 1 to 1,000 row ids (whole numbers)"),
+                          (list(range(1001)), "must be a list of 1 to 1,000 row ids (whole numbers)"),
+                          ("9000001", "must be a list of 1 to 1,000 row ids (whole numbers)")):
+            got = self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc", "ids": bad},
+                                   {"op": "count", "as": "c", "rows": "f"}, share("c", cols={"c": ["count"]})])
+            self.assertEqual(got, [("ops[1].ids", text)])
+        got = self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc", "ids": [1, "Quillon Marrowgate"]},
+                               {"op": "count", "as": "c", "rows": "f"}, share("c", cols={"c": ["count"]})])
+        self.assertEqual(got, [("ops[1].ids[1]", "not a row id (a whole number)")])
+
+    def test_extracts_own_share_files_hold_counts_only(self):
+        """Extract writes the workspace, and at most a counts-only summary share file: no id reaches it."""
+        from datapiler import catalogue
+        for r in catalogue.ROWS:
+            if "server" not in r.sources:
+                self.assertEqual(r.goes_to, "workspace")
+                continue
+            with self.subTest(r.id):
+                self.assertEqual(r.goes_to, "workspace+counts")
+                ops = catalogue.ops_for(r.id)
+                j = check(json.dumps({"format": jobs.FORMAT, "id": catalogue.job_id(r.id), "title": r.name,
+                                      "ops": ops}).encode(), builtin=True)
+                shares = [o for o in j.ops if o["op"] == "write_share"]
+                self.assertLessEqual(len(shares), 1)
+                for o in shares:
+                    for t in o["tables"]:
+                        self.assertEqual(j.lineage[t].kind, "aggregate", t)
+                        self.assertEqual(o["columns"][t], ["count"], t)
 
 
 class RefusalTest(unittest.TestCase):

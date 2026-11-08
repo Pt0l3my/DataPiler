@@ -7,7 +7,8 @@ opens as a tab in your browser with all its tools: Smithbox's status, data extra
 zone for jobs, the outputs, and the log.
 
 **Status: 0.1.0.** The first version, built from [design 0001](docs/design/0001-design.md). The owner's decisions are
-in [docs/DECISIONS.md](docs/DECISIONS.md); what changed is in [CHANGELOG.md](CHANGELOG.md).
+in [docs/DECISIONS.md](docs/DECISIONS.md), what the build settled in [docs/design/settled.md](docs/design/settled.md),
+and what changed in [CHANGELOG.md](CHANGELOG.md).
 
 ## What you need
 
@@ -17,7 +18,10 @@ in [docs/DECISIONS.md](docs/DECISIONS.md); what changed is in [CHANGELOG.md](CHA
 
 ## Start and stop
 
-- **Start:** unpack the DataPiler folder anywhere you like and double-click `DataPiler.exe`.
+- **Get it:** each release has one zip of the whole app, `DataPiler-<version>.zip` (the source at that version with
+  `DataPiler.exe` built into it), and its sha256 beside it. Download the zip, check it against its sha256, and unpack
+  it anywhere you like.
+- **Start:** double-click `DataPiler.exe` in the unpacked folder.
   - It opens a PowerShell window titled DataPiler, which checks Python and runs the app; the window shows the log.
   - Once the page is up, the exe opens it in your browser: `http://127.0.0.1:<port>/`.
   - Starting it again while DataPiler runs, or while its window is still starting, just opens the running page once
@@ -34,16 +38,16 @@ in [docs/DECISIONS.md](docs/DECISIONS.md); what changed is in [CHANGELOG.md](CHA
 
 ## The first start's question
 
-The server link, which reads data from Smithbox, needs two libraries beyond Python's own: `grpcio` (Apache-2.0) and
-`protobuf` (BSD-3-Clause), with `typing-extensions` (PSF-2.0), which grpcio needs. They are not in the download. At
+The server link, which reads data from Smithbox, needs three libraries beyond Python's own: `grpcio` (Apache-2.0) and
+`protobuf` (BSD-3-Clause), and `typing-extensions` (PSF-2.0), which grpcio needs. They are not in the download. At
 the first start the window names them with their versions and licences, says about how many MB they are and that they
 come from pypi.org over https, and asks:
 
 - **Y:** it makes a `.venv` folder inside DataPiler's folder and has pip install them there, each file checked
   against its sha256 in `requirements.lock`; pip refuses anything else. No later start touches the network.
 - **N:** DataPiler starts without the server link. The guided exports and Outputs still work, and a job you drop is
-  checked at once, but it runs only with the link, as every job reads from Smithbox first; it asks again at the next
-  start.
+  checked at once, but no job runs without the link, as every job reads from Smithbox first; Extract's server rows
+  wait for it too. It asks again at the next start.
 
 The Pythons the server link supports are the ones `requirements.lock` names. With another Python, DataPiler says so
 and starts without the link.
@@ -62,9 +66,18 @@ DataPiler reads the file and never writes it.
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any
   game file, and uses none of Smithbox's me3 features.
 - The game's text and data stay on your PC, in the **workspace** folder, which Settings refuses to put on a network
-  share or a mapped network drive. What DataPiler writes for sharing, in the
-  **share** folder, holds ids, numbers, counts and its own labels only, and is checked by its guard before it is
-  written.
+  share or a mapped network drive. What DataPiler writes for sharing, in the **share** folder, holds numbers, counts
+  and its own labels only, and ids only for rows a job picked for a purpose: the named characters, matched with their
+  names on your PC, or an explicit list of ids. A job is refused when you drop it if it would share a table straight
+  from Smithbox, a filter or distinct of one, or a count of one by a column of ids (a row id, a name number, a message
+  id, a placement's character, dialogue or model id); a count by other columns is a summary. The guard, which checks
+  every share file before it is written, then refuses a file whose tables from one game table cover, together, more
+  than half of that table's rows (DP8). Extract's own share files hold counts only.
+- **Settings asks you one thing about your game:** whether its expansion is installed. Share files record your answer,
+  and wait until you have given it.
+- The names' text ids (which part of Smithbox's text exports holds the character and place names) come from
+  EldenNet's research and are checked against your own data each time a job joins names: if fewer than half of the
+  names it looks up are found there, the job stops and says so.
 - Its page answers only on `127.0.0.1`, to itself, with a token made at each start, and loads nothing from
   elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<WORKSPACE>`).
 - Jobs are data, never code: a closed set of operations, checked when they are dropped, run only on Start.

@@ -14,13 +14,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from datapiler import events, guard, link, logbook, paths, runner, textdb
+from dataclasses import replace
+
+from datapiler import catalogue, events, guard, link, logbook, paths, runner, textdb
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures")
-PROVENANCE = {"game_version": "1.99.0.0", "regulation_sha256": "ab" * 32, "expansion": True, "language": "engus",
-              "smithbox_build": "9.9.9", "datapiler": "0.1.0", "date": "2026-11-08"}
+PROVENANCE = {"game_version": "1.99.0.0", "regulation_sha256": "ab" * 32, "expansion": True,
+              "expansion_source": "owner", "language": "engus", "smithbox_build": "9.9.9", "datapiler": "0.1.0",
+              "date": "2026-11-08"}
 SETS = {"character_names": (("item", 9001),), "place_names": (("item", 9002),)}
 TITLE = "Roster: named characters per team"
 PLANTED = ("Quillon", "Lamplighter", "Serevan", "Ashgrove", TITLE)
@@ -208,8 +211,14 @@ class JobRunTest(RunnerBase):
                                                                          {"name": "count", "type": "int"}],
                                           "rows": [[0, 10], [6, 5]]}])
         self.assertEqual(doc["job"]["sha256"], card["sha256"])
-        self.assertEqual(doc["provenance"], PROVENANCE)
-        self.assertTrue(all(r.ok for r in self.guard.check(data, declared={"per_team": ["teamType", "count"]})))
+        # the provenance: Status's block, and the names' wrapper leads verified at join_names (3 of 3 numbers)
+        self.assertEqual(doc["provenance"], dict(PROVENANCE, names={"character_names": {
+            "wrappers": [9001], "verified": True, "resolved": 1.0}}))
+        self.assertTrue(all(r.ok for r in self.guard.check(data, declared={"per_team": ["teamType", "count"]},
+                                                           coverage={"per_team": None})))
+        # the row counts kept for Outputs' check 6: a count by teamType, measured by its groups against NpcParam
+        self.assertEqual(guard.counts_for(self.p.share_counts, "roster-counts.json", share["sha256"]),
+                         {"per_team": (None, 20, "NpcParam")})
         self.assertEqual(card["result"]["failed"], None)
         self.assertEqual(self.r.made_by()["roster-counts.json"], "en-0007-roster-counts")
 
@@ -235,7 +244,8 @@ class JobRunTest(RunnerBase):
         self.assertEqual(self.r.made_by()["local/test-0001-every-op/npc-named.json"], "test-0001-every-op")
         talk = [c for c in self.link.calls if c[:2] == ("GetParamRows", "TalkParam")]
         self.assertEqual(len(talk), 3)
-        self.assertNotIn(("ListParamRows", "TalkParam"), self.link.calls)
+        # Its rows are named by id, but the job writes a share file: check 6 measures against all of TalkParam's rows
+        self.assertIn(("ListParamRows", "TalkParam"), self.link.calls)
 
     def test_the_job_log(self):
         logs = Path(self.tmp.name) / "logs"
@@ -293,7 +303,7 @@ class WaitTest(RunnerBase):
         card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
         self.r.act(card["id"], "start")
         self.assertTrue(wait_for(lambda: self.card(card["id"])["wait"] ==
-                                 "the server link needs its two libraries - restart DataPiler and answer Y"))
+                                 "the server link needs its libraries - restart DataPiler and answer Y"))
 
     def test_the_link_lost_in_the_middle(self):
         self.link.drop_at = 5
@@ -362,7 +372,8 @@ class FailureTest(RunnerBase):
             sha256="1" * 64)
         card = self.run_job(fixture("job-files", "good-example.json"), state="failed")
         self.assertEqual(card["result"]["failed"], {"op": 4, "why": "the guard refused the share file: check 3 at "
-                                                                    "tables[0].name", "check": 3,
+                                                                    "tables[0].name (a string the text database "
+                                                                    "holds)", "check": 3,
                                                     "where": "tables[0].name"})
         self.assertEqual(self.share_files(), [])
 
@@ -393,8 +404,8 @@ class FailureTest(RunnerBase):
         with mock.patch.dict(textdb.TEXT_SETS, {"character_names": ()}):
             card = self.run_job(fixture("job-files", "good-example.json"), state="failed")
         self.assertEqual(card["result"]["failed"], {"op": 2, "why": "which text entries hold the character names is "
-                                                                    "not confirmed yet, so join_names cannot run in "
-                                                                    "0.1", "check": None, "where": None})
+                                                                    "not known, so join_names cannot run",
+                                                    "check": None, "where": None})
         empty = textdb.TextDB(Path(self.tmp.name) / "empty.sqlite")
         try:
             self.r.textdb = empty
@@ -405,6 +416,212 @@ class FailureTest(RunnerBase):
                              "The character names are not imported yet - run Extract's guided row for them first")
         finally:
             empty.close()
+
+
+class ShareRulesTest(RunnerBase):
+    """DP8 at run time (settled S18, S19): what reaches a share file, and check 6's counts; P3's leads verified at
+    join time (S22); P2's statement missing (S21)."""
+
+    NAMED = [{"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"]},
+             {"op": "join_names", "as": "npc_named", "rows": "npc", "key": "nameId", "text": "character_names"},
+             {"op": "filter", "as": "named_rows", "rows": "npc_named", "where": {"named": True}}]
+
+    def test_the_named_rows_cover_too_many_of_the_param(self):
+        # 15 of NpcParam's 20 invented rows have a name: more than half, so check 6 refuses the table
+        card = self.run_job(job_bytes(self.NAMED + [
+            {"op": "write_share", "name": "named-rows", "tables": ["named_rows"],
+             "columns": {"named_rows": ["id", "nameId"]}}]), state="failed")
+        self.assertEqual(card["result"]["failed"]["check"], 6)
+        self.assertEqual(card["result"]["failed"]["where"], "tables[0]")
+        self.assertIn("check 6 at tables[0] (a table covering, alone or with the file's other tables from the same "
+                      "game table, more than half", card["result"]["failed"]["why"])
+        self.assertEqual(self.share_files(), [])
+
+    def test_the_named_rows_of_a_few_picked_ids(self):
+        card = self.run_job(job_bytes(self.NAMED + [
+            {"op": "filter", "as": "few", "rows": "named_rows", "where": {"nameId": {"ge": 0}}},
+            {"op": "filter", "as": "picked", "rows": "few", "ids": [9000000, 9000001, 9000002, 9000003]},
+            {"op": "write_share", "name": "picked-rows", "tables": ["picked"],
+             "columns": {"picked": ["id", "nameId"]}}]))
+        doc = json.loads((self.p.share / "picked-rows.json").read_bytes())
+        self.assertEqual(doc["tables"][0]["rows"], [[9000000, 9000000], [9000001, 9000001], [9000002, 9000004]])
+        sha = card["result"]["share"]["sha256"]
+        self.assertEqual(guard.counts_for(self.p.share_counts, "picked-rows.json", sha),
+                         {"picked": ("id", 20, "NpcParam")})
+        # the same counts give the same answer later, as Outputs asks
+        data = (self.p.share / "picked-rows.json").read_bytes()
+        res = self.guard.check(data, declared={"picked": ["id", "nameId"]},
+                               coverage=guard.counts_for(self.p.share_counts, "picked-rows.json", sha))
+        self.assertTrue(all(r.ok for r in res), res)
+        # without its id column, the table's rows are measured instead
+        card = self.run_job(job_bytes(self.NAMED + [
+            {"op": "write_share", "name": "named-numbers", "tables": ["named_rows"],
+             "columns": {"named_rows": ["nameId"]}}], jid="test-0101-numbers"), state="failed")
+        self.assertEqual(card["result"]["failed"]["check"], 6)
+
+    def test_placements_picked_by_their_character_rows(self):
+        card = self.run_job(job_bytes([
+            {"op": "read_placements", "as": "placed", "maps": "all"},
+            {"op": "filter", "as": "these", "rows": "placed", "key": "npcParamId", "ids": [9000001]},
+            {"op": "write_share", "name": "where-placed", "tables": ["these"],
+             "columns": {"these": ["map", "entityId", "npcParamId"]}}]))
+        doc = json.loads((self.p.share / "where-placed.json").read_bytes())
+        self.assertEqual([r[2] for r in doc["tables"][0]["rows"]], [9000001, 9000001])
+        # placements are measured by their rows (entity ids can repeat), against the placements of the maps read
+        self.assertEqual(guard.counts_for(self.p.share_counts, "where-placed.json", card["result"]["share"]["sha256"]),
+                         {"these": (None, 6, "placements")})
+
+    def test_placements_whose_entity_ids_repeat(self):
+        """The invented maps repeat their entity ids, so three ids cover every placement read: their rows are
+        measured, not their entity ids, and check 6 refuses the table."""
+        self.link.loaded = ["m99_00_00_0%d" % k for k in range(4)]
+        card = self.run_job(job_bytes([
+            {"op": "read_placements", "as": "placed", "maps": "all"},
+            {"op": "filter", "as": "these", "rows": "placed", "key": "npcParamId",
+             "ids": [9000000, 9000001, 9000002]},
+            {"op": "write_share", "name": "every-placement", "tables": ["these"],
+             "columns": {"these": ["map", "entityId", "npcParamId"]}}], jid="test-0110-placed"), state="failed")
+        self.assertEqual((card["result"]["failed"]["check"], card["result"]["failed"]["where"]), (6, "tables[0]"))
+        self.assertEqual(self.share_files(), [])
+
+    def test_a_map_read_twice_counts_once(self):
+        """Reading the same maps again never raises the bound: each map's placements count once (6 here, not 12),
+        and the tables of both reads are measured together."""
+        card = self.run_job(job_bytes([
+            {"op": "read_placements", "as": "a", "maps": "all"},
+            {"op": "read_placements", "as": "b", "maps": "all"},
+            {"op": "filter", "as": "pa", "rows": "a", "key": "npcParamId", "ids": [9000000]},
+            {"op": "filter", "as": "pb", "rows": "b", "key": "npcParamId", "ids": [9009999]},
+            {"op": "write_share", "name": "read-twice", "tables": ["pa", "pb"],
+             "columns": {"pa": ["map", "entityId"], "pb": ["map", "entityId"]}}], jid="test-0111-twice"))
+        self.assertEqual(guard.counts_for(self.p.share_counts, "read-twice.json", card["result"]["share"]["sha256"]),
+                         {"pa": (None, 6, "placements"), "pb": (None, 6, "placements")})
+        card = self.run_job(job_bytes([
+            {"op": "read_placements", "as": "a", "maps": "all"},
+            {"op": "read_placements", "as": "b", "maps": "all"},
+            {"op": "filter", "as": "pa", "rows": "a", "key": "npcParamId", "ids": [9000000]},
+            {"op": "filter", "as": "pb", "rows": "b", "key": "npcParamId", "ids": [9000001]},
+            {"op": "write_share", "name": "read-twice-more", "tables": ["pa", "pb"],
+             "columns": {"pa": ["map", "entityId"], "pb": ["map", "entityId"]}}], jid="test-0112-twice"),
+            state="failed")
+        self.assertEqual((card["result"]["failed"]["check"], card["result"]["failed"]["where"]), (6, "tables[1]"))
+
+    def test_tables_from_one_param_are_measured_together(self):
+        """Four picked lists of a quarter each, from one fetch_rows, are the whole param: check 6 refuses the file
+        at the table that passes half (invented TalkParam rows)."""
+        self.link.talk = {9000000 + i: {"msgId": 9500000 + i} for i in range(40)}
+        ids = sorted(self.link.talk)
+        ops = [{"op": "fetch_rows", "as": "talk", "param": "TalkParam", "fields": ["msgId"]}]
+        names = ["q%d" % k for k in range(4)]
+        for k, n in enumerate(names):
+            ops.append({"op": "filter", "as": n, "rows": "talk", "ids": ids[10 * k:10 * k + 10]})
+        ops.append({"op": "write_share", "name": "four-quarters", "tables": names,
+                    "columns": {n: ["id", "msgId"] for n in names}})
+        card = self.run_job(job_bytes(ops, jid="test-0113-quarters"), state="failed")
+        self.assertEqual((card["result"]["failed"]["check"], card["result"]["failed"]["where"]), (6, "tables[2]"))
+        self.assertEqual(self.share_files(), [])
+        # the same picked rows in two tables count once
+        card = self.run_job(job_bytes([
+            ops[0], {"op": "filter", "as": "a", "rows": "talk", "ids": ids[:20]},
+            {"op": "filter", "as": "b", "rows": "a", "where": {"msgId": {"ge": 0}}},
+            {"op": "write_share", "name": "twice-the-same", "tables": ["a", "b"],
+             "columns": {"a": ["id"], "b": ["id", "msgId"]}}], jid="test-0114-same"))
+        self.assertEqual(card["state"], "done")
+
+    def test_a_row_id_held_by_two_rows(self):
+        """Smithbox lists each row id once, but an id may be held by more than one row: then the read's share tables
+        are measured by their rows, not their ids (S19)."""
+        plain = self.link.get_param_rows
+
+        def twice(param, row_ids, fields, **kw):
+            out = plain(param, row_ids, fields, **kw)
+            return out + [dict(r) for r in out if r["id"] == 9000002]
+        self.link.get_param_rows = twice
+        card = self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "talk", "param": "TalkParam", "fields": ["msgId"]},
+            {"op": "filter", "as": "p", "rows": "talk", "ids": [9000002, 9000004]},
+            {"op": "write_share", "name": "held-twice", "tables": ["p"], "columns": {"p": ["id", "msgId"]}}],
+            jid="test-0117-twice"))
+        doc = json.loads((self.p.share / "held-twice.json").read_bytes())
+        self.assertEqual(len(doc["tables"][0]["rows"]), 3)
+        self.assertEqual(guard.counts_for(self.p.share_counts, "held-twice.json", card["result"]["share"]["sha256"]),
+                         {"p": (None, 10, "TalkParam")})
+
+    def test_a_count_is_measured_by_its_groups(self):
+        """A count of a raw table by columns that hold no ids is an aggregate, measured by its groups (P15, S19):
+        a count by three columns of a table whose rows are nearly all distinct is refused."""
+        for k, row in enumerate(self.link.npc.values()):
+            row["teamType"], row["npcType"] = k, k % 2
+        card = self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["teamType", "npcType"]},
+            {"op": "count", "as": "c", "rows": "npc", "by": ["teamType", "npcType"]},
+            {"op": "write_share", "name": "near-every-row", "tables": ["c"],
+             "columns": {"c": ["teamType", "npcType", "count"]}}], jid="test-0115-groups"), state="failed")
+        self.assertEqual((card["result"]["failed"]["check"], card["result"]["failed"]["where"]), (6, "tables[0]"))
+        # its counts alone, without their groups, are not measured
+        card = self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["teamType", "npcType"]},
+            {"op": "count", "as": "c", "rows": "npc", "by": ["teamType", "npcType"]},
+            {"op": "write_share", "name": "counts-alone", "tables": ["c"], "columns": {"c": ["count"]}}],
+            jid="test-0116-counts"))
+        self.assertEqual(guard.counts_for(self.p.share_counts, "counts-alone.json", card["result"]["share"]["sha256"]),
+                         {"c": None})
+
+    def test_an_explicit_list_reads_the_params_rows_only_for_a_share_file(self):
+        self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "talk", "param": "TalkParam", "fields": ["msgId"], "ids": [9000000]},
+            {"op": "write_local", "name": "talk", "tables": ["talk"]}]))
+        self.assertNotIn(("ListParamRows", "TalkParam"), self.link.calls)
+
+    def test_the_wrapper_leads_must_hold(self):
+        # P3: only one of the rows' three name numbers resolves in the wrappers: less than half, so join_names stops
+        self.db.import_export({"Name": "item", "SourceContainer": "item", "FmgWrappers": [
+            {"Name": "InventedCharacterNames", "ID": 9001, "Fmg": {"Entries": [{"ID": 9000000, "Text": "Ostrel"}]}}]},
+            container="item", language="engus", sha256="5" * 64)
+        card = self.run_job(fixture("job-files", "good-example.json"), state="failed")
+        self.assertEqual(card["result"]["failed"], {"op": 2, "why": (
+            "only 33% of the rows' name numbers (1 of 3) resolve in the wrappers 9001 of the character names: at "
+            "least half must, so the leads do not hold for this data and join_names stops"), "check": None,
+            "where": None})
+        self.assertEqual(self.share_files(), [])
+
+    def test_no_name_number_to_verify_the_leads_with(self):
+        for row in self.link.npc.values():
+            row["nameId"] = -1
+        card = self.run_job(fixture("job-files", "good-example.json"), state="failed")
+        self.assertEqual(card["result"]["failed"]["op"], 2)
+        self.assertIn("cannot be verified", card["result"]["failed"]["why"])
+
+    def test_half_resolving_is_enough_and_the_lowest_share_is_recorded(self):
+        self.db.import_export({"Name": "item", "SourceContainer": "item", "FmgWrappers": [
+            {"Name": "InventedCharacterNames", "ID": 9001, "Fmg": {"Entries": [
+                {"ID": 9000000, "Text": "Ostrel"}, {"ID": 9000001, "Text": "Brannoc"}]}}]},
+            container="item", language="engus", sha256="6" * 64)
+        card = self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId", "teamType"]},
+            {"op": "join_names", "as": "a", "rows": "npc", "key": "nameId", "text": "character_names"},
+            {"op": "filter", "as": "two", "rows": "npc", "ids": [9000000, 9000001]},
+            {"op": "join_names", "as": "b", "rows": "two", "key": "nameId", "text": "character_names"},
+            {"op": "count", "as": "per_team", "rows": "a", "by": ["teamType"], "where": {"named": True}},
+            {"op": "write_share", "name": "lowest-share", "tables": ["per_team"],
+             "columns": {"per_team": ["teamType", "count"]}}]))
+        doc = json.loads((self.p.share / "lowest-share.json").read_bytes())
+        self.assertEqual(doc["provenance"]["names"], {"character_names": {
+            "wrappers": [9001], "verified": True, "resolved": 0.666}})
+        self.assertEqual(card["state"], "done")
+
+    def test_the_expansion_not_stated(self):
+        from datapiler.status import EXPANSION_UNSET, ProvenanceMissing
+
+        def missing():
+            raise ProvenanceMissing(EXPANSION_UNSET)
+
+        self.provenance = missing
+        card = self.run_job(fixture("job-files", "good-example.json"), state="failed")
+        why = card["result"]["failed"]["why"]
+        self.assertEqual(why, "the provenance block is not complete: " + EXPANSION_UNSET)
+        self.assertIn("Settings", why)
+        self.assertEqual(self.share_files(), [])
 
 
 class AddAndRemoveTest(RunnerBase):
@@ -529,7 +746,12 @@ class ExtractTest(RunnerBase):
         rows = {x["id"]: x for x in self.r.extract_state()["rows"]}
         self.assertEqual(rows["character_rows"]["grey"], "the server link is off")
         self.assertIsNone(rows["character_names"]["grey"])
-        self.assertEqual(rows["place_names"]["grey"], "the text container of these names is not confirmed yet")
+        # P3's lead: the place names sit in the character names' containers, so their row waits for those exports
+        self.assertIsNone(rows["place_names"]["grey"])
+        with mock.patch.object(catalogue, "ROWS", tuple(
+                replace(r, containers=()) if r.id == "place_names" else r for r in catalogue.ROWS)):
+            rows = {x["id"]: x for x in self.r.extract_state()["rows"]}
+            self.assertEqual(rows["place_names"]["grey"], "the text container of these names is not confirmed yet")
 
     def test_the_map_question_above_ten(self):
         self.link.all_maps = ["m99_00_00_%02d" % i for i in range(12)]

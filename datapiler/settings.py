@@ -1,7 +1,11 @@
 """settings.json, its keys and checks, and the session's switches (build plan §4.1).
 
 The server's address is not a setting: 127.0.0.1:22720 is a constant in link.py, shown on the page. The session's
-switches (the server link, DEBUG to the file) are never saved: both are off at every start."""
+switches (the server link, DEBUG to the file) are never saved: both are off at every start.
+
+`expansion` is the owner's own statement of whether the game's expansion is installed (build plan §10, P2; settled
+S21): blank until the owner sets it, and a share write waits for it. No file check decides it; one may only show a
+hint on Status."""
 
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 NEXT_START = ("port", "log_max_mb", "log_keep", "workspace_dir")   # the text database stays open where it is
 FOLDER_MAX = 1024
 LANGUAGE_RX = re.compile(r"[a-z]{2,8}")
+EXPANSION = ("", "yes", "no")          # not stated yet, installed, not installed
 _CONTROL_RX = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -31,6 +36,7 @@ class Settings:
     workspace_dir: str = "workspace"
     share_dir: str = "share"
     language: str = "engus"
+    expansion: str = ""
     port: int = 0
     log_max_mb: int = 2
     log_keep: int = 5
@@ -99,6 +105,7 @@ _LABEL = {
     "smithbox_dir": "the Smithbox folder", "game_dir": "the game folder", "project_dir": "the project folder",
     "workspace_dir": "the workspace", "share_dir": "the share folder", "language": "the text language",
     "port": "the page's port", "log_max_mb": "the log's size", "log_keep": "the number of log files kept",
+    "expansion": "whether the expansion is installed",
 }
 
 
@@ -142,6 +149,10 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
         raise SettingsError("language", "the text language must be Smithbox's code: 2 to 8 small letters, "
                                         "e.g. engus")
     vals["language"] = lang
+    exp = raw.get("expansion", d.expansion)
+    if not isinstance(exp, str) or exp not in EXPANSION:
+        raise SettingsError("expansion", "whether the expansion is installed must be yes, no, or not stated yet")
+    vals["expansion"] = exp
     vals["port"] = _int(raw, "port", d.port, 1024, 65535, zero=True)
     vals["log_max_mb"] = _int(raw, "log_max_mb", d.log_max_mb, 1, 50)
     vals["log_keep"] = _int(raw, "log_keep", d.log_keep, 2, 20)     # every file, datapiler.log among them

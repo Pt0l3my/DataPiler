@@ -2,8 +2,9 @@
 
 *For the four builders of DataPiler 0.1 and the lead who commits their work (2026-11-08). Built from design 0001
 ([0001-design.md](0001-design.md), its mock [0001-mock.html](0001-mock.html)), what was settled from it
-([settled.md](settled.md), S1 to S14, which win over design §7 where they differ), the owner's decisions
-([../DECISIONS.md](../DECISIONS.md), DP1 to DP7) and the request's "Rules it must keep"
+([settled.md](settled.md), S1 to S14, which win over design §7 where they differ, and S15 to S24 from the build and
+its fix rounds), the owner's decisions ([../DECISIONS.md](../DECISIONS.md), DP1 to DP8) and the request's "Rules it
+must keep"
 ([../requests/0001-design.md](../requests/0001-design.md)). Smithbox facts are EldenNet's ER08 §3.1 and §4.2.*
 
 The four builders work at the same time in the same working tree, each writing only the files this plan gives them:
@@ -77,7 +78,7 @@ this build: no builder edits them.
 | `datapiler/runner.py` | JOBS | The queue and the run of jobs and Extract rows (§4.8) |
 | `datapiler/textdb.py` | JOBS | The local text database, `workspace/textdb.sqlite` (§4.9) |
 | `datapiler/inbox.py` | JOBS | The guided-export import from `workspace/inbox/` (§4.9) |
-| `datapiler/guard.py` | JOBS | The share file's format and the guard's five checks (§4.10) |
+| `datapiler/guard.py` | JOBS | The share file's format and the guard's six checks, and the kept row counts (§4.10) |
 | `schema/datapiler-job-1.schema.json` | JOBS | The job format as JSON Schema, draft 2020-12 |
 | `launcher-src/launcher.cpp` | PACK | Jobrunner's launcher, adapted (§7.3) |
 | `launcher-src/app.rc` | PACK | Its resource script: DataPiler's name and version; no icon line for 0.1 (§10, P11) |
@@ -127,6 +128,7 @@ DataPiler writes only inside its own folder, and into the workspace and share fo
     state.json             JOBS: the card's state, its ops' states, its result
   workspace/               local only, may hold game text
     textdb.sqlite          JOBS (textdb)
+    share-counts.json      JOBS (runner, guard): each share file's row counts, for check 6 (S19); local only
     inbox/                 the owner saves Smithbox's text exports here; refused files stay, with their reason
     imported/              JOBS (inbox): imported exports, renamed <yyyymmdd-hhmmss>-<container>-<language>.json
     local/<job id>/<name>.json      JOBS: write_local
@@ -213,7 +215,7 @@ with ANSI codes (`winapi.enable_vt()` first on Windows). At setup the file gets 
 | `app` | CORE | start, port, quit, the window's close, an event handler that failed |
 | `page` | CORE | refused requests (the reason only, never a header's value), settings saved, uploads received (sizes) |
 | `smithbox` | CORE | what the status reads found ("found in `<SMITHBOX>` - running, server on") |
-| `env` | CORE | the Python, the venv's state, the two libraries' versions (DataPiler.ps1 prints its own lines in the same format, source `env`) |
+| `env` | CORE | the Python, the venv's state, grpcio's and protobuf's versions (DataPiler.ps1 prints its own lines in the same format, source `env`) |
 | `link` | LINK | switched on or off, blocked, each call at DEBUG (method and counts), failures (gRPC code name) |
 | `extract` | JOBS | the Extract rows' progress and results |
 | `job` | JOBS | jobs: added (counts of refusals), started, each op's result, done or failed; also the job's own file |
@@ -359,7 +361,7 @@ sent to the page.
 
 ```json
 {"format": "datapiler-settings/1", "smithbox_dir": "", "game_dir": "", "project_dir": "",
- "workspace_dir": "workspace", "share_dir": "share", "language": "engus", "port": 0,
+ "workspace_dir": "workspace", "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
  "log_max_mb": 2, "log_keep": 5}
 ```
 
@@ -371,6 +373,7 @@ sent to the page.
 | `workspace_dir` | folder, relative to `<DATAPILER>` or absolute; not inside the game's, Smithbox's or the project's folder | `workspace` | at once, refused while a job or import runs |
 | `share_dir` | as `workspace_dir`, and not inside the workspace | `share` | likewise |
 | `language` | `[a-z]{2,8}` (Smithbox's code) | `engus` | at once |
+| `expansion` | `"yes"`, `"no"`, or `""` (not stated yet): the owner's statement (P2, S21); share writes wait for it | `""` | at once |
 | `port` | `0` (any free one) or 1024 to 65535 | `0` | next start |
 | `log_max_mb` | 1 to 50 | `2` | next start |
 | `log_keep` | 1 to 20 | `5` | next start |
@@ -381,7 +384,7 @@ The server's address is not a setting: `127.0.0.1:22720` is a constant in `link.
 @dataclass(frozen=True)
 class Settings:
     smithbox_dir: str = ""; game_dir: str = ""; project_dir: str = ""
-    workspace_dir: str = "workspace"; share_dir: str = "share"; language: str = "engus"
+    workspace_dir: str = "workspace"; share_dir: str = "share"; language: str = "engus"; expansion: str = ""
     port: int = 0; log_max_mb: int = 2; log_keep: int = 5
 
 class SettingsError(ValueError):
@@ -417,7 +420,7 @@ def venv_state(p: Paths) -> Own:
 ```python
 # game.py
 GAME_EXES = ("eldenring.exe", "start_protected_game.exe")
-EXPANSION_MARKERS: tuple[str, ...] = ()   # relative paths in the game folder; to verify (§10, P2)
+EXPANSION_MARKERS: tuple[str, ...] = ()   # relative paths in the game folder; a hint on Status only (§10, P2; S21)
 
 @dataclass(frozen=True)
 class GameRunning:
@@ -431,7 +434,7 @@ def running(game_dir: str) -> GameRunning:
 def version(game_dir: str) -> str | None:
     """eldenring.exe's version resource, cached by the exe's size and mtime."""
 def expansion(game_dir: str) -> bool | None:
-    """None until EXPANSION_MARKERS is set."""
+    """A hint for Status only, never a decision: None until EXPANSION_MARKERS is set."""
 def regulation_sha256(game_dir: str) -> str | None:
     """sha256 of regulation.bin (no decryption), recomputed only when its size or mtime_ns changes."""
 
@@ -465,8 +468,9 @@ class Status:
     def block_line(self) -> str | None: ...         # /api/state "block"
     def cards(self) -> dict: ...                    # /api/state "status"
     def provenance(self) -> dict:
-        """{"game_version", "regulation_sha256", "expansion", "language", "smithbox_build", "datapiler", "date"};
-        date is today's local date. Raises ProvenanceMissing."""
+        """{"game_version", "regulation_sha256", "expansion", "expansion_source", "language", "smithbox_build",
+        "datapiler", "date"}; expansion is Settings' statement and expansion_source "owner" (S21); date is today's
+        local date. The runner adds "names" (S22). Raises ProvenanceMissing, also while expansion is not stated."""
 ```
 
 `LinkView` is the read side of LINK's `Link` (`state`, `stats()`, `would_call()`). Status reads are made on each
@@ -477,7 +481,8 @@ The Status checks, by id, in the order of the mock (ok is `true` ✓, `false` �
 
 - **smithbox:** `installed`, `build`, `running`, `switch` ("Its server is switched on", with "It has no password:
   switch it off when you are done"), `port` ("The server answers on 127.0.0.1:22720"), `project`.
-- **game:** `folder`, `version`, `expansion`, `running`, `regulation`.
+- **game:** `folder`, `version`, `expansion` (the owner's statement in Settings; a file check adds a hint only, S21),
+  `running`, `regulation`.
 - **project:** `outside_game` (red ✗ and "Choose a project folder outside the game's" otherwise).
 - **link:** the state, the calls made, the last call's time and methods; with the link off, what would be called;
   once the link has gone off with the switch still true, S9's line (worded as in §10, P7).
@@ -612,7 +617,7 @@ op's `as`; fields `[A-Za-z][A-Za-z0-9_]{0,63}`; file names `paths.NAME_RX`. Colu
 | `load_maps` | `maps`: 1 to 2,000 ids matching `MAP_RX`, or `"all"` | nothing (Smithbox loads them) |
 | `read_placements` | `as`; `maps`: ids, or `"all"` (the loaded maps) | `map`, `entityId`, `npcParamId`, `talkId`, `model` |
 | `join_names` | `as`; `rows`; `key` (an `int` column); `text` (`"character_names"` or `"place_names"`) | `rows`' columns, `named` (bool), `name` (`text_local`) |
-| `filter` | `as`; `rows`; `where` | `rows`' columns |
+| `filter` | `as`; `rows`; `where` and `ids` (optional, at least one): `ids` 1 to 1,000 row ids (ints), matched against `key` (optional: the table's row id, `id` or `entityId`; `npcParamId` also for placements) | `rows`' columns |
 | `count` | `as`; `rows`; `by` (optional, 0 to 8 `int` or `bool` columns); `where` (optional) | `by`'s columns and `count` |
 | `distinct` | `as`; `rows`; `by` (1 to 8 `int` or `bool` columns) | `by`'s columns |
 | `write_local` | `name`; `tables` (1 to 16); `columns` (optional, `{table: [column, ...]}`) | `workspace/local/<job id>/<name>.json` |
@@ -623,6 +628,17 @@ op's `as`; fields `[A-Za-z][A-Za-z0-9_]{0,63}`; file names `paths.NAME_RX`. Colu
 type `int`, `number` or `bool` only. A job has at most one `write_share`; a `write_share` name used by another job is
 refused. `"needs"` above `VERSION` is refused: "this job needs DataPiler 0.2 or newer; this is 0.1.0".
 
+**Lineage (DP8, S18).** Every table carries its lineage (`jobs.Lineage`, kept on `Job.lineage`): *raw* as
+`fetch_rows` and `read_placements` make it, and after a `filter`, `distinct` or `join_names` of a raw table;
+*narrowed* by a filter keeping only the named rows (`named` true, `{"eq": true}` or `{"ne": false}`) of a table
+`join_names` made, or by a filter with `ids`; an *aggregate* as `count` makes it, unless it counts a raw table by its
+row id or by a column that holds other tables' ids (`fields.REFERENCES`: `nameId`, `msgId`;
+`jobs.PLACEMENT_REFERENCES`: `npcParamId`, `talkId`, `model`), which stays raw (§10, P15). A narrowed or aggregate
+table stays so through later filters, distincts and joins. `write_share` refuses a raw
+table at `ops[i].tables[j]`, naming the operation and the rule (`jobs.DP8_RULE`). The lineage also gives the runner
+what check 6 measures: the source op, its row-id column while the table keeps it, whether its rows are one per row
+of the source, and the source's columns of ids (`refs`).
+
 ```python
 # fields.py
 PARAMS: dict[str, dict[str, str]] = {
@@ -630,6 +646,9 @@ PARAMS: dict[str, dict[str, str]] = {
     "TalkParam": {"id": "int", "msgId": "int"},
     "WorldMapPlaceNameParam": {"id": "int"},     # more once verified (§10, P4)
     "BonfireWarpParam": {"id": "int"},           # likewise
+}
+REFERENCES: dict[str, tuple[str, ...]] = {       # the fields that hold other tables' ids (P15, S18)
+    "NpcParam": ("nameId",), "TalkParam": ("msgId",), "WorldMapPlaceNameParam": (), "BonfireWarpParam": (),
 }
 
 # jobs.py
@@ -671,7 +690,8 @@ def preview(job: Job) -> dict[str, list[str]]:
 Preview wording, one line per op: `fetch_rows` "NpcParam rows: id, nameId, teamType, npcType" (and " - rows A to B"
 or " - N rows"); `load_maps` "loads N maps in Smithbox - its view changes, not its data" (Reads); `read_placements`
 "placed characters of N maps (or: of the loaded maps): entity, row, dialogue and model ids"; `join_names` "join npc
-with the character names - local"; `filter` "keeps the rows of npc where ..."; `count` "counts the rows of npc_named
+with the character names - local"; `filter` "keeps the rows of npc where ..." (with `ids`: "keeps the rows of npc whose id is one of 3 ids listed");
+`count` "counts the rows of npc_named
 per teamType, where named is true"; `distinct` "distinct teamType of npc"; `write_local` "workspace file
 `npc-named.json`: 1 table (local)"; `write_share` "share file `roster-counts.json`: 1 table". Conditions read
 "named is true", "teamType >= 6", "npcType in 3 values".
@@ -686,7 +706,7 @@ class Row:
     help: str                     # the "?" text
     sources: tuple[str, ...]      # ("server",) or ("guided",)
     gives: str                    # "row ids, name numbers"
-    goes_to: str                  # "workspace" or "workspace+share"
+    goes_to: str                  # "workspace", or "workspace+counts": a counts-only summary to share too (S18)
     steps: tuple[str, ...]        # guided rows: the numbered steps, with <WORKSPACE> as a placeholder
     containers: tuple[str, ...]   # guided rows: the text containers it waits for
     needs_maps: bool
@@ -701,8 +721,8 @@ BUNDLES: dict[str, tuple[str, ...]] = {
 
 def ops_for(row_id: str) -> list[dict]:
     """A server row's built-in ops in datapiler-job/1 form: its full numbers by write_local to
-    workspace/local/extract/<row id>.json, and a numbers-only summary (counts, never a whole column) by
-    write_share to share/extract-<row id>.json. KeyError for a guided row."""
+    workspace/local/extract/<row id>.json, and at most a counts-only summary (never an id, DP8) by write_share to
+    share/extract-<row id>.json. KeyError for a guided row."""
 def public() -> dict:
     """GET /api/catalogue: {"rows": [...], "bundles": {...}}."""
 ```
@@ -756,10 +776,17 @@ class Runner:
 ```
 
 A job that uses the link waits while the link is off, blocked or without its libraries, and says which ("the server
-link is off", "the game is running", "the server link needs its two libraries - restart DataPiler and answer Y"); it
+link is off", "the game is running", "the server link needs its libraries - restart DataPiler and answer Y"); it
 goes on when `link.state` turns `on`. Cancel stops between calls. A failed job writes no share file and names the op
 and the reason; a guard failure names the check and the place, never the value. Each job logs to
-`logbook.for_job(id)`. The share file goes through `Guard.write` only.
+`logbook.for_job(id)`. The share file goes through `Guard.write` only, with each table's row counts from the job's
+lineage (S19): the game table each came from (the param, or `placements`) and its rows: for a `fetch_rows` source
+the param's rows as `list_param_rows` gives them (called for an explicit `ids` list too when the job writes a share
+file), each row id once, and whether a row id repeats among the rows read (an id may be held by more than one row);
+for `read_placements` the placements of every map the job read, each map once. A table of counts alone is not
+measured; a table keeping a param's row id, none repeating, is measured by its ids; every other one by its rows
+(placements always). After the write the runner keeps them with `guard.record_counts`. `join_names` verifies the names' wrapper leads first (S22): fewer than
+half of the joined rows' non-negative name numbers resolving, or none to try, fails the operation with the share.
 
 ### 4.9 The text database and the inbox (JOBS, `textdb.py`, `inbox.py`)
 
@@ -768,7 +795,13 @@ Entries: [{ID, Text}], Version, BigEndian, Unicode}}]}`; `SourceContainer` is mi
 container is `SourceContainer`, else `Name`.
 
 ```python
-TEXT_SETS: dict[str, tuple[tuple[str, int], ...]]   # "character_names" -> ((container, wrapper id), ...): §10, P3
+# ER01's leads (§10, P3; S22): character names in wrappers 428, 328 and 18, place names in 429, 329 and 19, of the item
+# containers, the live container and the newest layer first. join_names uses a set only once at least half
+# (VERIFY_SHARE) of the joined rows' non-negative name numbers resolve in it.
+LEAD_CONTAINERS = ("item_dlc02", "item_dlc01", "item")
+LEADS = {"character_names": (428, 328, 18), "place_names": (429, 329, 19)}
+VERIFY_SHARE = 0.5
+TEXT_SETS: dict[str, tuple[tuple[str, int], ...]]   # "character_names" -> ((container, wrapper id), ...), from LEADS
 
 @dataclass(frozen=True)
 class ImportResult:
@@ -782,6 +815,7 @@ class TextDB:
         """Replace that container's entries for that language. Empty texts are skipped. Emits textdb.changed."""
     def containers(self) -> list[dict]: ...      # container, language, wrappers, entries, imported time
     def ids(self, text_set: str, language: str) -> set[int]: ...
+    def wrappers(self, text_set: str) -> list[int]: ...   # for provenance.names
     def names(self, text_set: str, language: str) -> dict[int, str]:
         """Local only: for write_local, never for a share file."""
     def text_hit(self, s: str) -> bool:
@@ -823,7 +857,9 @@ The share file (design §6, with S5's `number`):
   "format": "datapiler-share/1",
   "job": {"id": "en-0007-roster-counts", "sha256": "<64 hex: the job file as dropped>"},
   "provenance": {"game_version": "<a.b.c.d>", "regulation_sha256": "<64 hex>", "expansion": true,
-                 "language": "engus", "smithbox_build": "<a.b.c>", "datapiler": "0.1.0", "date": "2026-11-08"},
+                 "expansion_source": "owner", "language": "engus",
+                 "names": {"character_names": {"wrappers": [428, 328, 18], "verified": true, "resolved": 0.95}},
+                 "smithbox_build": "<a.b.c>", "datapiler": "0.1.0", "date": "2026-11-08"},
   "tables": [
     {"name": "per_team", "columns": [{"name": "teamType", "type": "int"}, {"name": "count", "type": "int"}],
      "rows": [
@@ -836,7 +872,10 @@ The share file (design §6, with S5's `number`):
 ```
 
 Keys in that order; written pretty with each row on one line, so the viewer shows the file's exact bytes. Column
-types: `int`, `number` (finite, S5), `bool`, `enum:<name>` (a key of `ENUMS`), `label`.
+types: `int`, `number` (finite, S5), `bool`, `enum:<name>` (a key of `ENUMS`), `label`. `expansion` is the owner's
+statement and `expansion_source` says so (S21); `names` holds, for each text set the job joined, the wrapper leads
+verified at `join_names` and the lowest share of name numbers that resolved, rounded down (S22), and is `{}` when the
+job joined no names. 0.1 is unreleased, so these keys join `datapiler-share/1` before any file of it exists.
 
 ```python
 SHARE_FORMAT = "datapiler-share/1"
@@ -847,8 +886,8 @@ MAX_VALUES = 200_000
 
 @dataclass(frozen=True)
 class CheckResult:
-    check: int            # 1 to 5
-    name: str             # "Shape", "Values", "Text", "The owner", "Size"
+    check: int            # 1 to 6
+    name: str             # "Shape", "Values", "Text", "The owner", "Size", "Coverage"
     ok: bool
     where: str | None     # the first failing place, e.g. "tables[1].rows[40][2]", "notes[0]", "provenance.language"
 
@@ -866,14 +905,22 @@ class Guard:
     def build(self, *, job_id: str, job_sha256: str, provenance: dict, tables: list[dict],
               notes: Sequence[str]) -> bytes:
         """The share file's bytes, in the order and layout above."""
-    def check(self, data: bytes, *, declared: Mapping[str, Sequence[str]]) -> list[CheckResult]:
-        """All five checks; never raises. declared: {table: [column, ...]} as the job's write_share names them."""
-    def write(self, share_dir: Path, name: str, data: bytes, *,
-              declared: Mapping[str, Sequence[str]]) -> ShareWritten:
-        """Check, then write atomically only if all five pass. Raises GuardFailed naming the first failing check;
+    def check(self, data: bytes, *, declared: Mapping[str, Sequence[str]],
+              coverage: Mapping[str, tuple[str | None, int, str] | None] | None = None) -> list[CheckResult]:
+        """All six checks; never raises. declared: {table: [column, ...]} as the job's write_share names them.
+        coverage: check 6's input, {table: None (counts alone) or (row-id column or None for the rows, rows of the
+        game table, the game table's name)}; without it check 6 fails."""
+    def write(self, share_dir: Path, name: str, data: bytes, *, declared: Mapping[str, Sequence[str]],
+              coverage: Mapping[str, tuple[str | None, int, str] | None] | None) -> ShareWritten:
+        """Check, then write atomically only if all six pass. Raises GuardFailed naming the first failing check;
         nothing is written. Logs (source guard) and emits share.written or guard.failed."""
     def check_labels(self) -> list[int]:
         """S6: the indices of LABELS found in the text database; also run at start against check 4."""
+
+def fixed_words() -> frozenset[str]: ...    # what check 3 skips where a value is exactly one of them (S20)
+def owner_patterns(words: Sequence[str]) -> list[re.Pattern]: ...   # check 4's, and Copy for sharing's (S26)
+def record_counts(path: Path, file_name: str, sha256: str, coverage: Mapping) -> None: ...   # workspace, by sha256
+def counts_for(path: Path, file_name: str, sha256: str) -> dict | None: ...   # None: not written by DataPiler as is
 ```
 
 The checks, all of them run over the bytes, the first failure stopping the write:
@@ -885,13 +932,26 @@ The checks, all of them run over the bytes, the first failure stopping the write
 2. **Values.** Each cell of its column's type: `int` a JSON integer (not a boolean, magnitude below 2^63); `number`
    a finite number (NaN and infinities refused, S5); `bool`; `enum:<name>` a value of that enum; `label` one of
    `LABELS`. Each note one of `LABELS`. No other string anywhere.
-3. **Text.** Every string in the file (keys and names included), except values exactly in `LABELS` (S6) and the
-   format constant: `TextDB.text_hit` false. An empty text database passes, with a WARN once per write.
+3. **Text.** Every string value in the file: `TextDB.text_hit` false. The format's own keys are not read (check 1
+   fixes them), and a value exactly one of DataPiler's fixed words (`fixed_words()`: `LABELS`, S6, the column types
+   and enum values, the column names its operations make, the expansion's source and the format constant) is
+   skipped (S20). Each value is compared case-folded as it is, then normalised (accents dropped, every run of
+   spaces, `_`, `-` and other signs one space) against the texts normalised the same way (S25). An empty text
+   database passes, with a WARN once per write.
 4. **The owner.** Every string, `LABELS` included: no `\`, no `/` (the format constant aside), no drive letter
-   (`(?<![A-Za-z])[A-Za-z]:([\\/]|$)`), no `~`, no user or PC name as a whole word, case-folded, and no IP address.
+   (`(?<![A-Za-z])[A-Za-z]:([\\/]|$)`), no `~`, no user or PC name as a whole word, case-folded, whatever signs
+   stand between its parts (`owner_patterns`, S26), and no IP address.
    The IP rule skips `game_version` and `smithbox_build`, whose shape check 1 fixes (a four-part version looks like
    an IPv4 address; §10, P8).
 5. **Size.** At most `MAX_BYTES` bytes and `MAX_VALUES` values (cells and notes).
+6. **Coverage** (DP8, S19). The tables of one game table, together, cover at most half of its rows (a param's rows
+   as Smithbox lists them, or the placements of the maps read, each map once), as the runner hands them over: their
+   distinct row ids, counted once across the tables measured by id (a param's `id` where none repeats among the rows
+   read), plus the rows of those measured by rows (one per source row, or one per group of a count or a
+   distinct). Only a table of counts alone is not measured. A table
+   without counts fails, so `/api/share` and Outputs read them back with `counts_for` (by file name and sha256,
+   `datapiler-share-counts/2`) and a file DataPiler did not write never passes. The failure names the table at which
+   its game table passes half, `tables[i]`, never a value.
 
 ### 4.11 Start and stop (CORE, `datapiler.py`)
 
@@ -977,7 +1037,7 @@ All under the guard of §4.4; JSON in and out. Words in answers are DataPiler's,
 | `/api/state` | the state below; the page reads it every second, and three failures in a row show "DataPiler has stopped" |
 | `/api/catalogue` | `catalogue.public()`: `{"rows": [{"id", "name", "help", "sources", "gives", "goes_to", "steps"}], "bundles": {"roster": [...], ...}}` |
 | `/api/outputs` | `{"workspace": [file], "share": [file]}`, file = `{"name": "local/en-0007-roster-counts/npc-named.json", "size": 245760, "time": "2026-11-08 08:43", "made_by": "en-0007-roster-counts"}` |
-| `/api/share?name=roster-counts.json` | `{"name", "size", "sha256", "text": "<the file's exact text>", "checks": [{"check": 1, "name": "Shape", "ok": true, "where": null}, ...]}`; the guard is run again on the bytes |
+| `/api/share?name=roster-counts.json` | `{"name", "size", "sha256", "text": "<the file's exact text>", "checks": [{"check": 1, "name": "Shape", "ok": true, "where": null}, ...]}`; the guard's six checks are run again on the bytes, check 6 with the row counts kept for that file at that sha256 |
 | `/api/log?after=<seq>` | `{"lines": [{"seq", "t", "level", "src", "msg"}], "last": <seq>, "first": <oldest seq kept>}` |
 | `/api/settings` | `{"settings": {...§4.1}, "server": "127.0.0.1:22720", "session": {"link": false, "debug": false}}` |
 
@@ -1303,26 +1363,34 @@ owner's tag); use an action not pinned by commit; name the owner anywhere beyond
 ## 10. Open points for the lead
 
 Facts this plan does not have, and small calls it leaves to the lead. None is guessed in code: each sits behind one
-named constant or returns "not known".
+named constant or returns "not known". A point settled since is marked **Closed**, with the S entry that settles it;
+its first text is kept.
 
 - **P1. Smithbox's open project and its process name.** ER08 establishes only `Startup.json` and its switch. Where
   Smithbox records its open project is not known, so 0.1 checks the project folder set in Settings and
   `smithbox.open_project()` returns None. `EXE_NAME = "Smithbox.exe"` is to be confirmed.
 - **P2. The expansion's files.** `game.EXPANSION_MARKERS` is empty until the files whose presence means the expansion
   is installed are confirmed on the owner's install. Until then `expansion` is null and every share write is refused
-  by `ProvenanceMissing`: this blocks the tag, not the build.
+  by `ProvenanceMissing`: this blocks the tag, not the build. **Closed (S21, fix round 2):** the owner states it in
+  Settings (Expansion installed: yes or no, not stated at first); a share write waits for the statement and the
+  provenance records it with `expansion_source` `owner`. The marker files, once confirmed, only add a hint on Status.
 - **P3. The text exports.** Whether Smithbox's text JSON names its language (and in which key), the wrapper ids of
   the character and place names in `item`, `item_dlc01` and `item_dlc02` (`TEXT_SETS`), and the container of the
   place names. To read at the pinned commit (`FmgExporter.cs`, `StoredFmgContainer.cs`) and to confirm on the
-  owner's first import. Until then the language comes from Settings and the steps say to export in it.
+  owner's first import. Until then the language comes from Settings and the steps say to export in it. **Closed in
+  part (S22, fix round 2):** ER01's wrapper ids are built in as leads (428, 328 and 18; 429, 329 and 19, of the item
+  containers, which hold the place names too) and verified with the owner's own numbers at each `join_names`; the
+  provenance records the share that resolved. Still open: whether the text JSON names its language.
 - **P4. The places' fields.** `fields.PARAMS` has `id` only for `WorldMapPlaceNameParam` and `BonfireWarpParam` until
   their numeric fields are confirmed from the server's own answers on the owner's PC (EldenNet O48).
 - **P5. Listing maps.** Whether an allowed call lists every map (for `"all"`) and which object properties give the
   placements' numbers: from the protos (LINK). If no allowed call lists maps, `"all"` is refused in 0.1 and maps are
-  named by id.
+  named by id. **Closed (S17):** no allowed call lists every map, so `load_maps` names its maps by id;
+  `read_placements` with `"all"` reads the maps loaded in Smithbox.
 - **P6. Access to Smithbox's repository.** In this session `gh api repos/vawser/Smithbox/...` was refused (403:
   GitHub access to that repository is not enabled). LINK needs read access attached before it can fetch the protos;
-  the commit to pin is ER08's `e2dbcae`, unless the lead names another.
+  the commit to pin is ER08's `e2dbcae`, unless the lead names another. **Closed (the build):** the four files were
+  read at `e2dbcae` from GitHub's raw file host, as `soapstone/SOURCE.md` records.
 - **P7. S9's wording.** ER08 §3.1 found no switch for the server in Smithbox's app at `e2dbcae`, so the Status line
   says to set `System_Enable_Soapstone_Server` to `false` in Smithbox's `Startup.json` and restart Smithbox, rather
   than design §7.5's "in Smithbox's settings".
@@ -1331,7 +1399,12 @@ named constant or returns "not known".
   To confirm, or to put to the owner.
 - **P9. Whole columns.** The request forbids a whole param column in a share file; the guard has no check for it.
   The built-in rows write summaries only, but a job could still share every row id through `distinct`. A sixth check,
-  or a rule in the job check, would need an S entry or a DP question.
+  or a rule in the job check, would need an S entry or a DP question. **Closed (DP8; S18 and S19, fix round 2):**
+  both: the job check's lineage rule and the guard's check 6. **Note, fix round 3:** the second review found the
+  close premature: a `count` of a raw table by a column of ids listed that column (P15), check 6 left counts and
+  distincts unmeasured, measured each table alone, and measured placements by entity ids that can repeat. Now a count
+  by a column of ids stays raw, and check 6 measures every table but counts alone, by rows (or by a param's row ids
+  where none repeats), with the file's other tables from the same game table (S18, S19).
 - **P10. The release as a draft.** S4 attaches the exe to "the release"; the plan makes it a draft, so publishing
   stays the owner's act.
 - **P11. No icon in 0.1.** The brief allows a simple icon of ours or none; none keeps a binary out of the
@@ -1344,12 +1417,38 @@ named constant or returns "not known".
   suggestion, as an S entry like S6: check 3 skips the strings check 1 has already fixed to DataPiler's own vocabulary
   (the format's keys, the column types, and column names that are `fields.PARAMS` fields or op-made columns), and
   keeps checking table names, job ids and labels. The guard stays as written (fails closed) until the lead decides.
+  **Closed (S20, fix round 2):** check 3 reads values only, and skips a value that is exactly one of DataPiler's fixed
+  words (the labels, the column types and enum values, the column names its operations make, the expansion's source,
+  the format constant); `test_guard`'s P12 test passes, beside one with ordinary words that hold the keys.
 - **P13. Three libraries, not two.** grpcio needs `typing-extensions` (PSF-2.0) with `--no-deps`, so the lock, the
   window's question, NOTICE and README name three; DP4's accepted cost and the page's and the API's words ("its two
-  libraries") name two. A DP note, and the wording, are the lead's.
+  libraries") name two. A DP note, and the wording, are the lead's. **Closed (S23, fix round 2)** for the wording:
+  README, NOTICE, the page and the window's question say "grpcio and protobuf, and typing-extensions, which grpcio
+  needs", and the waits say "its libraries". DP4's own text still names two: a dated note there is the owner's
+  record to make, if wanted.
 - **P14. "Jobs on what is already in the workspace".** Design §4's answer N says jobs on what the workspace holds still
   work, but no 0.1 operation reads the workspace: every job starts with `fetch_rows` or `read_placements` and waits
-  for the link. README now says so; the design's line is the lead's to amend.
+  for the link. README now says so; the design's line is the lead's to amend. **Closed (fix round 2):** README,
+  CHANGELOG and the window's N line (`DataPiler.ps1`) say that every job reads from Smithbox first and so waits for
+  the link; design 0001 stays as received.
+- **P15. A count by a reference column (fix round 2).** S18 counts every `count` as an aggregate unless it counts by
+  a raw table's own row id. A count of a raw table by another column that holds ids (`nameId`, `msgId`, or a
+  placement's `npcParamId`, `talkId` or `model`) lists that column's distinct values, with counts, and check 6 does
+  not measure an aggregate. DP8 forbids "a raw table or column straight from Smithbox": whether such a count is one
+  (and so whether `fields.PARAMS` should mark the columns that hold ids) is the lead's call, or a DP question.
+  **Closed (S18, fix round 3):** it is one. `fields.REFERENCES` marks the params' columns of ids (`nameId`, `msgId`)
+  and `jobs.PLACEMENT_REFERENCES` the placements' (`npcParamId`, `talkId`, `model`); a count of a raw table by one of
+  them, or by its row id, stays raw and is refused at `write_share`, naming the column. Such a count still goes to the
+  workspace, and a count of picked or named rows by them is an aggregate as before.
+- **P16. An explicit list in `fetch_rows` (fix round 2).** S18 follows the brief: `fetch_rows` makes a raw table even
+  when it names its rows by an explicit list of ids, so a job filters by the same `ids` again to share them. Counting
+  `fetch_rows`'s explicit list (never its range) as narrowed would save that step; the lead's call.
+- **P17. Check 6 across share files, and placements per map (fix round 3).** Check 6 measures each share file on its
+  own (S19): several jobs, each sharing under half of one game table, can between them share more. Measuring with
+  the files already in `share/` would make a file's answer change after it is written, and miss files moved out of
+  the folder. Likewise the placements' bound is the placements of the maps the job chose to read, so a job that reads
+  many maps can share every placement of a few; measuring per map would need each share table to keep `map` or the
+  counts file to carry per-map counts. Both are the lead's call.
 
 ---
 
@@ -1384,3 +1483,16 @@ Three facts had to be supplied, invented, for a share file to be written at all:
 the names' wrapper ids (P3), and the two exes' version resources, which the portable fallback does not read (it
 answers "not known", and the share write is then refused, correctly, with the reason). Run as it is on Linux, the
 same job fails at `join_names` with P3's reason and Extract's Character rows at `write_share` with the version's.
+
+**Fix round 2 (2026-11-08).** The same run, against this round's tree, with one fact supplied: the version resources.
+The expansion was stated through the Settings form (P2, S21), and the invented text exports carried ER01's wrapper ids
+(18, 328 and 428), which `join_names` verified (two in three of the invented name numbers resolve; P3, S22). Besides
+the job above, a job sharing a raw table was refused on arrival with DP8's rule on its card, and one sharing three
+picked ids ran and wrote its share file; every share file showed checks 1 to 6 passed in the viewer, and passed all
+six again afterwards with the row counts kept in the workspace. Run with the expansion not stated, every share write
+was refused with the line saying where to state it; run as it is on Linux, with the version's reason.
+
+**Fix round 3 (2026-11-08, the second review).** The same three runs, against this round's tree, came out the same:
+the three share files passed all six checks again with their kept counts, now each with its source (`NpcParam`; the
+per-team count measured by its groups, the picked rows by their rows, as the invented NpcParam holds one row id
+twice), and no invented name was found outside the workspace.

@@ -88,10 +88,30 @@ class TextDBTest(unittest.TestCase):
         for s in hits:
             self.assertTrue(self.db.text_hit(s), s)
         self.assertTrue(self.db.text_hit("per_team corrow landing"))               # contains a text
-        misses = ["per_team", "count", "teamType", "the", "of", "", "Unl", "named_only",
-                  "the_hollow_of_ashgrove"]                                        # words apart: no text holds it
+        misses = ["per_team", "count", "teamType", "the", "of", "", "Unl", "named_only", "hollowash"]
         for s in misses:
             self.assertFalse(self.db.text_hit(s), s)
+
+    def test_text_hit_whatever_stands_between_the_words(self):
+        """A table name ([a-z0-9_]) or a job id ([a-z0-9-]) cannot hold a space nor an accent, so a text written with
+        `_` or `-` between its words, or without its accents, is the text still (invented texts)."""
+        self.db.import_export(export("item-invented.json"), container="item", language="engus", sha256="a" * 64)
+        self.db.import_export({"Name": "item_dlc01", "FmgWrappers": [{"Name": "W", "ID": 1, "Fmg": {"Entries": [
+            {"ID": 1, "Text": "White Mask Varr\u00e9"}, {"ID": 2, "Text": "Ser Ostrel-Vane"}]}}]},
+            container="item_dlc01", language="engus", sha256="f" * 64)
+        for s in ("the_hollow_of_ashgrove", "quillon_marrowgate", "quillon-marrowgate", "white_mask_varre",
+                  "white-mask-varre", "ser_ostrel_vane", "ser-ostrel-vane", "varre", "en-0012-white-mask-varre-x",
+                  "quillon_marrowgate_counts", "WHITE MASK VARR\u00c9"):
+            with self.subTest(s=s):
+                self.assertTrue(self.db.text_hit(s), s)
+        for s in ("per_team", "rows_total", "named_only", "en-0007-roster-counts", "white_masks", "ostrelvane"):
+            with self.subTest(s=s):
+                self.assertFalse(self.db.text_hit(s), s)
+        # the same for a line Copy for sharing checks
+        self.assertTrue(self.db.find_in("workspace file white_mask_varre.json written: 1 tables"))
+        self.assertFalse(self.db.find_in("workspace file roster_rows.json written: 1 tables"))
+        self.assertEqual(textdb.normalise("  White Mask  Varr\u00e9!  "), "white mask varre")
+        self.assertEqual(textdb.normalise("ser_ostrel--vane"), "ser ostrel vane")
 
     def test_short_texts_match_only_when_equal(self):
         data = {"Name": "item", "FmgWrappers": [{"Name": "W", "ID": 1, "Fmg": {"Entries": [

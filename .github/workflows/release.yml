@@ -1,5 +1,7 @@
 # DataPiler.exe, built from launcher-src/ when the owner pushes a version tag, and attached with its sha256 to a
-# draft release for that tag (settled S4; build plan P10). Publishing the release stays the owner's act.
+# draft release for that tag (settled S4; build plan P10), beside one zip of the whole app: the tagged source as
+# `git archive` makes it, with the built exe and the toolchain's notices placed in it, and its sha256 (settled S24),
+# so the owner downloads one file. Publishing the release stays the owner's act.
 # Every action is pinned by its commit; the tag it was read from is in the comment beside it.
 name: release
 
@@ -84,6 +86,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: src
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: launcher
@@ -92,13 +98,28 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           sha256sum -c DataPiler.exe.sha256
-          file DataPiler.exe | grep -q "PE32+ executable (GUI) x86-64"
+          file -b DataPiler.exe | grep -Eq '^PE32\+ executable .*\(GUI\).*x86-64'
           strings -a -el DataPiler.exe | grep -qx "${TAG#v}.0"
           grep -q "==== crt/" THIRD-PARTY-NOTICES.txt
-      - name: A draft release for the tag, with the exe, its sha256 and the toolchain's notices
+      - name: One zip of the whole app, the tagged source with the exe placed in it
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          app="DataPiler-${TAG#v}"
+          test "$(git -C src rev-parse HEAD)" = "$(git -C src rev-parse "$TAG^{commit}")"
+          git -C src archive --format=zip --prefix="$app/" -o "../$app.zip" HEAD
+          mkdir -p "stage/$app"
+          cp DataPiler.exe THIRD-PARTY-NOTICES.txt "stage/$app/"
+          (cd stage && zip -X -q "../$app.zip" "$app/DataPiler.exe" "$app/THIRD-PARTY-NOTICES.txt")
+          unzip -l "$app.zip" | grep -q " $app/DataPiler.exe$"
+          unzip -l "$app.zip" | grep -q " $app/datapiler.py$"
+          unzip -p "$app.zip" "$app/DataPiler.exe" | sha256sum | cut -d " " -f 1 | grep -qx "$(cut -d " " -f 1 DataPiler.exe.sha256)"
+          sha256sum "$app.zip" | tee "$app.zip.sha256"
+      - name: A draft release for the tag, with the exe, its sha256, the toolchain's notices and the app's zip
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt --draft --verify-tag --title "DataPiler ${TAG#v}" --notes "DataPiler.exe, built by the release workflow from launcher-src/ at this tag; DataPiler.exe.sha256 holds its sha256. BUILD.md says how to compare it with your own build. THIRD-PARTY-NOTICES.txt holds the notices of the MinGW-w64 runtime parts linked into the exe (NOTICE, section 4)."
+          app="DataPiler-${TAG#v}"
+          gh release create "$TAG" DataPiler.exe DataPiler.exe.sha256 THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft --verify-tag --title "DataPiler ${TAG#v}" --notes "$app.zip is the whole app: the source at this tag, as git archive makes it, with DataPiler.exe and THIRD-PARTY-NOTICES.txt placed in it; $app.zip.sha256 holds its sha256. Unpack it anywhere and start DataPiler.exe. DataPiler.exe, built by the release workflow from launcher-src/ at this tag, is attached on its own too, with DataPiler.exe.sha256; BUILD.md says how to compare it with your own build. THIRD-PARTY-NOTICES.txt holds the notices of the MinGW-w64 runtime parts linked into the exe (NOTICE, section 4)."

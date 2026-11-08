@@ -127,11 +127,12 @@ class FakeGuard:
         self.fail = {}          # file bytes -> the check that fails on them
         self.calls = 0
 
-    def check(self, data, *, declared):
+    def check(self, data, *, declared, coverage=None):
         self.calls += 1
+        self.coverage = coverage
         bad = self.fail.get(bytes(data))
         return [CheckResult(i, n, i != bad, "(file)" if i == bad else None)
-                for i, n in enumerate(("Shape", "Values", "Text", "The owner", "Size"), 1)]
+                for i, n in enumerate(("Shape", "Values", "Text", "The owner", "Size", "Coverage"), 1)]
 
     def check_labels(self):
         return []
@@ -279,8 +280,8 @@ class ApiTest(unittest.TestCase):
                             {"id": "character_rows", "state": "queued", "grey": "the server link is off"}]
         self.assertEqual(self.get("/api/state")["block"],
                          "Extract waits: the server link is off - switch it on in Status.")
-        self.runner.rows[1]["grey"] = "the server link needs its two libraries - restart DataPiler and answer Y"
-        self.assertEqual(self.get("/api/state")["block"], "Extract waits: the server link needs its two libraries - "
+        self.runner.rows[1]["grey"] = "the server link needs its libraries - restart DataPiler and answer Y"
+        self.assertEqual(self.get("/api/state")["block"], "Extract waits: the server link needs its libraries - "
                                                           "restart DataPiler and answer Y.")
         self.runner.rows[1].update(state="idle")
         self.assertIsNone(self.get("/api/state")["block"])
@@ -319,7 +320,8 @@ class ApiTest(unittest.TestCase):
         v = self.get("/api/share", name="roster-counts.json")
         self.assertEqual(set(v), {"name", "size", "sha256", "text", "checks"})
         self.assertEqual(v["text"], data.decode())
-        self.assertEqual([c["check"] for c in v["checks"]], [1, 2, 3, 4, 5])
+        self.assertEqual([c["check"] for c in v["checks"]], [1, 2, 3, 4, 5, 6])
+        self.assertIsNone(self.guard.coverage)          # no row counts kept for it: the real guard fails check 6
         with self.assertRaises(Bad):
             self.api.get("/api/share", {"name": "../settings.json"})
         with self.assertRaises(Bad):
@@ -396,7 +398,7 @@ class ApiTest(unittest.TestCase):
         self.link.state = "no_libs"
         _, r, _ = self.post("/api/link", {"on": True})
         self.assertEqual(r["state"], "no_libs")
-        self.assertIn("two libraries", r["why"])
+        self.assertIn("needs its libraries", r["why"])
         self.assertEqual(self.link.switched, [])
         with self.assertRaises(Bad):
             self.api.post("/api/link", {"on": "yes"})
@@ -470,6 +472,37 @@ class ApiTest(unittest.TestCase):
         self.assertNotIn(self.tmp.name, json.dumps(r))
         with self.assertRaises(Bad):
             self.api.post("/api/copy-path", {"name": "../datapiler.port"})
+
+    def test_check_6_runs_again_with_the_kept_row_counts(self):
+        """DP8 (settled S19): Outputs runs check 6 with the counts the runner kept for that file at that sha256; a
+        file DataPiler did not write, or one changed since, has none, so the real guard refuses it."""
+        from datapiler import guard as guard_mod, textdb as textdb_mod
+        share = self.live.paths.share
+        db = textdb_mod.TextDB(self.live.paths.textdb)
+        real = guard_mod.Guard(db, lambda: [])
+        try:
+            self.api.guard = real
+            data = real.build(job_id="test-0001-rows", job_sha256="cd" * 32, provenance={
+                "game_version": "1.99.0.0", "regulation_sha256": "ab" * 32, "expansion": False,
+                "expansion_source": "owner", "language": "engus", "names": {}, "smithbox_build": "9.9.9",
+                "datapiler": "0.1.0", "date": "2026-11-08"},
+                tables=[{"name": "picked", "columns": [("id", "int")], "rows": [[9000001], [9000002]]}], notes=[])
+            counts = {"picked": ("id", 20, "NpcParam")}
+            w = real.write(share, "picked-rows", data, declared={"picked": ["id"]}, coverage=counts)
+            guard_mod.record_counts(self.live.paths.share_counts, w.name, w.sha256, counts)
+            (share / "copied-rows.json").write_bytes(data)         # the same bytes under a name DataPiler never wrote
+            got = {f["name"]: (f["ok"], f["failed"]) for f in self.get("/api/outputs")["share"]}
+            self.assertEqual(got, {"picked-rows.json": (True, None), "copied-rows.json": (False, 6)})
+            v = self.get("/api/share", name="copied-rows.json")
+            self.assertEqual(v["checks"][5], {"check": 6, "name": "Coverage", "ok": False,
+                                              "where": guard_mod.NO_COUNTS})
+            # the counts the runner keeps for a later write of the file are read again (the cache's key holds them)
+            guard_mod.record_counts(self.live.paths.share_counts, w.name, w.sha256, {"picked": ("id", 3, "NpcParam")})
+            got = {f["name"]: (f["ok"], f["failed"]) for f in self.get("/api/outputs")["share"]}
+            self.assertEqual(got["picked-rows.json"], (False, 6))
+        finally:
+            real.close()
+            db.close()
 
     def test_a_file_that_fails_the_guard_now_is_never_vouched_for(self):
         """Found by the security review: Outputs listed every share-named file under "Passed the guard" and Copy
@@ -584,10 +617,12 @@ class ApiTest(unittest.TestCase):
     def test_owner_rules_for_a_line(self):
         words = ["zorblax", "QUENTIN-RIG"]
         for bad in ("C:\\Games", "at d:/x", "\\\\server\\share", "~/x", "zorblax", "ZORBLAX's", "quentin-rig",
-                    "203.0.113.1", "fe80::1"):
+                    "203.0.113.1", "fe80::1",
+                    # the guard's check 4 patterns: whatever stands between the name's parts, `_` as a separator
+                    "quentin_rig.json", "quentinrig", "x_zorblax_y"):
             self.assertTrue(api.owner_hit("a line " + bad, words), bad)
         for ok in ("<WORKSPACE>\\inbox", "Page: http://127.0.0.1:8831/", "zorblaxian", "08:42:01.123",
-                   "NpcParam: 2,105 rows read in 0.4 s"):
+                   "NpcParam: 2,105 rows read in 0.4 s", "quentin_rigs", "xquentin-rig"):
             self.assertFalse(api.owner_hit(ok, words), ok)
 
 

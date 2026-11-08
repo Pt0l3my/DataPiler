@@ -138,9 +138,9 @@ function Read-YesNo([string]$Prompt) {
 }
 
 function Write-NoLink {
-    Write-Line 'DataPiler starts without the server link: the guided exports, jobs on what the workspace already' Yellow
-    Write-Line "holds, and Outputs work; Extract's server rows wait for the libraries. Start DataPiler again and" Yellow
-    Write-Line 'answer Y to set them up.' Yellow
+    Write-Line 'DataPiler starts without the server link: the guided exports and Outputs work, and a dropped job is' Yellow
+    Write-Line "checked at once, but jobs and Extract's server rows wait for the libraries, as every job reads from" Yellow
+    Write-Line 'Smithbox first. Start DataPiler again and answer Y to set them up.' Yellow
 }
 
 function Open-RunningPage {
@@ -244,7 +244,9 @@ if (Test-Venv $LockInfo.Hash) {
     }
     Write-Line "DataPiler's server link needs these libraries, which are not set up yet:"
     foreach ($p in $LockInfo.Packages) {
-        Write-Line ('  {0} {1} ({2})' -f $p.Name, $p.Version, $p.Licence)
+        $why = ''
+        if ($p.Name -eq 'typing-extensions') { $why = ', which grpcio needs' }
+        Write-Line ('  {0} {1} ({2}){3}' -f $p.Name, $p.Version, $p.Licence, $why)
     }
     Write-Line ('About {0} MB, from pypi.org over https, into .venv in this folder. pip checks every file against' -f $LockInfo.Mb)
     Write-Line 'its sha256 in requirements.lock, and no later start touches the network.'

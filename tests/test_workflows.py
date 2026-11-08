@@ -273,7 +273,15 @@ class Release(unittest.TestCase):
         self.assertIn("sha256sum DataPiler.exe", text)
         check = runs(self.wf["jobs"]["release"])
         self.assertIn("sha256sum -c DataPiler.exe.sha256", check)
-        self.assertIn("PE32+ executable (GUI) x86-64", check)
+        # file 5.45's wording and 5.46's ("PE32+ executable for MS Windows 6.00 (GUI), x86-64") both match
+        self.assertIn("file -b DataPiler.exe | grep -Eq '^PE32\\+ executable .*\\(GUI\\).*x86-64'", check)
+        rx = re.compile(r"^PE32\+ executable .*\(GUI\).*x86-64")
+        for said in ("PE32+ executable (GUI) x86-64 (stripped to external PDB), for MS Windows, 10 sections",
+                     "PE32+ executable for MS Windows 6.00 (GUI), x86-64, 10 sections"):
+            self.assertRegex(said, rx)
+        for said in ("PE32+ executable (console) x86-64, for MS Windows", "PE32 executable (GUI) Intel 80386",
+                     "PE32+ executable for MS Windows 6.00 (DLL), x86-64"):
+            self.assertNotRegex(said, rx)
         self.assertEqual(self.wf["jobs"]["release"]["needs"], "build")
 
     def test_the_version_is_read_whatever_the_line_ends(self):
@@ -297,6 +305,28 @@ class Release(unittest.TestCase):
         with open(os.path.join(_repo.ROOT, "NOTICE"), encoding="utf-8") as f:
             notice = f.read()
         self.assertIn("THIRD-PARTY-NOTICES.txt", notice)
+
+    def test_one_zip_of_the_whole_app(self):
+        """S24: the tagged source as git archive makes it, with the built exe and its notices placed in it, and its
+        sha256, attached to the same draft release, so the owner downloads one file."""
+        rel = self.wf["jobs"]["release"]
+        checkout = [s for s in steps(rel) if s.get("uses", "").startswith("actions/checkout@")]
+        self.assertEqual(len(checkout), 1)
+        self.assertEqual(checkout[0]["with"].get("persist-credentials"), "false")
+        text = runs(rel)
+        self.assertIn('git -C src archive --format=zip --prefix="$app/" -o "../$app.zip" HEAD', text)
+        self.assertIn('app="DataPiler-${TAG#v}"', text)
+        self.assertIn('zip -X -q "../$app.zip" "$app/DataPiler.exe" "$app/THIRD-PARTY-NOTICES.txt"', text)
+        self.assertIn('sha256sum "$app.zip" | tee "$app.zip.sha256"', text)
+        # the exe inside the zip is the exe that was checked against its own sha256
+        self.assertIn('unzip -p "$app.zip" "$app/DataPiler.exe" | sha256sum', text)
+        # the zip is made only from the commit the tag names
+        self.assertIn('rev-parse "$TAG^{commit}"', text)
+        create = next(l for l in text.splitlines() if "gh release create" in l)
+        self.assertIn('THIRD-PARTY-NOTICES.txt "$app.zip" "$app.zip.sha256" --draft', create)
+        order = [s.get("name", "") for s in steps(rel)]
+        self.assertLess(order.index("One zip of the whole app, the tagged source with the exe placed in it"),
+                        next(k for k, n in enumerate(order) if n.startswith("A draft release")))
 
     def test_github_values_reach_the_shell_through_the_environment(self):
         for job in self.wf["jobs"].values():

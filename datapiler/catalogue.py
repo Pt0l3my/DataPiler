@@ -1,9 +1,9 @@
 """The Extract rows, the bundles and each server row's built-in ops (design 0001 §2 and §6, build plan §4.7).
 
 A server row is run as a built-in job in `datapiler-job/1` form, with the id `extract-<row id>`: its full numbers go
-by `write_local` to `workspace/local/extract/<row id>.json`, and a numbers-only summary (counts, never a whole column)
-by `write_share` to `share/extract-<row id>.json`, through the guard like any share file. A guided row shows its
-steps and waits for its text containers to arrive in the inbox."""
+by `write_local` to `workspace/local/extract/<row id>.json`, and at most a counts-only summary (counts, never an id:
+DP8, settled S18) by `write_share` to `share/extract-<row id>.json`, through the guard like any share file. A guided
+row shows its steps and waits for its text containers to arrive in the inbox."""
 
 from __future__ import annotations
 
@@ -18,16 +18,18 @@ class Row:
     help: str                     # the "?" text
     sources: tuple[str, ...]      # ("server",) or ("guided",)
     gives: str                    # "row ids, name numbers"
-    goes_to: str                  # "workspace" or "workspace+share"
+    goes_to: str                  # "workspace", or "workspace+counts": a counts-only summary goes to share too (DP8)
     steps: tuple[str, ...]        # guided rows: the numbered steps, with <WORKSPACE> as a placeholder
     containers: tuple[str, ...]   # guided rows: the text containers it waits for
     needs_maps: bool
 
 
-# The containers of the character names (request 0001, "What it must do", 3). The place names' container is not known
-# yet (build plan §10, P3): until it is confirmed, the Place names row cannot wait for an export.
+# The containers of the character names (request 0001, "What it must do", 3). The place names sit in the same
+# containers, by ER01's lead (§8.2; build plan §10, P3; settled S22), which join_names verifies with the owner's own
+# numbers before it uses them (textdb.TEXT_SETS).
 CHARACTER_NAME_CONTAINERS = ("item", "item_dlc01", "item_dlc02")
-PLACE_NAME_CONTAINERS: tuple[str, ...] = ()
+PLACE_NAME_CONTAINERS: tuple[str, ...] = CHARACTER_NAME_CONTAINERS
+COUNTS = "workspace+counts"
 
 _EXPORT_STEPS = (
     "In Smithbox, open the Text Editor, showing the language set in DataPiler's Settings",
@@ -51,20 +53,21 @@ def _steps(containers: tuple[str, ...]) -> tuple[str, ...]:
 ROWS: tuple[Row, ...] = (
     Row("character_rows", "Character rows",
         "NpcParam rows: row id, name number (signed - negative means none) and a few numeric fields",
-        ("server",), "row ids, name numbers", "workspace+share", (), (), False),
+        ("server",), "row ids, name numbers", COUNTS, (), (), False),
     Row("character_names", "Character names",
         "The name behind each name number - stays in the workspace, never in a share file",
         ("guided",), "names, local only", "workspace", _steps(CHARACTER_NAME_CONTAINERS), CHARACTER_NAME_CONTAINERS,
         False),
     Row("dialogue_links", "Dialogue links", "TalkParam rows: row id and message number (signed)",
-        ("server",), "row ids, message numbers", "workspace+share", (), (), False),
+        ("server",), "row ids, message numbers", COUNTS, (), (), False),
     Row("map_placements", "Map placements",
         "Needs the maps loaded in Smithbox - DataPiler can load them through OpenResource, asking first above ten "
-        "maps", ("server",), "entity, row, dialogue and model ids per map", "workspace+share", (), (), True),
+        "maps", ("server",), "entity, row, dialogue and model ids per map", COUNTS, (), (), True),
     Row("places", "Places", "WorldMapPlaceNameParam and BonfireWarpParam numbers",
-        ("server",), "place and warp numbers", "workspace+share", (), (), False),
+        ("server",), "place and warp numbers", COUNTS, (), (), False),
     Row("place_names", "Place names", "The name behind each place number - stays in the workspace, never in a share "
-                                      "file", ("guided",), "place names, local only", "workspace",
+                                      "file. The same exports as the character names", ("guided",),
+        "place names, local only", "workspace",
         _steps(PLACE_NAME_CONTAINERS), PLACE_NAME_CONTAINERS, False),
 )
 
@@ -129,8 +132,8 @@ def job_id(row_id: str) -> str:
 
 def ops_for(row_id: str) -> list[dict]:
     """A server row's built-in ops in datapiler-job/1 form: its full numbers by write_local to
-    workspace/local/extract/<row id>.json, and a numbers-only summary (counts, never a whole column) by
-    write_share to share/extract-<row id>.json. KeyError for a guided row."""
+    workspace/local/extract/<row id>.json, and a counts-only summary (no id, DP8) by write_share to
+    share/extract-<row id>.json. KeyError for a guided row."""
     return copy.deepcopy(_OPS[row_id])
 
 

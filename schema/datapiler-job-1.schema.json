@@ -439,13 +439,12 @@
     },
     "op_filter": {
       "type": "object",
-      "description": "Keeps the rows where every condition holds.",
+      "description": "Keeps the rows where every condition holds and, with `ids`, whose row id is one of those listed (an explicit list of ids narrows a table for a share file, DP8). Needs `where`, `ids` or both; `key` names the column `ids` picks by (default: the table's row-id column, `id` from fetch_rows or `entityId` from read_placements; `npcParamId` also picks placements).",
       "additionalProperties": false,
       "required": [
         "op",
         "as",
-        "rows",
-        "where"
+        "rows"
       ],
       "properties": {
         "op": {
@@ -459,12 +458,46 @@
         },
         "where": {
           "$ref": "#/$defs/where"
+        },
+        "ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/row_id"
+          },
+          "description": "An explicit list of 1 to 1,000 row ids: the rows kept are those whose `key` column holds one."
+        },
+        "key": {
+          "$ref": "#/$defs/column"
         }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "where"
+          ]
+        },
+        {
+          "required": [
+            "ids"
+          ]
+        }
+      ],
+      "if": {
+        "required": [
+          "key"
+        ]
+      },
+      "then": {
+        "required": [
+          "ids"
+        ]
       }
     },
     "op_count": {
       "type": "object",
-      "description": "Counts the rows (where every condition holds) per value of the `by` columns. Makes the `by` columns and count.",
+      "description": "Counts the rows (where every condition holds) per value of the `by` columns. Makes the `by` columns and count. A count of a table straight from fetch_rows or read_placements by its row id or by a column of other tables' ids (nameId, msgId; npcParamId, talkId, model) lists that column and never reaches a share file (DP8).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -553,7 +586,7 @@
     },
     "op_write_share": {
       "type": "object",
-      "description": "Writes the tables and columns named (columns for every table) to share/<name>.json, through the guard.",
+      "description": "Writes the tables and columns named (columns for every table) to share/<name>.json, through the guard. Each table must be narrowed (the named rows after join_names, or an explicit list of ids) or a count by columns that hold no ids (DP8): a table straight from fetch_rows or read_placements, or a filter or distinct of one, is refused.",
       "additionalProperties": false,
       "required": [
         "op",

@@ -20,6 +20,17 @@ PARAMS: dict[str, dict[str, str]] = {
     "BonfireWarpParam": {"id": "int"},           # likewise
 }
 
+# The fields that hold ids of other tables' rows (a name number, a message id), each param's apart from its own row id.
+# A count of a raw table by one of them lists that column's ids, one row per id it holds, so it stays raw and never
+# reaches a share file (DP8; settled S18; build plan §10, P15). A field added to PARAMS is added here too if it holds
+# ids; tests/test_jobs_check.py keeps the two in step.
+REFERENCES: dict[str, tuple[str, ...]] = {
+    "NpcParam": ("nameId",),
+    "TalkParam": ("msgId",),
+    "WorldMapPlaceNameParam": (),
+    "BonfireWarpParam": (),
+}
+
 
 def field_type(param: str, field: str) -> str | None:
     """The column type of a listed field, or None when DataPiler does not read it."""

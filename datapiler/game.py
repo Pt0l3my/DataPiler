@@ -15,7 +15,9 @@ from .logbook import Own, own
 GAME_EXES = ("eldenring.exe", "start_protected_game.exe")
 EXE = "eldenring.exe"
 REGULATION = "regulation.bin"
-EXPANSION_MARKERS: tuple[str, ...] = ()   # relative paths in the game folder; to verify (build plan §10, P2)
+# Relative paths in the game folder whose presence hints that the expansion is installed: none confirmed yet (build
+# plan §10, P2). The owner's statement in Settings decides; this check only ever shows a hint on Status (S21).
+EXPANSION_MARKERS: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,8 @@ def version(game_dir: str) -> str | None:
 
 
 def expansion(game_dir: str) -> bool | None:
-    """None until EXPANSION_MARKERS is set."""
+    """A hint for Status only, never a decision (P2): whether the marker files are present; None until
+    EXPANSION_MARKERS is set."""
     if not EXPANSION_MARKERS or not game_dir:
         return None
     root = Path(game_dir)

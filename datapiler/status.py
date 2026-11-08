@@ -33,6 +33,8 @@ class ProvenanceMissing(ValueError):
 
 
 NOT_SEEN = "DataPiler cannot yet see which project Smithbox has open: check in Smithbox that it is this one."
+EXPANSION_UNSET = ("whether the expansion is installed is not stated yet - set Expansion installed in Settings (yes "
+                   "or no)")
 
 
 def _check(cid: str, ok: object, text: str, fix: str | None = None, detail: str | None = None) -> dict:
@@ -212,13 +214,7 @@ class Status:
         v = game.version(s.game_dir)
         out.append(_check("version", True, "Version " + v) if v else _check(
             "version", None, "Its version is not known", "Read from eldenring.exe's version resource, on Windows."))
-        e = game.expansion(s.game_dir)
-        if e is None:
-            out.append(_check("expansion", None, "Whether the expansion is installed is not known yet",
-                              "Share files wait for this check."))
-        else:
-            out.append(_check("expansion", True, "The expansion's files are present" if e else
-                              "The expansion's files are not present"))
+        out.append(self._expansion_check(s))
         g = self.game_running()
         if not g.running:
             out.append(_check("running", True, "Not running"))
@@ -235,6 +231,24 @@ class Status:
             out.append(_check("regulation", False, "regulation.bin's sha256 is not known",
                               "Set the game folder in Settings."))
         return out
+
+    @staticmethod
+    def _expansion_check(s: Settings) -> dict:
+        """The owner's statement decides (P2, settled S21); a file check, once its marker files are confirmed, only
+        adds a hint, and never changes what the provenance records."""
+        files = game.expansion(s.game_dir)
+        hint = None
+        if files is not None:
+            hint = ("A hint only: the expansion's files are %s in <GAME>." % ("present" if files else "not present"))
+        if s.expansion not in ("yes", "no"):
+            return _check("expansion", False, "Whether the expansion is installed is not stated yet",
+                          "Set Expansion installed in Settings: share files wait for it." + (" " + hint if hint
+                                                                                            else ""))
+        stated = s.expansion == "yes"
+        text = "Installed, as stated in Settings" if stated else "Not installed, as stated in Settings"
+        if files is not None and files != stated:
+            return _check("expansion", True, text, hint + " Check what Settings says; it is what share files record.")
+        return _check("expansion", True, text, hint)
 
     def _project_card(self) -> list[dict]:
         ok, why = self.project_ok()
@@ -281,8 +295,9 @@ class Status:
     # ---------------------------------------------------------------------------------------------- provenance
 
     def provenance(self) -> dict:
-        """{"game_version", "regulation_sha256", "expansion", "language", "smithbox_build", "datapiler", "date"};
-        date is today's local date. Raises ProvenanceMissing."""
+        """{"game_version", "regulation_sha256", "expansion", "expansion_source", "language", "smithbox_build",
+        "datapiler", "date"}; date is today's local date. expansion is the owner's statement in Settings, and
+        expansion_source says so ("owner"); the runner adds "names" (P3). Raises ProvenanceMissing."""
         s = self._settings()
         v = game.version(s.game_dir)
         if not v:
@@ -293,14 +308,14 @@ class Status:
         sha = game.regulation_sha256(s.game_dir)
         if not sha:
             raise ProvenanceMissing("regulation.bin's sha256 is not known - set the game folder")
-        e = game.expansion(s.game_dir)
-        if e is None:
-            raise ProvenanceMissing("whether the expansion is installed is not known yet")
+        if s.expansion not in ("yes", "no"):
+            raise ProvenanceMissing(EXPANSION_UNSET)
         b = smithbox.build(s.smithbox_dir)
         if not b:
             if smithbox.exe_path(s.smithbox_dir) is None:
                 raise ProvenanceMissing("Smithbox's build is not known - set the Smithbox folder")
             raise ProvenanceMissing("Smithbox's build is not known - Smithbox.exe's version resource could not be "
                                     "read (it is read on Windows only)")
-        return {"game_version": v, "regulation_sha256": sha, "expansion": e, "language": s.language,
-                "smithbox_build": b, "datapiler": VERSION, "date": time.strftime("%Y-%m-%d")}
+        return {"game_version": v, "regulation_sha256": sha, "expansion": s.expansion == "yes",
+                "expansion_source": "owner", "language": s.language, "smithbox_build": b, "datapiler": VERSION,
+                "date": time.strftime("%Y-%m-%d")}

@@ -59,6 +59,14 @@ class PreviewTest(unittest.TestCase):
                                          "counts the rows of placed, where model in 1 value"])
         self.assertEqual(p["writes"], ["workspace file `placed.json`: 1 table (local)"])
 
+    def test_the_explicit_list_of_ids(self):
+        p = jobs.preview(load("good-picked.json"))
+        self.assertEqual(p["computes"], [
+            "join npc with the character names - local",
+            "keeps the rows of npc_named where named is true and teamType >= 6",
+            "keeps the rows of npc whose id is one of 3 ids listed",
+            "keeps the rows of placed whose npcParamId is one of 1 id listed"])
+
     def test_the_columns_of_every_table(self):
         cols = jobs.columns_of(load("good-example.json"))
         self.assertEqual(cols["npc_named"], [("id", "int"), ("nameId", "int"), ("teamType", "int"),

@@ -1,0 +1,9 @@
+{
+  "format": "datapiler-job/1",
+  "id": "test-0002-raw-share",
+  "title": "A raw table straight to a share file (invented)",
+  "ops": [
+    {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"]},
+    {"op": "write_share", "name": "every-row", "tables": ["npc"], "columns": {"npc": ["id", "nameId"]}}
+  ]
+}

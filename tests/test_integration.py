@@ -24,7 +24,7 @@ try:
 except ImportError:
     HAVE_GRPC = False
 
-from datapiler import game, textdb, winapi
+from datapiler import textdb, winapi
 from datapiler.settings import Settings, save
 
 EXAMPLE_JOB = {
@@ -79,12 +79,9 @@ class IntegrationTest(unittest.TestCase):
     def setUp(self):
         import fake_soapstone
         self.fs_mod = fake_soapstone
-        # P2 and P3 (build plan §10) leave the expansion's files and the names' wrapper ids unconfirmed in 0.1, so
-        # every share write and every join_names would be refused: the test supplies invented ones.
-        self.patches = [mock.patch.object(fake_soapstone, "TEXT_CELL_ID", -1),     # every nameId a number here
-                        mock.patch.object(game, "EXPANSION_MARKERS", ("invented-expansion-marker.bin",)),
-                        mock.patch.dict(textdb.TEXT_SETS, {"character_names": (("item", 9001),),
-                                                           "place_names": (("item", 9002),)})]
+        # P2: the owner states the expansion in Settings (below). P3: the names' wrappers are ER01's leads, as built
+        # in, and join_names verifies them with this run's own (invented) numbers.
+        self.patches = [mock.patch.object(fake_soapstone, "TEXT_CELL_ID", -1)]     # every nameId a number here
         for p in self.patches:
             p.start()
         self.fake = fake_soapstone.FakeSoapstone().start()
@@ -94,10 +91,9 @@ class IntegrationTest(unittest.TestCase):
             (root / d).mkdir()
         (root / "Game" / "eldenring.exe").write_bytes(b"")
         (root / "Game" / "regulation.bin").write_bytes(b"invented regulation bytes " * 64)
-        (root / "Game" / "invented-expansion-marker.bin").write_bytes(b"")
         (root / "Smithbox" / "Smithbox.exe").write_bytes(b"")
         save(root / "settings.json", Settings(game_dir=str(root / "Game"), smithbox_dir=str(root / "Smithbox"),
-                                              project_dir=str(root / "Project")))
+                                              project_dir=str(root / "Project"), expansion="yes"))
         self.use = winapi.use(FakeBackend())
         self.use.__enter__()
         spec = importlib.util.spec_from_file_location("datapiler_main_it", str(Path(_repo.ROOT) / "datapiler.py"))
@@ -173,9 +169,14 @@ class IntegrationTest(unittest.TestCase):
             self.assertEqual(share["name"], "roster-counts.json")
             v = self.api(port, "/api/share?name=roster-counts.json")
             self.assertTrue(all(c["ok"] for c in v["checks"]), v["checks"])
+            self.assertEqual([c["check"] for c in v["checks"]], [1, 2, 3, 4, 5, 6])
             doc = json.loads(v["text"])
             self.assertEqual(doc["format"], "datapiler-share/1")
             self.assertEqual(doc["provenance"]["game_version"], "1.16.0.0")
+            self.assertEqual((doc["provenance"]["expansion"], doc["provenance"]["expansion_source"]), (True, "owner"))
+            # the leads verified: two in three of the invented name numbers have a text
+            self.assertEqual(doc["provenance"]["names"], {"character_names": {
+                "wrappers": [428, 328, 18], "verified": True, "resolved": 0.666}})
             outputs = self.api(port, "/api/outputs")
             self.assertIn("roster-counts.json", [f["name"] for f in outputs["share"]])
             # Settings moves the share folder: the runner writes to the new one (it reads the Paths at each write)

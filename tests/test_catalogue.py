@@ -27,10 +27,13 @@ class CatalogueTest(unittest.TestCase):
         self.assertEqual(SERVER, ["character_rows", "dialogue_links", "map_placements", "places"])
         self.assertEqual(GUIDED, ["character_names", "place_names"])
         for r in catalogue.ROWS:
-            self.assertIn(r.goes_to, ("workspace", "workspace+share"))
+            # DP8: Extract writes the workspace, and at most a counts-only summary share file
+            self.assertEqual(r.goes_to, "workspace+counts" if "server" in r.sources else "workspace")
             self.assertEqual(len(r.sources), 1)
             self.assertEqual(bool(r.steps), "guided" in r.sources)
         self.assertEqual(catalogue.row("character_names").containers, ("item", "item_dlc01", "item_dlc02"))
+        # P3's lead: the place names come in the same exports
+        self.assertEqual(catalogue.row("place_names").containers, ("item", "item_dlc01", "item_dlc02"))
         self.assertTrue(catalogue.row("map_placements").needs_maps)
 
     def test_every_server_rows_ops_pass_the_check(self):

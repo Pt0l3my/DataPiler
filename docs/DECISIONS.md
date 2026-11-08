@@ -80,6 +80,10 @@ and protobuf, licences to be read before adoption), and map loading that may tak
 **Owner's words.** "Server link, game closed (Recommended)"; earlier, on the question as first put: "why is a running
 game a concern? as far as I know, we only intend to use smithbox for non in-game data extractions."
 
+**Later changes.** 2026-11-08, a fact found in the build, not a new decision: grpcio needs a third library,
+typing-extensions (PSF-2.0), which the first start installs with the other two from the same lock; README, NOTICE, the
+page and the window's question name all three ([design/settled.md](design/settled.md), S23).
+
 ## DP5
 
 **The design asked of the PandorumLLM session** · *2026-11-08 · The owner's request*

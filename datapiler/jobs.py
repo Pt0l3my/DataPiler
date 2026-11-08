@@ -5,6 +5,13 @@ set, each argument is of its declared type and range, and every name it writes i
 finds every refusal at once, each naming the place and the rule in DataPiler's words. A refusal quotes the job's own
 value only when it looks like an identifier (`QUOTE_RX`); otherwise it names the place alone.
 
+Every table carries its lineage (DP8, settled S18): raw, as `fetch_rows` and `read_placements` make it; narrowed, by a
+filter keeping only the named rows after `join_names` or by a filter on an explicit list of ids (`ids`); or an
+aggregate, as `count` makes it by columns that hold no ids (a count of a raw table by its row id, or by a column of
+other tables' ids such as `nameId`, lists that column and stays raw). `write_share` takes only narrowed and aggregate
+tables, so no raw table or column of the game's data, nor a filter or distinct of one, reaches a share file; the
+guard's check 6 is the backstop.
+
 `_depth` follows LLM Jobrunner 1.2's `_depth`, with the limit 16 (build plan §7.2). `schema/datapiler-job-1.schema.json`
 states the same format for job authors; `tests/test_schema.py` keeps the two in step."""
 
@@ -13,7 +20,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Collection, Mapping
 
 from . import VERSION, fields, fileio, guard, paths
@@ -33,7 +40,7 @@ FIELD_RX = fields.FIELD_RX
 NAME_RX = paths.NAME_RX
 NEEDS_RX = re.compile(r"\d+\.\d+(\.\d+)?")
 QUOTE_RX = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
-TEXTS = ("character_names", "place_names")
+TEXTS = guard.NAME_SETS                  # ("character_names", "place_names")
 COMPARE = ("eq", "ne", "lt", "le", "gt", "ge")
 
 # P5 (build plan §10): none of the seven allowed calls lists every map, so `load_maps` with "all" is refused in 0.1
@@ -46,6 +53,7 @@ MAX_MAPS = 2_000
 MAX_BY = 8
 MAX_WHERE = 16
 MAX_IN = 1_000
+MAX_PICK = 1_000                         # filter's `ids`: an explicit list of row ids (DP8)
 MAX_LOCAL_TABLES = 16
 MAX_SHARE_TABLES = 32
 MAX_COLUMNS = 64
@@ -59,7 +67,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "load_maps": {"maps": True},
     "read_placements": {"as": True, "maps": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
-    "filter": {"as": True, "rows": True, "where": True},
+    "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False},
     "count": {"as": True, "rows": True, "by": False, "where": False},
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
@@ -73,6 +81,17 @@ WRITES = ("write_local", "write_share")
 # What read_placements and join_names make (build plan §4.6).
 PLACEMENT_COLUMNS: tuple[tuple[str, str], ...] = (("map", "int"), ("entityId", "int"), ("npcParamId", "int"),
                                                    ("talkId", "int"), ("model", "int"))
+# The columns the operations make themselves (join_names's `named`, count's `count`); `name` is local text only.
+MADE_COLUMNS = ("named", "count")
+# Each source's row-id column (the id column of DP8 and check 6), and the columns `ids` may pick rows by.
+ID_COLUMN = {"fetch_rows": "id", "read_placements": "entityId"}
+PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParamId")}
+# The placements' columns that hold other tables' ids (fields.REFERENCES holds the params'): a count of raw placements
+# by one of them stays raw (DP8, S18; build plan §10, P15).
+PLACEMENT_REFERENCES = ("npcParamId", "talkId", "model")
+DP8_RULE = ("a share file holds ids and numbers only for rows a job picked for a purpose (DP8): keep the named rows "
+            "(a filter on named after join_names), pick an explicit list of ids (a filter with ids), or count them by "
+            "columns that hold no ids")
 TYPE_WORDS = {"int": "whole numbers", "number": "numbers", "bool": "flags (true or false)",
               "text_local": "local text"}
 TEXT_WORDS = {"character_names": "the character names", "place_names": "the place names"}
@@ -109,6 +128,24 @@ class JobRefused(ValueError):
 
 
 @dataclass(frozen=True)
+class Lineage:
+    """Where a table's rows come from (DP8). kind: "raw", "narrowed" or "aggregate". source: the index of the
+    fetch_rows or read_placements it descends from. id_col: that source's row-id column while the table still has
+    it; picks: the columns `ids` may pick its rows by; per_row: one row per row of the source (not a distinct or a
+    count). how: for a refusal, what left it raw, in DataPiler's words. refs: the source's columns that hold other
+    tables' ids (`fields.REFERENCES`, `PLACEMENT_REFERENCES`), which a count of a raw table may not group by."""
+    kind: str
+    source: int | None
+    source_op: str | None
+    id_col: str | None
+    picks: tuple[str, ...]
+    per_row: bool
+    joined: bool
+    how: str
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Job:
     id: str
     title: str
@@ -118,6 +155,7 @@ class Job:
     uses_link: bool               # any fetch_rows, load_maps or read_placements
     maps: int | None              # how many maps load_maps names; None for "all"
     share_name: str | None
+    lineage: Mapping[str, Lineage] = field(default_factory=dict, compare=False)   # every table's (DP8)
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -222,6 +260,8 @@ class _Checker:
         self.refusals: list[Refusal] = []
         self.more = 0
         self.tables: dict[str, list[tuple[str, str]] | None] = {}
+        self.lineage: dict[str, Lineage | None] = {}
+        self.pick_keys: dict[int, str] = {}
         self.later: dict[str, int] = {}
         self.local_names: set[str] = set()
         self.share_at: int | None = None
@@ -461,6 +501,7 @@ class _Checker:
             self.ids(place + ".ids", o["ids"], i)
         if as_ is not None:
             self.tables[as_] = cols
+            self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()))
 
     def ids(self, place: str, v: object, i: int) -> None:
         if isinstance(v, list):
@@ -500,6 +541,7 @@ class _Checker:
             self.map_list(place + ".maps", o["maps"], i, all_ok=True)
         if as_ is not None:
             self.tables[as_] = list(PLACEMENT_COLUMNS)
+            self.lineage[as_] = _source_lineage("read_placements", i, PLACEMENT_REFERENCES)
 
     def op_join_names(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
@@ -521,14 +563,58 @@ class _Checker:
                                              "not a text set DataPiler has (%s)" % ", ".join(TEXTS)), i)
         if as_ is not None:
             self.tables[as_] = (list(cols) + [("named", "bool"), ("name", "text_local")]) if ok and cols else None
+            self.lineage[as_] = _after_join(self.lineage.get(r[0]), i) if ok and cols and r is not None else None
 
     def op_filter(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
         r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
+        if "where" not in o and "ids" not in o:
+            self.add(place, "a filter needs `where`, `ids` or both", i)
         if "where" in o:
             self.where(place + ".where", o["where"], r[0] if r else "its table", r[1] if r else None, i)
+        parent = self.lineage.get(r[0]) if r is not None else None
+        picked = False
+        if "key" in o and "ids" not in o:
+            self.add(place + ".key", "`key` names the column `ids` picks by - give `ids` too", i)
+        if "ids" in o:
+            picked = self.pick(place, o, r, parent, i)
         if as_ is not None:
             self.tables[as_] = list(r[1]) if r is not None and r[1] is not None else None
+            if parent is not None and r is not None and r[1] is not None:
+                named = isinstance(o.get("where"), dict) and parent.joined and _named_true(o["where"].get("named"))
+                self.lineage[as_] = _after_filter(parent, i, picked=picked, named=named)
+            else:
+                self.lineage[as_] = None
+
+    def pick(self, place: str, o: dict, r, parent: Lineage | None, i: int) -> bool:
+        """filter's `ids` and `key`: an explicit list of 1 to 1,000 row ids, matched against the table's row-id
+        column, or `key`, one of the columns its source lets rows be picked by. True when the pick is usable."""
+        v = o["ids"]
+        ok = True
+        if not isinstance(v, list) or not 1 <= len(v) <= MAX_PICK:
+            self.add(place + ".ids", "must be a list of 1 to 1,000 row ids (whole numbers)", i)
+            ok = False
+        else:
+            for j, x in enumerate(v):
+                if not _is_int(x, *INT32):
+                    self.add("%s.ids[%d]" % (place, j), "not a row id (a whole number)", i)
+                    ok = False
+                    break
+        if r is None or r[1] is None or parent is None:
+            return False
+        table, cols = r
+        picks = [c for c in parent.picks if c in dict(cols)]
+        if not picks:
+            self.add(place + ".ids", "`%s` has no row-id column to pick by (`id` from fetch_rows, `entityId` or "
+                                     "`npcParamId` from read_placements) - a count or a distinct keeps none" % table, i)
+            return False
+        key = o.get("key", picks[0])
+        if "key" in o and (not isinstance(key, str) or key not in picks):
+            self.add(place + ".key", _named(key, "is not a column ids can pick %s's rows by (%s)" % (table, ", ".join(
+                picks)), "not a column ids can pick %s's rows by (%s)" % (table, ", ".join(picks))), i)
+            return False
+        self.pick_keys[i] = key
+        return ok
 
     def _by(self, place: str, o: dict, r, i: int, lo: int) -> list[str] | None:
         if "by" not in o:
@@ -553,6 +639,8 @@ class _Checker:
             cols = [(b, types[b]) for b in by] + [("count", "int")]
         if as_ is not None:
             self.tables[as_] = cols
+            parent = self.lineage.get(r[0]) if r is not None else None
+            self.lineage[as_] = _after_count(parent, i, by) if cols is not None and parent is not None else None
 
     def op_distinct(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
@@ -564,6 +652,8 @@ class _Checker:
             cols = [(b, types[b]) for b in by]
         if as_ is not None:
             self.tables[as_] = cols
+            parent = self.lineage.get(r[0]) if r is not None else None
+            self.lineage[as_] = _after_distinct(parent, i, by) if cols is not None and parent is not None else None
 
     def file_name(self, place: str, v: object, i: int) -> str | None:
         if not isinstance(v, str) or not NAME_RX.fullmatch(v):
@@ -631,6 +721,10 @@ class _Checker:
             elif self.share_at == i:
                 self.share_name = name
         tables = self.table_list(place + ".tables", o["tables"], i, MAX_SHARE_TABLES) if "tables" in o else None
+        for j, (t, _) in enumerate(tables or []):
+            lin = self.lineage.get(t)
+            if lin is not None and lin.kind == "raw":
+                self.add("%s.tables[%d]" % (place, j), "`%s` %s - %s" % (t, lin.how, DP8_RULE), i)
         if "columns" in o:
             self.columns_map(place + ".columns", o["columns"], tables, i, every=True, share=True)
         if "notes" in o:
@@ -648,6 +742,67 @@ class _Checker:
                         self.add(p, "`%s` is named twice" % x, i)
                     else:
                         seen.add(x)
+
+
+# ------------------------------------------------------------------------------------------------ lineage (DP8)
+
+def _source_lineage(op: str, i: int, refs: tuple[str, ...]) -> Lineage:
+    return Lineage("raw", i, op, ID_COLUMN[op], PICK_COLUMNS[op], True, False,
+                   "comes straight from %s (ops[%d])" % (op, i), tuple(refs))
+
+
+def _from(parent: Lineage) -> str:
+    return "rows straight from %s (ops[%d])" % (parent.source_op, parent.source)
+
+
+def _named_true(cond: object) -> bool:
+    """A condition on `named` that keeps the named rows only: true, {"eq": true} or {"ne": false}."""
+    if cond is True:
+        return True
+    if isinstance(cond, dict):
+        return cond.get("eq") is True or cond.get("ne") is False
+    return False
+
+
+def _after_join(parent: Lineage | None, i: int) -> Lineage | None:
+    if parent is None:
+        return None
+    how = parent.how if parent.kind != "raw" else (
+        "is join_names (ops[%d]) of %s: it keeps every row, named or not" % (i, _from(parent)))
+    return replace(parent, joined=True, how=how)
+
+
+def _after_filter(parent: Lineage, i: int, *, picked: bool, named: bool) -> Lineage:
+    if parent.kind == "raw" and (picked or named):
+        return replace(parent, kind="narrowed", how="")
+    if parent.kind == "raw":
+        return replace(parent, how="is a filter (ops[%d]) of %s, never narrowed" % (i, _from(parent)))
+    return parent
+
+
+def _after_distinct(parent: Lineage, i: int, by: list[str]) -> Lineage:
+    keep = replace(parent, id_col=parent.id_col if parent.id_col in by else None,
+                   picks=tuple(c for c in parent.picks if c in by), per_row=False)
+    if parent.kind == "raw":
+        return replace(keep, how="is a distinct (ops[%d]) of %s" % (i, _from(parent)))
+    return keep
+
+
+def _after_count(parent: Lineage, i: int, by: list[str]) -> Lineage:
+    keep = replace(parent, id_col=parent.id_col if parent.id_col in by else None,
+                   picks=tuple(c for c in parent.picks if c in by), per_row=False)
+    if parent.kind == "raw" and parent.id_col in by:
+        # One group per row id: every row's id, not a summary.
+        return replace(keep, how="is a count (ops[%d]) by `%s`, the row id of %s: one row per row id"
+                       % (i, parent.id_col, _from(parent)))
+    held = [b for b in by if b in parent.refs]
+    if parent.kind == "raw" and held:
+        # One group per id the column holds: that column of the game's table, with counts (P15).
+        return replace(keep, how="is a count (ops[%d]) by `%s`, a column of ids, of %s: one row per id it holds"
+                       % (i, held[0], _from(parent)))
+    if parent.kind == "raw":
+        return replace(keep, kind="aggregate", how="")
+    return keep
 
 
 # The closed set: each operation's own check (a fixed table, never a name looked up from the job).
@@ -788,8 +943,12 @@ def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, s
 
     assert job_id is not None and title is not None and ops is not None
     plain_ops = tuple(_plain(o) for o in ops)
+    for i, key in c.pick_keys.items():         # filter's `ids` without `key`: the row-id column it picks by
+        plain_ops[i].setdefault("key", key)
+    lineage = {t: lin for t, lin in c.lineage.items() if lin is not None}
     return Job(id=job_id, title=title, sha256=sha, ops=plain_ops, needs=needs if "needs" in doc else None,
-               uses_link=any(o["op"] in LINK_OPS for o in plain_ops), maps=len(c.maps), share_name=c.share_name)
+               uses_link=any(o["op"] in LINK_OPS for o in plain_ops), maps=len(c.maps), share_name=c.share_name,
+               lineage=lineage)
 
 
 def canonical_sha256(ops: object) -> str:
@@ -845,7 +1004,13 @@ def _line(o: dict) -> str:
     if op == "join_names":
         return "join %s with %s - local" % (o["rows"], TEXT_WORDS[o["text"]])
     if op == "filter":
-        return "keeps the rows of %s where %s" % (o["rows"], conditions(o["where"]))
+        parts = []
+        if o.get("ids") is not None:
+            parts.append("whose %s is one of %s listed" % (o.get("key") or "row id",
+                                                          _plural(len(set(o["ids"])), "id", "ids")))
+        if o.get("where"):
+            parts.append("where %s" % conditions(o["where"]))
+        return "keeps the rows of %s %s" % (o["rows"], " and ".join(parts))
     if op == "count":
         s = "counts the rows of %s" % o["rows"]
         if o.get("by"):

@@ -33,8 +33,17 @@ class SettingsTest(unittest.TestCase):
         s = self.check()
         self.assertEqual(s, Settings())
         self.assertEqual(s.as_dict(), {"smithbox_dir": "", "game_dir": "", "project_dir": "", "workspace_dir": "workspace",
-                                       "share_dir": "share", "language": "engus", "port": 0, "log_max_mb": 2,
-                                       "log_keep": 5})
+                                       "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
+                                       "log_max_mb": 2, "log_keep": 5})
+
+    def test_the_expansion_is_the_owners_statement(self):
+        """P2 (settled S21): yes, no, or not stated yet (blank, at first); nothing else."""
+        self.assertEqual(self.check().expansion, "")
+        self.assertEqual(self.check(expansion="yes").expansion, "yes")
+        self.assertEqual(self.check(expansion="no").expansion, "no")
+        for bad in ("Yes", "true", True, None, 1, "maybe"):
+            with self.subTest(bad=bad):
+                self.refused("expansion", expansion=bad)
 
     def test_unknown_key_refused(self):
         self.refused("colour", colour="red")

@@ -55,9 +55,10 @@ Smithbox itself is not part of DataPiler and is never bundled, downloaded or red
 3. The server link's libraries: downloaded, never shipped
 ----------------------------------------------------------
 
-DataPiler does not include these. At the first start, once the owner answers Y, DataPiler.ps1 has pip download them
-from pypi.org into .venv in DataPiler's folder, each wheel checked against its sha256 in requirements.lock. Each
-package's own licence files come with it, in its .dist-info folder inside .venv.
+DataPiler does not include these three: grpcio and protobuf, and typing-extensions, which grpcio needs. At the first
+start, once the owner answers Y, DataPiler.ps1 has pip download them from pypi.org into .venv in DataPiler's folder,
+each wheel checked against its sha256 in requirements.lock. Each package's own licence files come with it, in its
+.dist-info folder inside .venv.
 
 - grpcio 1.85.1: Apache License 2.0. Its licence file also carries a BSD 3-Clause licence (Copyright 2016,
   Google Inc.), for gRPC's Objective-C build files, and the Mozilla Public License 2.0, for the root certificates
@@ -66,8 +67,8 @@ package's own licence files come with it, in its .dist-info folder inside .venv.
 - typing-extensions 4.16.0: Python Software Foundation License Version 2 (PSF-2.0). grpcio needs it, so the lock
   names it too.
 
-DataPiler imports them only in datapiler/link.py and soapstone/, and starts without them (no server link) when the
-owner answers N.
+DataPiler imports grpcio and protobuf only in datapiler/link.py and soapstone/ (typing-extensions only through
+grpcio), and starts without them (no server link) when the owner answers N.
 
 
 4. The released DataPiler.exe: the MinGW-w64 runtime linked into it

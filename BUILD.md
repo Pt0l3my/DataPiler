@@ -30,7 +30,10 @@ same bytes.
 
 Then check it:
 
-- `file DataPiler.exe` must say **PE32+ executable (GUI) x86-64**.
+- `file -b DataPiler.exe` must say **PE32+ executable**, then **(GUI)**, then **x86-64**: file 5.45 prints
+  `PE32+ executable (GUI) x86-64 ...` and file 5.46 or later `PE32+ executable for MS Windows <version> (GUI),
+  x86-64, ...`; `file -b DataPiler.exe | grep -Eq '^PE32\+ executable .*\(GUI\).*x86-64'` checks both, as the
+  release workflow does.
 - `strings -a -el DataPiler.exe | grep 0.1.0.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
 - `x86_64-w64-mingw32-objdump -p DataPiler.exe | grep "DLL Name"` lists only `KERNEL32.dll`, `msvcrt.dll`,
   `SHELL32.dll` and `USER32.dll`: no socket library.
@@ -39,13 +42,21 @@ Put `DataPiler.exe` in DataPiler's folder, beside `DataPiler.ps1`.
 
 ## The release workflow
 
-`.github/workflows/release.yml` runs only when the owner pushes a version tag (`v0.1.0` for 0.1.0). On
+`.github/workflows/release.yml` runs when the owner pushes a version tag (`v0.1.0` for 0.1.0), or when the owner
+presses **Run workflow** on the workflow's page under GitHub's Actions tab, choosing the branch to release. The button
+takes the version from `VERSION` and makes the draft for tag `v<version>`, refusing a tag that already exists; GitHub
+creates the tag when the draft is published. On
 `windows-latest`, with MSYS2's MinGW-w64, it builds the exe from `launcher-src/` with the commands above, checks that
 the tag names `VERSION`, and prints the compiler's versions and the exe's sha256. The exe is linked `-static`, so
 parts of the MinGW-w64 runtime are inside it; the workflow copies their licence files from the toolchain into
-`THIRD-PARTY-NOTICES.txt` (NOTICE, section 4). A second job attaches `DataPiler.exe`, `DataPiler.exe.sha256` and
-`THIRD-PARTY-NOTICES.txt` to a **draft** release for that tag; publishing it stays the owner's act. Anyone can read
-the workflow's log and see the exe was made from the source at that tag.
+`THIRD-PARTY-NOTICES.txt` (NOTICE, section 4). A second job makes `DataPiler-<version>.zip`, the whole app: the
+source at the tag as `git archive` makes it, with `DataPiler.exe` and `THIRD-PARTY-NOTICES.txt` placed in it (it
+checks the exe in the zip against the exe's sha256), and its `.sha256`. It attaches `DataPiler.exe`,
+`DataPiler.exe.sha256`, `THIRD-PARTY-NOTICES.txt`, the zip and the zip's sha256 to a **draft** release for that tag;
+publishing it stays the owner's act. The release's notes are `docs/release-notes/<version>.md` at that commit, with a
+short list of the files added; the workflow fails if that file is missing, so each version's notes are written before
+its release. Anyone can read the workflow's log and see the exe was made from the source at
+that tag.
 
 ## Comparing a release's exe with your own build
 

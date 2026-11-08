@@ -1,0 +1,14 @@
+{
+  "format": "datapiler-job/1",
+  "id": "test-0003-picked",
+  "title": "Rows picked for a purpose (invented)",
+  "ops": [
+    {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId", "teamType"]},
+    {"op": "join_names", "as": "npc_named", "rows": "npc", "key": "nameId", "text": "character_names"},
+    {"op": "filter", "as": "named_rows", "rows": "npc_named", "where": {"named": true, "teamType": {"ge": 6}}},
+    {"op": "filter", "as": "picked", "rows": "npc", "ids": [9000001, 9000002, 9000003]},
+    {"op": "read_placements", "as": "placed", "maps": ["m99_00_00_00"]},
+    {"op": "filter", "as": "placed_picked", "rows": "placed", "key": "npcParamId", "ids": [9000001]},
+    {"op": "write_share", "name": "picked-rows", "tables": ["named_rows", "picked", "placed_picked"], "columns": {"named_rows": ["id", "nameId", "named"], "picked": ["id", "teamType"], "placed_picked": ["map", "entityId"]}}
+  ]
+}

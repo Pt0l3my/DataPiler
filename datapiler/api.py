@@ -89,14 +89,15 @@ def extract_block(rows: list) -> str | None:
 
 def owner_hit(text: str, words: list[str]) -> bool:
     """Whether a log line breaks the owner rules: a drive letter, a network path, a home folder, the user's or the
-    PC's name as a whole word (case-folded), or an IP address other than 127.0.0.1."""
+    PC's name as a whole word (case-folded, with `_`, `-` or nothing between its parts: the guard's check 4
+    patterns, `guard.owner_patterns`), or an IP address other than 127.0.0.1."""
+    from .guard import owner_patterns       # JOBS's module, read at the check as the other guard reads are
+
     if DRIVE_RX.search(text) or UNC_RX.search(text) or HOME_RX.search(text):
         return True
     folded = text.casefold()
-    for w in words:
-        w = (w or "").strip().casefold()
-        if w and re.search(r"(?<!\w)%s(?!\w)" % re.escape(w), folded):
-            return True
+    if any(rx.search(folded) for rx in owner_patterns([w for w in words if w])):
+        return True
     return _ip_in(text)
 
 
@@ -293,13 +294,17 @@ class Api:
         return declared
 
     def _guard_now(self, f: Path) -> tuple[bytes | None, list[dict]]:
-        """The file's bytes (None when over the guard's size) and the five checks run on them now."""
+        """The file's bytes (None when over the guard's size) and the six checks run on them now. Check 6 takes the
+        row counts the runner kept when it wrote the file (DP8): a file DataPiler did not write, or one changed
+        since, has none and fails it."""
         try:
             data = fileio.read_limited(f, self._cap())
         except fileio.TooLarge:
             return None, [{"check": 5, "name": "Size", "ok": False, "where": "(file)"}]
+        from . import guard as guard_mod
+        coverage = guard_mod.counts_for(self.live.paths.share_counts, f.name, fileio.sha256_bytes(data))
         checks = [{"check": r.check, "name": r.name, "ok": r.ok, "where": r.where}
-                  for r in self.guard.check(data, declared=self._declared(data))]
+                  for r in self.guard.check(data, declared=self._declared(data), coverage=coverage)]
         return data, checks
 
     @staticmethod
@@ -309,14 +314,19 @@ class Api:
         return next((int(c["check"]) for c in checks if not c["ok"]), None)
 
     def _passes(self, f: Path) -> tuple[bool, int | None]:
-        """Outputs' answer for one share file: (all five pass now, the first failing check), kept while the file's
-        time and size and the text database stay as they were."""
+        """Outputs' answer for one share file: (all six pass now, the first failing check), kept while the file's
+        time and size, the text database and the kept row counts stay as they were."""
         try:
             st = f.stat()
         except OSError:
             return False, 1
+        try:
+            cs = self.live.paths.share_counts.stat()
+            counts = (cs.st_mtime_ns, cs.st_size)
+        except OSError:
+            counts = None
         with self._lock:
-            key = (st.st_mtime_ns, st.st_size, self._text_gen)
+            key = (st.st_mtime_ns, st.st_size, self._text_gen, counts)
             hit = self._passed.get(f.name)
         if hit is not None and hit[0] == key:
             return hit[1], hit[2]
@@ -396,7 +406,7 @@ class Api:
             return {"ok": True, "state": state}
         if self.link.state == "no_libs" or not self.libs:
             return {"ok": False, "state": self.link.state,
-                    "why": "the server link needs its two libraries - restart DataPiler and answer Y"}
+                    "why": "the server link needs its libraries - restart DataPiler and answer Y"}
         ok, why = self.status.project_ok()
         if not ok:
             return {"ok": False, "state": self.link.state, "why": str(why)}
@@ -481,7 +491,7 @@ class Api:
         return {"ok": False, "error": "Opening a folder works on Windows only."}
 
     def copy_path(self, body: dict) -> dict:
-        """The path goes on the clipboard for an upload only when the file passes all five checks now."""
+        """The path goes on the clipboard for an upload only when the file passes all six checks now."""
         f = self._share_path(_str(body, "name", 128))
         _, checks = self._guard_now(f)
         failed = self._first_failed(checks)

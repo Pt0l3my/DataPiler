@@ -151,6 +151,37 @@ class ServerTest(unittest.TestCase):
         r, _ = self.req("POST", server.DROP_PATH, {"data": "a" * (server.DROP_MAX + 10)})
         self.assertEqual(r.status, 413)
 
+    def test_a_refused_upload_still_gets_its_answer(self):
+        """A body the server refuses unread used to be cut off by a reset on Windows (WinError 10053) before the
+        client read the answer; the server now reads and discards what is still arriving before it closes."""
+        for i in range(40):
+            r, raw = self.req("POST", "/api/echo", {"x": "a" * (server.POST_MAX * 8)})
+            self.assertEqual(r.status, 413, i)
+            self.assertEqual(json.loads(raw), {"error": "too large"})
+        for i in range(10):
+            r, raw = self.req("POST", "/api/echo", {"x": "a" * (server.POST_MAX * 8)}, token="wrong")
+            self.assertEqual(r.status, 403, i)
+
+    def test_the_standard_librarys_own_errors_are_answered(self):
+        """An unknown method reaches send_error with its headers read; a garbled request line reaches it before them
+        (answered with a status line from Python 3.11 on, HTTP/0.9-style before), and neither may fail."""
+        import socket as _socket
+
+        def ask(raw):
+            got = b""
+            with _socket.create_connection(("127.0.0.1", self.port), timeout=5) as c:
+                c.sendall(raw)
+                while True:  # the server closes the connection after these answers: read until it does
+                    chunk = c.recv(4096)
+                    if not chunk:
+                        return got
+                    got += chunk
+
+        answer = ask(b"BREW / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\nabc")
+        self.assertIn(b" 501 ", answer.split(b"\r\n")[0] + b" ")
+        self.assertTrue(answer.endswith(b'{"error": "failed"}'), answer[-40:])  # 5xx answers say "failed"
+        self.assertIn(b"not understood", ask(b"NONSENSE\r\n\r\n"))
+
     def test_body_must_be_an_object(self):
         for body in (b"[1, 2]", b"\"text\"", b"{broken", b"\xff\xfe"):
             r, raw = self.req("POST", "/api/echo", body)

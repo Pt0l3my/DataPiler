@@ -111,7 +111,7 @@ _VERSION_RX = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
 
 _OFF = "the server link is off"
 _BLOCKED = "the game is running"
-_NO_LIBS = "the server link needs its two libraries - restart DataPiler and answer Y"
+_NO_LIBS = "the server link needs its libraries - restart DataPiler and answer Y"
 _CANCELLED = "cancelled"
 
 _log = logbook.get("link")

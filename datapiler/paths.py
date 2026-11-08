@@ -34,6 +34,7 @@ class Paths:
     imported: Path
     local: Path
     textdb: Path
+    share_counts: Path      # the row counts of the share files written (check 6's input, kept local; DP8)
     share: Path
     logs: Path
     job_logs: Path
@@ -65,6 +66,7 @@ def resolve(root: Path, workspace_dir: str, share_dir: str) -> Paths:
         imported=workspace / "imported",
         local=workspace / "local",
         textdb=workspace / "textdb.sqlite",
+        share_counts=workspace / "share-counts.json",
         share=_under(root, share_dir),
         logs=logs,
         job_logs=logs / "jobs",

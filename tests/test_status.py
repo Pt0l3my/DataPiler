@@ -10,6 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from datapiler import events, fileio, game, logbook, smithbox, status, winapi
+from dataclasses import replace
+
 from datapiler.settings import Settings
 from datapiler.winapi import Proc
 
@@ -169,28 +171,59 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(self.b.version_calls, 1)
 
     def test_provenance(self):
-        with self.assertRaises(status.ProvenanceMissing) as cm:
-            self.st.provenance()
-        self.assertIn("expansion", str(cm.exception))
+        # P2 (settled S21): the owner's statement in Settings, unset at first; the marker files never decide
         (self.game / "invented-marker.bin").write_bytes(b"")
         with mock.patch.object(game, "EXPANSION_MARKERS", ("invented-marker.bin",)):
+            with self.assertRaises(status.ProvenanceMissing) as cm:
+                self.st.provenance()
+        self.assertEqual(str(cm.exception), status.EXPANSION_UNSET)
+        self.assertIn("Settings", str(cm.exception))
+        self.cfg = replace(self.cfg, expansion="no")
+        with mock.patch.object(game, "EXPANSION_MARKERS", ("invented-marker.bin",)):
             p = self.st.provenance()
-            self.assertEqual(list(p), ["game_version", "regulation_sha256", "expansion", "language", "smithbox_build",
-                                       "datapiler", "date"])
-            self.assertEqual(p["game_version"], "1.16.0.0")
-            self.assertIs(p["expansion"], True)
-            self.assertEqual(p["date"], time.strftime("%Y-%m-%d"))
-            self.b.versions = {}
-            game._version_cache.clear()
-            with self.assertRaises(status.ProvenanceMissing) as cm:
-                self.st.provenance()
-            # found by the end-to-end run on Linux: the folder was set, only the version resource was unreadable
-            self.assertEqual(str(cm.exception), "the game's version is not known - eldenring.exe's version resource "
-                                                "could not be read (it is read on Windows only)")
-            self.cfg = Settings(smithbox_dir=self.cfg.smithbox_dir, project_dir=self.cfg.project_dir)
-            with self.assertRaises(status.ProvenanceMissing) as cm:
-                self.st.provenance()
-            self.assertEqual(str(cm.exception), "the game's version is not known - set the game folder")
+            self.assertIs(p["expansion"], False)        # what the owner said, though the marker file is there
+        self.cfg = replace(self.cfg, expansion="yes")
+        p = self.st.provenance()
+        self.assertEqual(list(p), ["game_version", "regulation_sha256", "expansion", "expansion_source", "language",
+                                   "smithbox_build", "datapiler", "date"])
+        self.assertEqual(p["game_version"], "1.16.0.0")
+        self.assertIs(p["expansion"], True)
+        self.assertEqual(p["expansion_source"], "owner")
+        self.assertEqual(p["date"], time.strftime("%Y-%m-%d"))
+        self.b.versions = {}
+        game._version_cache.clear()
+        with self.assertRaises(status.ProvenanceMissing) as cm:
+            self.st.provenance()
+        # found by the end-to-end run on Linux: the folder was set, only the version resource was unreadable
+        self.assertEqual(str(cm.exception), "the game's version is not known - eldenring.exe's version resource "
+                                            "could not be read (it is read on Windows only)")
+        self.cfg = Settings(smithbox_dir=self.cfg.smithbox_dir, project_dir=self.cfg.project_dir, expansion="yes")
+        with self.assertRaises(status.ProvenanceMissing) as cm:
+            self.st.provenance()
+        self.assertEqual(str(cm.exception), "the game's version is not known - set the game folder")
+
+    def test_the_expansion_check_on_the_card(self):
+        c = self.card("game", "expansion")
+        self.assertIs(c["ok"], False)
+        self.assertIn("not stated yet", c["text"])
+        self.assertIn("Settings", c["fix"])
+        self.assertNotIn("hint", c["fix"].lower())          # no marker file is confirmed: no hint
+        self.cfg = replace(self.cfg, expansion="yes")
+        c = self.card("game", "expansion")
+        self.assertEqual((c["ok"], c["text"], c["fix"]), (True, "Installed, as stated in Settings", None))
+        # a file check, once its markers are set, adds a hint and never decides
+        (self.game / "invented-marker.bin").write_bytes(b"")
+        with mock.patch.object(game, "EXPANSION_MARKERS", ("invented-marker.bin", "invented-other.bin")):
+            c = self.card("game", "expansion")
+            self.assertEqual((c["ok"], c["text"]), (True, "Installed, as stated in Settings"))
+            self.assertIn("A hint only: the expansion's files are not present in <GAME>", c["fix"])
+            self.assertNotIn(str(self.game), c["fix"])
+            self.assertIn("Check what Settings says", c["fix"])
+            self.cfg = replace(self.cfg, expansion="no")
+            c = self.card("game", "expansion")
+            self.assertEqual((c["ok"], c["text"], c["fix"]), (True, "Not installed, as stated in Settings",
+                                                               "A hint only: the expansion's files are not present in "
+                                                               "<GAME>."))
 
     def test_project_ok(self):
         self.assertEqual(self.st.project_ok()[0], True)

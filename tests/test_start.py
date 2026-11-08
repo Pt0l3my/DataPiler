@@ -330,7 +330,10 @@ class UpdateStart(unittest.TestCase):
 
     def test_the_install_check_of_a_release(self):
         (self.root / "a.txt").write_bytes(b"a\n")
-        (self.root / "manifest.sha256").write_text("%s  a.txt\n" % __import__("hashlib").sha256(b"a\n").hexdigest())
+        # bytes, not write_text: on Windows text mode would end the line in CR LF, which a release's manifest never
+        # has and the parser rightly refuses
+        (self.root / "manifest.sha256").write_bytes(
+            ("%s  a.txt\n" % __import__("hashlib").sha256(b"a\n").hexdigest()).encode("ascii"))
         t, out = self.start_with(UpdateParts(), "--port", "0", "--no-browser")
         port = wait_for(self.read_port)
         for _ in range(100):

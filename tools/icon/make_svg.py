@@ -1,10 +1,12 @@
-"""DataPiler's icon (S65): an original katana whose blade is wrapped in blood-red flame, in a rising slash, with
-a trail of flame behind it. Only the handle, the guard and the collar show as metal; where the blade is, a bright core
-of fire runs along a katana's plain curve, with tongues of flame rising off both sides and streaming back into the
-trail, layered dark to bright, their edges broken so they flicker. Three levels of detail, so nothing is too small to
-see at 16 px. Our own drawing; no game art is used. Writes datapiler-large.svg, -medium.svg and -small.svg in the
-current folder."""
+"""DataPiler's icon (S65): an original katana with a crimson blade, in a rising slash, wrapped and trailed by
+blood-red flame that breaks up into a spray of blood towards its ends. The sword is drawn to a katana's plain
+proportions: a slender curved blade, a collar, a round guard and a handle wrapped in dark cord over light diamonds.
+The flames are layered dark to bright, their edges broken so they flicker; the spray leaves the flames' tips along
+their flow, densest near them and thinning out, each drop drawn out by the swing. Three levels of detail, so nothing
+is too small to see at 16 px. Our own drawing; no game art is used. Writes datapiler-large.svg, -medium.svg and
+-small.svg in the current folder."""
 import math
+import random
 
 K = (36.0, 222.0)          # the end of the handle (kashira), where the swing turns
 A1 = -49.0                 # the sword's angle now (degrees; screen y points down): the point up and to the right
@@ -104,6 +106,49 @@ def tongue(base, theta0, bend, length, width, hook, flen=1.0, fw=1.0):
     return poly(left + right[::-1])
 
 
+def tongue_tip(base, theta0, bend, length, hook):
+    """Where a tongue (as tongue() draws it) ends, and the heading it ends on."""
+    n = 36
+    x, y = base
+    step = length / n
+    ang = theta0
+    for i in range(1, n + 1):
+        q = i / n
+        ang = theta0 + bend * q ** 1.3 + (hook * ((q - 0.7) / 0.3) ** 2 if q > 0.7 else 0.0)
+        ux, uy = unit(ang)
+        x, y = x + ux * step, y + uy * step
+    return (x, y), ang
+
+
+def spray(tips, level):
+    """Blood flung off the flames' tips: drops along each tip's heading, densest near it and thinning out, smaller
+    and fainter the further they fly, each drawn out along its flight. Seeded, so the drawing is the same each time."""
+    L, M = level == "large", level == "medium"
+    rnd = random.Random(1897)
+    per = 9 if L else (5 if M else 2)
+    colours = ("#ff2a40", "#e0162f", "#b10c24", "#7c0617")
+    out = []
+    for (tx, ty), ang in tips:
+        for _ in range(per):
+            d = rnd.random() ** 1.6 * (78 if L else (64 if M else 40))
+            spread = rnd.gauss(0, 6 + 0.35 * d)
+            heading = ang + rnd.uniform(-14, 10)
+            ux, uy = unit(heading)
+            px, py = -uy, ux
+            x, y = tx + ux * (d + 4) + px * spread, ty + uy * (d + 4) + py * spread
+            size = (5.2 if L else (7.5 if M else 10.0)) * (1 - d / (90 if L else 75)) * rnd.uniform(0.55, 1.0)
+            size = max(size, 1.4 if L else (2.4 if M else 4.0))
+            col = colours[min(3, int(d / (24 if L else 20)))] if rnd.random() > 0.12 else "#ff7a88"
+            out.append(f'<ellipse cx="{x:.1f}" cy="{y:.1f}" rx="{size * (1.9 if L else 1.6):.1f}" ry="{size:.1f}" '
+                       f'transform="rotate({heading:.0f} {x:.1f} {y:.1f})" fill="{col}" '
+                       f'opacity="{max(0.45, 1 - d / 120):.2f}"/>')
+            if L and rnd.random() < 0.35:                  # a few fine specks around the bigger drops
+                sx, sy = x + rnd.gauss(0, 7), y + rnd.gauss(0, 7)
+                out.append(f'<circle cx="{sx:.1f}" cy="{sy:.1f}" r="{rnd.uniform(0.8, 1.6):.1f}" fill="#d4122e" '
+                           f'opacity="0.8"/>')
+    return out
+
+
 def svg(level):
     L, M, S = level == "large", level == "medium", level == "small"
     bw = 13 if L else (19 if M else 27)                  # the blade's width at the collar
@@ -160,6 +205,8 @@ def svg(level):
         else:
             fl.append(f'<g transform="rotate(-25 150 120)"><g filter="url(#{fires[k]})"><g transform="rotate(25 150 120)" '
                       f'fill="{col}" opacity="{op}">{shapes}</g></g></g>')
+    tips = [tongue_tip(root(sk), t0_, bd, ln, hk) for sk, t0_, bd, ln, wd, hk in tongues]
+    fl += spray(tips, level)
     fl.append("</g>")
     parts += fl
     # the handle: dark cord over light diamonds, a collar (fuchi) at the guard and a cap (kashira) at the end
@@ -228,13 +275,27 @@ def svg(level):
         else:
             wl.append(f'<g transform="rotate(-25 150 120)"><g filter="url(#{fires[k]})"><g transform="rotate(25 150 120)" '
                       f'fill="{col}" opacity="{op}">{shapes}</g></g></g>')
-    # the core: a bright line of fire along the blade, from the collar to the point
-    core = [(x, y) for x, y, px, py, w, s in center[: round(0.97 * (len(center) - 1))]]
-    cw = 4.5 if L else (7 if M else 9)
-    wl.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in core) + f'" fill="none" stroke="#ff4a5e" '
-              f'stroke-width="{cw * 1.8:.1f}" stroke-linecap="round" opacity="0.9"/>')
-    wl.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in core) + f'" fill="none" stroke="#ffc2c9" '
-              f'stroke-width="{cw * 0.7:.1f}" stroke-linecap="round" opacity="{0.9 if not S else 0.8}"/>')
+    # the blade over the flames: a crimson katana, brighter along its edge, darker along its back, with a pale
+    # temper line and the line across the point at the largest size
+    wl.append("</g>")
+    parts += wl
+    wl = ['<g>']
+    wl.append(f'<path d="{poly(edge + back[::-1])}" fill="#b5102a" stroke="#1c0004" stroke-width="{2.4 if L else 3.5}" '
+              f'stroke-linejoin="round"/>')
+    nb = round(yokote * (len(center) - 1))
+    backband = [(x - px * w * 0.5, y - py * w * 0.5) for x, y, px, py, w, s in center]
+    ridge = [(x - px * w * 0.05, y - py * w * 0.05) for x, y, px, py, w, s in center]
+    wl.append(f'<path d="{poly(backband + ridge[::-1])}" fill="#640716" opacity="0.9"/>')
+    edgeband = edge[:nb] + [(x + px * w * 0.16, y + py * w * 0.16) for x, y, px, py, w, s in center[:nb]][::-1]
+    wl.append(f'<path d="{poly(edgeband)}" fill="#ff4a5e"/>')
+    if L:
+        hamon = [(x + px * w * (0.16 + 0.06 * math.sin(s * 44)), y + py * w * (0.16 + 0.06 * math.sin(s * 44)))
+                 for x, y, px, py, w, s in center[:nb]]
+        wl.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in hamon) +
+                  '" fill="none" stroke="#ffc7cd" stroke-width="1.1" opacity="0.8"/>')
+        yx, yy, ypx, ypy, yw, _ = center[nb]
+        wl.append(f'<line x1="{yx + ypx * yw * 0.5:.1f}" y1="{yy + ypy * yw * 0.5:.1f}" x2="{yx - ypx * yw * 0.5:.1f}" '
+                  f'y2="{yy - ypy * yw * 0.5:.1f}" stroke="#ffc7cd" stroke-width="1.2" opacity="0.85"/>')
     wl.append("</g>")
     parts += wl
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">'

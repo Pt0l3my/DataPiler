@@ -8,6 +8,15 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.6 - 2026-11-14
+
+- Map loading says what it does (S52): the job card shows maps loaded of maps to load, the time so far and a rough
+  guess of the time left, at every poll; the log says how many maps are to load, each batch of ten, and every minute
+  how far it is.
+- A batch may take as long as Smithbox keeps loading: the job gives up only after 15 minutes with no map loaded, and
+  then says why. Smithbox hands a queued map load to its Map Editor only while that editor's tab is in front and its
+  window is not minimised (`MapEditorStub.cs` at 2.2.6), which is why en-0007's first run loaded nothing.
 ## 0.2.5 - 2026-11-14
 
 - Map searches carry their search clause (S51). Smithbox's server library refuses a SearchObjects without one

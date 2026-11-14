@@ -358,7 +358,11 @@ function opLine(o) {
   const parts = ["op " + o.n + " " + o.op + ": " + o.state];
   if (o.of) parts.push(fmtN(o.done) + " of " + fmtN(o.of) + (o.unit ? " " + o.unit : ""));
   else if (o.done) parts.push(fmtN(o.done) + (o.unit ? " " + o.unit : ""));
-  if (o.secs != null) parts.push(Number(o.secs).toFixed(1) + " s");
+  if (o.secs != null) parts.push(o.secs >= 120 ? Math.floor(o.secs / 60) + " min " + Math.round(o.secs % 60) + " s" : Number(o.secs).toFixed(1) + " s");
+  if (o.state === "running" && o.of && o.done < o.of && o.done > 0 && o.secs > 0) {
+    const left = (o.of - o.done) * (o.secs / o.done);   // S52: a rough guess from the pace so far
+    parts.push("about " + (left >= 120 ? Math.round(left / 60) + " min" : Math.round(left) + " s") + " left");
+  }
   return el("div", null, parts.join(" · "));
 }
 function jobAct(j, what, confirm) {

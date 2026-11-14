@@ -311,7 +311,11 @@ class AgainstTheFake(unittest.TestCase):
         for r in opened:
             self.assertEqual(r.resource.type, common_pb2.EDITOR_RESOURCE_TYPE_MAP)
             self.assertRegex(r.resource.name, r"^m\d{2}_\d{2}_\d{2}_\d{2}$")
-        self.assertEqual(seen, [(10, 13), (13, 13)])
+        # S52: progress from (0, 13), map by map, never back, up to (13, 13); every report names the same total
+        self.assertEqual((seen[0], seen[-1]), ((0, 13), (13, 13)))
+        self.assertEqual(sorted(seen), seen)
+        self.assertTrue(all(t == 13 for _, t in seen))
+        self.assertEqual(sorted({d for d, _ in seen}), list(range(14)))
         self.assertEqual(self.link.loaded_maps(), list(fake_soapstone.MAPS))
         for bad in ("m99_00_00", "chr/c0000", ""):
             with self.assertRaises(ValueError):
@@ -365,8 +369,9 @@ class AgainstTheFake(unittest.TestCase):
         self.link.switch(True)
         self.fake.load_after = 10 ** 6
         self.link.map_wait = 0.2
-        with self.assertRaises(link.LinkError):
+        with self.assertRaises(link.LinkError) as cm:
             self.link.open_maps(["m99_00_00_05"])
+        self.assertIn("Map Editor tab is in front", str(cm.exception))      # S52: what to do about it
 
     def test_placements_as_numbers(self):
         self.link.switch(True)

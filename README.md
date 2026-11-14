@@ -106,6 +106,11 @@ starts. Smithbox runs that server while `System_Enable_Soapstone_Server` is `tru
 PC can call it while it runs: when you are done, set the switch to `false` in that file and restart Smithbox.
 DataPiler reads the file and never writes it.
 
+**Map jobs** need Smithbox's Visual Map Editor enabled in the project (Projects tab › Available Editors, then Update
+Project and a restart of Smithbox). While a job loads maps, keep Smithbox's window up, not minimised, with its Map
+Editor tab in front: Smithbox takes its load commands only then. The job card shows the maps loaded so far and a guess
+of the time left.
+
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any

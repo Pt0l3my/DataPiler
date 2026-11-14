@@ -117,6 +117,10 @@ _MAP_EDITOR = ("Smithbox lists no maps: most likely its Visual Map Editor is not
                "Available Editors in the Projects tab, press Update Project, restart Smithbox and open its Map Editor "
                "tab, then run again")
 _MAP_SEARCH = "Smithbox's server could not answer a map search (UNKNOWN) - its own log in Smithbox may say why"
+# Smithbox hands a queued "map load" to its Map Editor only while that editor's window is drawn (MapEditorStub.cs at
+# 2.2.6), so a minimised Smithbox, or another tab in front, loads nothing (S52, WHY§40).
+_MAPS_STALLED = ("Smithbox loaded no map for %d s (%d of %d loaded). Smithbox loads maps only while its Map Editor "
+                 "tab is in front and its window is not minimised - bring it up, then start the job again")
 
 _log = logbook.get("link")
 
@@ -305,7 +309,8 @@ class Link:
     call_timeout = 30.0                 # seconds for one call
     watch_interval = 2.0                # the game watcher's interval
     map_poll = 2.0                      # how often open_maps looks for its batch in the loaded maps
-    map_wait = 900.0                    # how long one batch of maps may take to load
+    map_wait = 900.0                    # how long Smithbox may go without loading another map (S52)
+    map_heartbeat = 60.0                # how often open_maps says it is still waiting
 
     def __init__(self, game: Callable[[], "GameRunning"], *, libs: bool, _test_port: int | None = None):
         """libs False (from --no-link or available()) makes the state "no_libs" for good. The host is always HOST;
@@ -529,8 +534,9 @@ class Link:
                   progress: Callable[[int, int], None] | None = None) -> int:
         """OpenResource for map resources only, MAP_BATCH at a time, waiting for each map of a batch to read as
         loaded (is_loaded); returns how many of map_ids are loaded. Map ids the project does not have are skipped,
-        with a log line of their count; maps loaded already are not opened again. A batch that does not load within
-        map_wait seconds raises LinkError. Asking the owner above ten is the runner's (S8)."""
+        with a log line of their count; maps loaded already are not opened again. Progress is reported map by map, and
+        while waiting at every poll; a log line says each batch and, every map_heartbeat seconds, how far it is (S52).
+        LinkError when Smithbox loads no map for map_wait seconds. Asking the owner above ten is the runner's (S8)."""
         wanted: list[str] = []
         for m in map_ids:
             if not isinstance(m, str) or not MAP_RX.fullmatch(m):
@@ -540,37 +546,49 @@ class Link:
         _, common, pb = self._messages()
         known = set(self.all_maps())
         unknown = [m for m in wanted if m not in known]
-        if unknown:
-            _log.info("%s of the map ids asked are not maps of this Smithbox project, and were skipped",
-                      logbook.n(len(unknown)))
         wanted = [m for m in wanted if m in known]
         loaded = {m for m in wanted if self.is_loaded(m)}
         todo = [m for m in wanted if m not in loaded]
         total = len(todo)
+        # S52: say what happens, map by map, so a long load never looks stuck.
+        _log.info("maps to load: %s (%s loaded already, %s not maps of this project)", logbook.n(total),
+                  logbook.n(len(loaded)), logbook.n(len(unknown)))
         done = 0
-        for batch in _chunks(todo, MAP_BATCH):
+        if progress is not None:
+            progress(0, total)
+        for start in range(0, total, MAP_BATCH):
+            batch = todo[start:start + MAP_BATCH]
+            _log.info("loading maps %s to %s of %s in Smithbox (keep its Map Editor tab in front)",
+                      logbook.n(start + 1), logbook.n(start + len(batch)), logbook.n(total))
             for m in batch:
                 if cancel is not None and cancel.is_set():
                     raise LinkCancelled(_CANCELLED)
                 self._call("OpenResource", pb.OpenResourceRequest(resource=self._map_resource(m)), lambda r: 1)
-            deadline = time.monotonic() + self.map_wait
+            last_load = time.monotonic()
+            next_word = last_load + self.map_heartbeat
             while True:
-                waiting = [m for m in batch if m not in loaded]
-                for m in waiting:
+                for m in [x for x in batch if x not in loaded]:
                     if self.is_loaded(m):
                         loaded.add(m)
+                        done += 1
+                        last_load = time.monotonic()
+                        if progress is not None:
+                            progress(done, total)
                 if all(m in loaded for m in batch):
                     break
-                if time.monotonic() >= deadline:
-                    raise LinkError("Smithbox did not load a batch of maps within %d s" % int(self.map_wait))
+                now = time.monotonic()
+                if now - last_load >= self.map_wait:
+                    raise LinkError(_MAPS_STALLED % (int(self.map_wait), done, total))
+                if now >= next_word:
+                    _log.info("still loading: %s of %s maps loaded", logbook.n(done), logbook.n(total))
+                    next_word = now + self.map_heartbeat
+                if progress is not None:
+                    progress(done, total)          # the card's clock moves on while Smithbox loads
                 if cancel is not None:
                     if cancel.wait(self.map_poll):
                         raise LinkCancelled(_CANCELLED)
                 else:
                     time.sleep(self.map_poll)
-            done += len(batch)
-            if progress is not None:
-                progress(done, total)
         return sum(1 for m in wanted if m in loaded)
 
     def placements(self, map_id: str) -> list[Placement]:

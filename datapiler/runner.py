@@ -985,7 +985,10 @@ class Runner:
             return self._fetch_rows(ctx, i, o)
         if op == "load_maps":
             maps = self._resolve_maps(o["maps"])
-            n = self.link.open_maps(maps, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
+            t0 = time.monotonic()
+            # S52: the card shows maps loaded of maps to load, and the time so far, at every poll.
+            n = self.link.open_maps(maps, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(
+                i, "running", d, t, round(time.monotonic() - t0, 1)))
             return n, len(maps)
         if op == "unused_names":
             return self._unused_names(ctx, i, o)
@@ -1114,6 +1117,7 @@ class Runner:
             maps = have
         rows: list[tuple] = []
         per_map: dict[str, int] = {}
+        t0 = time.monotonic()
         ctx.on_op(i, "running", 0, len(maps), None)
         for k, m in enumerate(maps):
             if ctx.cancel.is_set():
@@ -1126,7 +1130,7 @@ class Runner:
                 rows.append(row)
                 n += 1
             per_map[m] = min(n, per_map.get(m, n))
-            ctx.on_op(i, "running", k + 1, len(maps), None)
+            ctx.on_op(i, "running", k + 1, len(maps), round(time.monotonic() - t0, 1))
         ctx.tables[o["as"]] = (list(jobs.PLACEMENT_COLUMNS), rows)
         # Check 6: the placements of every map the job read, a map read twice counted once (the lower count).
         for m, n in per_map.items():

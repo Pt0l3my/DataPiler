@@ -14,7 +14,9 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session. DP13 (design
   0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page). DP15 (Smithbox
   seen by its process at all times).
-- **Open.** None.
+- **2026-11-09.** DP16 (an Imported tab).
+- **Open.** DP17 (sharing the name numbers no row uses beyond half the set) and DP18 (check 3's scope, and Copy for
+  sharing leaving failing lines out), both 2026-11-14.
 
 ## DP1
 
@@ -251,3 +253,30 @@ right away"
 **Owner's words.** "we could also add extracted data/entries that are available, because currently nothing let's the
 user know that for example item_dlc2 has been added and is available for jobs to work with. so we could add a imported
 containers tab."
+
+## DP17
+
+**Sharing the name numbers no row uses, beyond half the set** · *2026-11-14 · Open*
+
+**Question.** Job en-0006 found 269 of the 483 character-name entries named by no NpcParam row, 56% of the set. Bosses
+whose rows carry name 0 take their bar names from among them (EldenNet WHY§33, WHY§36), so the list is what EldenNet's
+boss bios bind by. Check 6 (DP8) refuses a share file whose tables carry more than half of their source, so the list
+cannot be shared whole. The list holds numbers only: which name numbers exist, and their layers, never a text.
+**Options:** (a) **an exception for this kind of list**: a table made by `unused_names` (numbers and layers only) is not
+held to the half, as it numbers names, not rows of a game table; (b) split it by layer into two jobs, each under half,
+which sidesteps the rule rather than settling it; (c) keep the rule: a counts-only job first, to see where the unused
+numbers cluster, then share only the cluster the bosses fall in, one or two more rounds. **Recommendation:** (a).
+
+## DP18
+
+**Check 3's scope, and Copy for sharing** · *2026-11-14 · Open*
+
+**Question.** Check 3 compares every shared string and shared log line with every text imported, and treats a string of
+four or more characters contained in a text, or containing one, as game text. Since the whole English item container
+is imported (21,532 entries, item descriptions included), ordinary words collide: en-0006's table name `unused` was
+refused, as some text contains the word, and Copy for sharing refused the whole log for one line (the install check's
+list of files). **Options:** (a) compare with the texts of the name sets DataPiler uses (the character and place
+names), the only texts it ever writes anywhere, and have Copy for sharing leave a failing line out, saying how many,
+instead of refusing the copy; (b) keep check 3 as it is and avoid common words in job tables and log lines; (c) (a)'s
+Copy for sharing change only. **Recommendation:** (a).
+

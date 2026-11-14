@@ -13,6 +13,12 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.15 - 2026-11-14
+
+- The icon redrawn at the owner's request (S65): the slash is now a trail streaming off the whole blade, in tapered
+  strands that fade where the swing began, with the blade's edge leading and blood drops flung from the tip's path.
+  Still our own drawing, readable from 16 to 256 px.
+
 ## 0.2.14 - 2026-11-14
 
 - No more pause at 300 maps (S65): a map job runs in one go. It still keeps each map as soon as it is read, so a

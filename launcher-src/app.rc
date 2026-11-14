@@ -2,8 +2,8 @@
 1 ICON "app.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,2,14,0
-PRODUCTVERSION 0,2,14,0
+FILEVERSION 0,2,15,0
+PRODUCTVERSION 0,2,15,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -11,9 +11,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "DataPiler"
       VALUE "FileDescription", "DataPiler - extracts Elden Ring's data from your own install through Smithbox"
-      VALUE "FileVersion", "0.2.14.0"
+      VALUE "FileVersion", "0.2.15.0"
       VALUE "ProductName", "DataPiler"
-      VALUE "ProductVersion", "0.2.14.0"
+      VALUE "ProductVersion", "0.2.15.0"
       VALUE "LegalCopyright", "Copyright (c) 2026 Pt0l3my"
       VALUE "InternalName", "DataPiler"
       VALUE "OriginalFilename", "DataPiler.exe"

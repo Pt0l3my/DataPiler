@@ -77,6 +77,11 @@ class FakeRunner:
             return {"ok": False, "ask": {"maps": 98, "text": "Start loads 98 maps in Smithbox. Go on?"}}
         return {"ok": True}
 
+    def removal_word(self, job_id):
+        if job_id != JOB_ID:
+            raise ValueError("unknown")
+        return "move"
+
     def run_extract(self, rows, *, load_maps=False, confirm_maps=None):
         if any(r not in ("character_rows", "map_placements") for r in rows):
             raise ValueError("unknown row")

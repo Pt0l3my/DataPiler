@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 const JOB_MAX = 256 * 1024;
-const TABS = ["status", "extract", "imported", "jobs", "outputs", "terminal", "settings"];
+const TABS = ["status", "extract", "imported", "jobs", "outputs", "deleted", "terminal", "settings"];
 const SOURCES = ["app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env", "update", "folders"];
 const ROW_UNIT = { rows: "rows", maps: "maps", entries: "entries" };
 
@@ -123,6 +123,42 @@ function overlay(title, opts) {
   setTimeout(() => { if (open && !box.contains(document.activeElement)) first().focus(); }, 0);
   return handle;
 }
+// DP22: the pop-up of a removal and of the Deleted bin, in the one overlay. ask is the API's {title, text, word,
+// button}: with word DELETE it holds a text box, and its button stays disabled until DELETE is typed in. Resolves with
+// the confirmation to send, or null when it is closed without one.
+function askRemove(ask) {
+  return new Promise((resolve) => {
+    let answer = null;
+    const h = overlay(ask.title || "Are you sure?", { onClose: () => resolve(answer) });
+    add(h.body, el("div", null, ask.text));
+    const typed = ask.word === "DELETE";
+    const go = el("button", "pri", ask.button || "Move to the Deleted bin");
+    let box = null;
+    if (typed) {
+      box = el("input", "typed");
+      box.type = "text"; box.spellcheck = false; box.autocomplete = "off"; box.placeholder = "DELETE";
+      box.setAttribute("aria-label", "Type DELETE to go on");
+      add(h.body, add(el("div", "typedrow"), el("span", "mute", "Type DELETE to go on:"), box));
+      go.disabled = true;
+      box.addEventListener("input", () => { go.disabled = box.value !== "DELETE"; });
+      // Enter goes on; its default is stopped, or it would press the button that gets the focus back as it closes
+      box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!go.disabled) go.click(); } });
+    }
+    const no = el("button", null, "Cancel");
+    no.addEventListener("click", () => h.close());
+    go.addEventListener("click", () => { if (go.disabled) return; answer = typed ? box.value : ask.word; h.close(); });
+    add(h.foot, no, go);
+  });
+}
+// Posts the request; while the API asks for a confirmation (DP22), shows the pop-up and posts it again with the answer.
+// Resolves with the API's last answer, or {ok: false, cancelled: true} when the pop-up was closed.
+function confirmed(path, body) {
+  return api(path, body).then((r) => {
+    if (!r || r.ok || !r.ask || !r.ask.word) return r;
+    return askRemove(r.ask).then((c) => c == null ? { ok: false, cancelled: true }
+      : confirmed(path, Object.assign({}, body, { confirm: c })));
+  });
+}
 // While on, poll()'s failures never show "DataPiler has stopped" (an update's restart; until the page reloads), and
 // poll() and pollTerm() ask nothing: the app is down or about to be, and only the Update... pop-up's probe asks.
 function holdHeartbeat(on) { HOLD = !!on; if (HOLD) FAILS = 0; }
@@ -135,6 +171,7 @@ function showTab(t) {
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("on", s.id === "t-" + t));
   if (t === "outputs") loadOutputs();
   if (t === "imported") loadImported();
+  if (t === "deleted") loadBin();
   if (t === "settings") loadSettings();
   if (t === "terminal") { paintTerm(); scrollEnd(); }
 }
@@ -378,9 +415,13 @@ function keptNote(k) {
   return t;
 }
 function jobAct(j, what, confirm) {
-  api("/api/jobs/act", { id: j.id, what: what, confirm_maps: confirm == null ? null : confirm }).then((r) => {
-    if (r.ok) { poll(); return; }
-    if (r.ask && window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps);
+  const body = { id: j.id, what: what, confirm_maps: confirm == null ? null : confirm };
+  // DP22: Remove asks in the page's pop-up (DELETE typed in when the job holds saved progress); the job goes to the bin
+  (what === "remove" ? confirmed("/api/jobs/act", body) : api("/api/jobs/act", body)).then((r) => {
+    if (r.ok) { if (what === "remove") note("Moved to the Deleted bin: " + j.id + ".", true); poll(); return; }
+    if (r.cancelled) return;
+    if (r.ask && !r.ask.word) { if (window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps); return; }
+    if (r.error) note(r.error);
   }).catch((e) => note(e.message));
 }
 // S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
@@ -471,7 +512,7 @@ function jobCard(j) {
     b.addEventListener("click", () => {
       // S66: starting again from the beginning is asked first; it drops what an earlier run kept.
       if (j.state !== "checked" && !window.confirm(kept
-        ? "Start this job again from the beginning? The " + fmtN(kept.maps) + " maps kept from the last run are dropped and read again. To go on from them, choose Resume job instead."
+        ? "Start this job again from the beginning? The " + fmtN(kept.maps) + " maps kept from the last run go to the Deleted bin and are read again. To go on from them, choose Resume job instead."
         : "Start this job again from the beginning?")) return;
       jobAct(j, "start");
     });
@@ -516,7 +557,23 @@ function fileItem(f, area) {
   if (f.made_by) add(li, el("span", "pill mute", f.made_by));
   if (area === "share" && f.ok === false) add(li, el("span", "pill err", "fails check " + f.failed));
   if (area === "share") { const b = el("button", "sm", "Show"); b.addEventListener("click", () => openShare(f.name)); add(li, b); }
+  // DP22: a share file, and what jobs, Extract and the guided import wrote in the workspace, go to the Deleted bin
+  if (area === "share" || /^(local|imported)\//.test(f.name)) {
+    const d = el("button", "sm", "Delete…");
+    d.title = "Move it to the Deleted bin, once you type DELETE; Restore there puts it back";
+    d.addEventListener("click", () => removeOutput(area, f.name));
+    add(li, d);
+  }
   return li;
+}
+function removeOutput(area, name) {
+  confirmed("/api/outputs/remove", { area: area, name: name }).then((r) => {
+    if (r.cancelled) return;
+    if (!r.ok) { note(r.error || "Not moved to the Deleted bin."); return; }
+    note("Moved to the Deleted bin: " + name + ".", true);
+    if (VIEW === name) { VIEW = null; $("viewer").hidden = true; $("copyPath").disabled = true; }
+    loadOutputs();
+  }).catch((e) => note(e.message));
 }
 function loadImported() {
   return api("/api/imported").then((r) => {
@@ -531,9 +588,10 @@ function loadImported() {
       [c.container, lang, fmtN(c.wrappers), fmtN(c.entries), fmtN(c.skipped), holds || "-", c.imported].forEach((v) => add(tr, el("td", null, String(v))));
       const b = el("button", null, "Remove");
       b.addEventListener("click", () => {
-        if (!window.confirm("Remove the import " + c.container + " (" + c.language + ") from the text database? Jobs stop using its texts until you import it again.")) return;
-        api("/api/imported/remove", { container: c.container, language: c.language }).then((x) => {
-          if (!x.ok) note(x.error || "Not removed"); else { note("Removed " + c.container, true); loadImported(); }
+        // DP22: the import goes to the Deleted bin, once DELETE is typed in the pop-up the API asks for
+        confirmed("/api/imported/remove", { container: c.container, language: c.language }).then((x) => {
+          if (x.cancelled) return;
+          if (!x.ok) note(x.error || "Not removed"); else { note("Moved to the Deleted bin: " + c.container + " (" + c.language + ").", true); loadImported(); }
         }).catch((e) => note(e.message));
       });
       add(tr, add(el("td"), b));
@@ -555,6 +613,51 @@ function loadOutputs() {
     $("shareBad").hidden = !bad.length;
     if (VIEW && !o.share.some((f) => f.name === VIEW)) { VIEW = null; $("viewer").hidden = true; $("copyPath").disabled = true; }
   }).catch(() => {});
+}
+// ---- the Deleted bin (DP22): what a removal moved out, until it is erased
+function loadBin() {
+  return api("/api/bin").then((r) => {
+    const items = r.items || [];
+    $("binSum").textContent = items.length ? items.length + (items.length === 1 ? " item, " : " items, ") + fmtSize(r.size) + "." : "The bin is empty.";
+    const tb = clear($("binRows"));
+    items.forEach((it) => {
+      const tr = el("tr");
+      [it.what, it.name, it.from, it.when, fmtSize(it.size)].forEach((v, k) => add(tr, el("td", k === 1 || k === 2 ? "mono" : null, String(v))));
+      const rs = el("button", "sm", "Restore");
+      rs.title = "Put it back where it came from";
+      rs.addEventListener("click", () => binRestore(it));
+      const er = el("button", "sm", "Erase…");
+      er.title = "Erase it for good, once you type DELETE";
+      er.addEventListener("click", () => binErase(it));
+      add(tr, add(el("td", "acts"), rs, " ", er));
+      add(tb, tr);
+    });
+    if (!items.length) add(tb, add(el("tr"), el("td", "mute", "Nothing here.")));
+    $("binEmpty").disabled = !items.length;
+  }).catch(() => {});
+}
+function binRestore(it) {
+  api("/api/bin/restore", { id: it.id }).then((r) => {
+    if (!r.ok) { note(r.error || "Not restored."); return; }
+    note("Restored: " + it.name + ".", true);
+    loadBin(); poll();
+  }).catch((e) => note(e.message));
+}
+function binErase(it) {
+  confirmed("/api/bin/erase", { id: it.id }).then((r) => {
+    if (r.cancelled) return;
+    if (!r.ok) { note(r.error || "Not erased."); return; }
+    note("Erased for good: " + it.name + ".", true);
+    loadBin();
+  }).catch((e) => note(e.message));
+}
+function binEmpty() {
+  confirmed("/api/bin/empty", {}).then((r) => {
+    if (r.cancelled) return;
+    if (!r.ok) { note(r.error || "The bin was not emptied."); return; }
+    note("The Deleted bin is empty: " + r.erased + (r.erased === 1 ? " item" : " items") + " erased for good.", true);
+    loadBin();
+  }).catch((e) => note(e.message));
 }
 function openShare(name) {
   api("/api/share?name=" + encodeURIComponent(name)).then((v) => {
@@ -695,7 +798,12 @@ function poll() {
     paintStatus(s);
     paintExtract(s);
     paintJobs(s);
-    if (s.outputs_rev !== OUT_REV) { OUT_REV = s.outputs_rev; if (TAB === "outputs") loadOutputs(); if (TAB === "imported") loadImported(); }
+    if (s.outputs_rev !== OUT_REV) {
+      OUT_REV = s.outputs_rev;
+      if (TAB === "outputs") loadOutputs();
+      if (TAB === "imported") loadImported();
+      if (TAB === "deleted") loadBin();
+    }
     if (TAB === "settings") paintSession(s.session);
     if (!CAT) loadCatalogue();
   }).catch(() => { FAILS += 1; if (FAILS >= 3 && !HOLD) gone(); });
@@ -725,6 +833,7 @@ window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", (e) => e.preventDefault());
 $("openWork").addEventListener("click", () => api("/api/open", { area: "workspace" }).then((r) => { if (!r.ok) note(r.error); }).catch((e) => note(e.message)));
 $("openShare").addEventListener("click", () => api("/api/open", { area: "share" }).then((r) => { if (!r.ok) note(r.error); }).catch((e) => note(e.message)));
+$("binEmpty").addEventListener("click", binEmpty);
 $("copyPath").addEventListener("click", () => {
   if (!VIEW) return;
   api("/api/copy-path", { name: VIEW }).then((r) => { if (r.ok) note("The file's path is on the clipboard.", true); else note(r.error); }).catch((e) => note(e.message));

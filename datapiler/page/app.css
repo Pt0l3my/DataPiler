@@ -198,6 +198,11 @@ button.linklike:hover { color: var(--text); }
 .ov .mf { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--edge); flex-wrap: wrap; }
 .ov .mf:empty { display: none; }
 .ov .mf .left { margin-right: auto; }
+/* DP22: the pop-up of a removal, and the Deleted tab */
+.typedrow { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.typedrow input { flex: 1; min-width: 160px; background: var(--card2); border: 1px solid var(--edge); color: var(--text);
+                  border-radius: 6px; padding: 5px 8px; font: 12px Consolas, monospace; }
+td.acts { white-space: nowrap; }
 .x { margin-left: auto; background: none; border: none; color: var(--mute); font-size: 16px; padding: 0 4px; }
 .x:hover { color: var(--text); }
 @media (max-width: 720px) { .cols3 { grid-template-columns: 1fr; } .form { grid-template-columns: 1fr; } .bar { width: 80px; }

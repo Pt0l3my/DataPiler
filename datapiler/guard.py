@@ -657,6 +657,44 @@ def record_counts(path: Path, file_name: str, sha256: str, coverage: Mapping[str
         fileio.write_atomic(Path(path), (json.dumps(doc, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
 
 
+def counts_entry(path: Path, file_name: str) -> dict | None:
+    """DP22: a share file's kept record as it is stored ({"sha256", "tables"}), for the Deleted bin to hold while the
+    file is there; None when there is none. Never raises."""
+    try:
+        with _counts_lock:
+            entry = _read_counts(path).get(file_name)
+        return json.loads(json.dumps(entry)) if isinstance(entry, dict) else None
+    except Exception:
+        return None
+
+
+def forget_counts(path: Path, file_name: str) -> None:
+    """DP22: drop a share file's record, once the file is in the Deleted bin. Atomic. Raises OSError."""
+    with _counts_lock:
+        files = _read_counts(path)
+        if files.pop(file_name, None) is None:
+            return
+        doc = {"format": COUNTS_FORMAT, "files": files}
+        fileio.write_atomic(Path(path), (json.dumps(doc, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+
+
+def put_counts(path: Path, file_name: str, entry: dict) -> None:
+    """DP22: a record counts_entry gave, back with its share file from the Deleted bin, as it was. Atomic. Raises
+    OSError, or ValueError for a record not of that shape."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str) or \
+            not HEX64_RX.fullmatch(entry["sha256"]) or not isinstance(entry.get("tables"), dict):
+        raise ValueError("not row counts DataPiler keeps")
+    with _counts_lock:
+        files = _read_counts(path)
+        files.pop(file_name, None)
+        files[file_name] = {"sha256": entry["sha256"], "tables": entry["tables"]}
+        while len(files) > COUNTS_MAX_FILES:
+            files.pop(next(iter(files)))
+        doc = {"format": COUNTS_FORMAT, "files": files}
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        fileio.write_atomic(Path(path), (json.dumps(doc, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+
+
 def counts_for(path: Path, file_name: str, sha256: str) -> dict[str, object] | None:
     """The row counts kept for that share file at that sha256, as `check` takes them; None when there are none (a
     file DataPiler did not write, or one changed since), so check 6 fails. Never raises."""

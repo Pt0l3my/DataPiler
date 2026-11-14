@@ -13,6 +13,21 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.21 - 2026-11-14
+
+- Nothing collected is lost (DP22, S70). A new **Deleted** tab is the bin, `workspace/bin/`: removing a job, a share
+  file, a workspace file, an import of the text database or a map job's saved progress moves it there, never erasing
+  it. **Restore** puts an item back exactly (a job with its state, a share file with its row counts, an import with its
+  rows, sha256 and time) and refuses, saying what is in the way, rather than overwrite. **Erase…** and **Empty bin…**
+  erase for good.
+- Removing a job asks first in a pop-up; removing collected data (a share file, a workspace file, an import, a job that
+  holds saved map progress) asks for `DELETE` typed in, and the button waits for it. The API refuses each removal
+  without its confirmation.
+- Outputs has **Delete…** for share files and for the workspace files under `local` and `imported`. Start again moves
+  the saved progress to the bin, and so does a run that finds progress saved on another game version.
+- New endpoints: `GET /api/bin`, `POST /api/bin/restore`, `/api/bin/erase`, `/api/bin/empty` and
+  `/api/outputs/remove`; `/api/jobs/act` (remove) and `/api/imported/remove` take `confirm`.
+
 ## 0.2.20 - 2026-11-14
 
 - The game's five map tables can be read in full (S69): `fetch_rows` reads the 91 fields of `BonfireWarpParam`,

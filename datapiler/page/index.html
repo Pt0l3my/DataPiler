@@ -21,7 +21,7 @@
 <div class="block" id="block" hidden></div>
 <nav class="tabs" id="tabs">
   <button data-t="status" class="on">Status</button><button data-t="extract">Extract</button><button data-t="imported">Imported</button><button data-t="jobs">Jobs</button>
-  <button data-t="outputs">Outputs</button><button data-t="terminal">Terminal</button><button data-t="settings">Settings</button>
+  <button data-t="outputs">Outputs</button><button data-t="deleted">Deleted</button><button data-t="terminal">Terminal</button><button data-t="settings">Settings</button>
 </nav>
 <main>
   <div class="msgs" id="msgs"></div>
@@ -56,7 +56,7 @@
         <thead><tr><th>Container</th><th>Language</th><th>Wrappers</th><th>Entries</th><th>Placeholders left out</th><th>Holds</th><th>Imported</th><th></th></tr></thead>
         <tbody id="impRows"></tbody>
       </table></div>
-      <div class="hint">Counts only. The texts stay in the workspace's text database; Remove takes an import out of it, and its export file stays in workspace\imported.</div>
+      <div class="hint">Counts only. The texts stay in the workspace's text database. Remove moves an import to the Deleted bin, once you type DELETE, and Restore there puts it back; its export file stays in workspace\imported.</div>
     </div>
   </section>
 
@@ -85,6 +85,19 @@
           <div class="viewer mono" id="vtext"></div>
         </div>
         <div class="actions"><button id="copyPath" disabled>Copy path</button><button id="openShare">Open folder</button></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== Deleted -->
+  <section class="tab" id="t-deleted">
+    <div class="card"><h3>Deleted bin <span class="pill err">Local only - never share</span></h3>
+      <div class="hint" id="binSum"></div>
+      <div class="tscroll"><table>
+        <thead><tr><th>Kind</th><th>Name</th><th>From</th><th>Deleted</th><th>Size</th><th></th></tr></thead>
+        <tbody id="binRows"></tbody>
+      </table></div>
+      <div class="hint">Removed jobs and collected data wait here until you erase them. Restore puts an item back where it came from, never over a file of the same name. Erase and Empty bin need DELETE typed in.</div>
+      <div class="actions"><button id="binEmpty" disabled>Empty bin…</button></div>
     </div>
   </section>
 

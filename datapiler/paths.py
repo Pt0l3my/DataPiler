@@ -35,6 +35,7 @@ class Paths:
     local: Path
     textdb: Path
     share_counts: Path      # the row counts of the share files written (check 6's input, kept local; DP8)
+    bin: Path               # the Deleted bin (DP22, S70): what a removal moved out, until the owner erases it
     share: Path
     logs: Path
     job_logs: Path
@@ -67,6 +68,7 @@ def resolve(root: Path, workspace_dir: str, share_dir: str) -> Paths:
         local=workspace / "local",
         textdb=workspace / "textdb.sqlite",
         share_counts=workspace / "share-counts.json",
+        bin=workspace / "bin",
         share=_under(root, share_dir),
         logs=logs,
         job_logs=logs / "jobs",
@@ -83,7 +85,7 @@ def resolve(root: Path, workspace_dir: str, share_dir: str) -> Paths:
 
 def ensure(p: Paths) -> None:
     """Make every folder DataPiler writes into. Raises OSError."""
-    for folder in (p.workspace, p.inbox, p.imported, p.local, p.share, p.logs, p.job_logs, p.jobs):
+    for folder in (p.workspace, p.inbox, p.imported, p.local, p.bin, p.share, p.logs, p.job_logs, p.jobs):
         folder.mkdir(parents=True, exist_ok=True)
 
 

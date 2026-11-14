@@ -125,9 +125,9 @@ change you just made may not show yet.
 
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
-first, then starts from the beginning. A whole map job runs in one go; Smithbox's Vulkan build,
-which keeps graphics memory for every map it has loaded, once brought a graphics driver down with about 700, which
-is why map jobs run on its OpenGL build (below).
+first, then moves the saved progress to the Deleted bin (below) and starts from the beginning. A whole map job runs
+in one go; Smithbox's Vulkan build, which keeps graphics memory for every map it has loaded, once brought a graphics
+driver down with about 700, which is why map jobs run on its OpenGL build (below).
 
 With **Map jobs on Smithbox's OpenGL build only** on (Settings; on at first), a map job waits while Smithbox runs as
 its Vulkan build: close Smithbox and start `Smithbox.OpenGL.exe` from Smithbox's folder, with the same project. The
@@ -138,6 +138,19 @@ A map that loads with nothing in it, as some tiles of the open world do, counts 
 Smithbox's auto-save off first: every five minutes it saves each loaded map into your Smithbox project folder (your
 game folder is never touched), and with hundreds of maps loaded that adds up. Restart Smithbox after a big map job to
 free what the loaded maps hold.
+
+## The Deleted bin
+
+Nothing DataPiler collected is erased by a removal (DP22). **Remove** on a job card asks first, in a pop-up; removing
+collected data (a share file or a workspace file with **Delete…** on Outputs, an import with **Remove** on Imported, a
+job that holds saved map progress) asks you to type `DELETE`. Either way, what you remove moves to the **Deleted** tab,
+the bin, in the workspace's `bin` folder, and stays there until you erase it.
+
+- **Restore** puts an item back where it came from, as it was: a job with its state and saved progress, a share file
+  with its row counts, an import of the text database with its rows. It refuses, and says what is in the way, when
+  something of the same name is there now; it never overwrites.
+- **Erase…** (one item) and **Empty bin…** (every item) erase for good, once you type `DELETE`.
+- The bin holds game text when it holds an import or a workspace file: like the rest of the workspace, never share it.
 
 ## What it will and won't do
 

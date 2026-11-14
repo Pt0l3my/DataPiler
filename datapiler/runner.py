@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, events, fields, fileio, jobs, logbook, paths as paths_mod
+from . import catalogue, deleted, events, fields, fileio, jobs, logbook, paths as paths_mod
 from . import link as link_mod
 from . import smithbox as smithbox_mod
 from .guard import WORDS as GUARD_WORDS, GuardFailed
@@ -178,12 +178,15 @@ class _MapProgress:
     crash of Smithbox, of the GPU's driver or of DataPiler goes on where it stopped. One JSON line per map, appended
     and flushed to disk at once: a header naming the job's sha256 and the game, Smithbox and regulation it was read
     from, then {"map": id, "rows": [[map, entityId, npcParamId, talkId, model], ...]}. Numbers only, never shared;
-    a header that does not match drops the file, and a line cut short by a crash ends what is read. Removed when the
-    job is done or removed."""
+    a header that does not match drops the file (through drop, which moves it to the Deleted bin, DP22, and answers
+    whether it did; stale is set when it did not), and a line cut short by a crash ends what is read. Removed when the
+    job is done; moved to the Deleted bin with the job when it is removed, and on its own by Start again."""
 
-    def __init__(self, path: Path, key: dict):
+    def __init__(self, path: Path, key: dict, drop: Callable[[], bool] | None = None):
         self.path = path
         self.header = dict({"format": MAPS_FORMAT}, **key)
+        self.drop = drop
+        self.stale = False
 
     def load(self) -> dict[str, list[tuple]]:
         out: dict[str, list[tuple]] = {}
@@ -195,11 +198,14 @@ class _MapProgress:
         except OSError:
             return out
         try:
-            if json.loads(lines[0].decode("utf-8")) != self.header:
-                self.clear()
-                return out
+            match = json.loads(lines[0].decode("utf-8")) == self.header
         except (ValueError, UnicodeDecodeError):
-            self.clear()
+            match = False
+        if not match:
+            if self.drop is None:
+                self.clear()
+            elif not self.drop():
+                self.stale = True
             return out
         for line in lines[1:]:
             if not line.strip():
@@ -359,19 +365,50 @@ class Runner:
         except (OSError, ValueError) as e:
             _job_log.error("the state of the job %s could not be saved: %s", own(card.id), logbook.why(e))
 
-    def _drop_folder(self, card_id: str) -> None:
-        folder = self._folder(card_id)
-        for name in ("job.json", "state.json", MAPS_FILE):
-            try:
-                os.unlink(folder / name)
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                _job_log.warn("a file of the job %s could not be removed: %s", own(card_id), logbook.why(e))
+    def _drop_folder(self, card: _Card) -> dict | None:
+        """DP22: the job's files (job.json, state.json and its saved progress) go to the Deleted bin as one item, never
+        erased, and its folder goes once empty. The item's view, or None when the folder held none of them. Raises
+        OSError or deleted.BinError with every file left where it was."""
+        folder = self._folder(card.id)
+        files = [(folder / name, name) for name in ("job.json", "state.json", MAPS_FILE) if (folder / name).exists()]
+        item = None
+        if files:
+            item = deleted.put(self.paths, "job", card.id, "jobs", card.id, files,
+                               extra={"id": card.id, "checked": card.job is not None, "sha256": card.sha256})
         try:
             folder.rmdir()
         except OSError:
             pass
+        return item
+
+    def _bin_progress(self, card_id: str) -> dict | None:
+        """DP22: a job's saved progress (maps.jsonl) alone to the Deleted bin, as Start again drops it (S66). None when
+        there is none. Raises OSError or deleted.BinError, the file left where it was."""
+        f = self._folder(card_id) / MAPS_FILE
+        if not f.exists():
+            return None
+        return deleted.put(self.paths, "progress", card_id, "jobs", "%s/%s" % (card_id, MAPS_FILE), [(f, MAPS_FILE)],
+                           extra={"id": card_id})
+
+    def _bin_stale_progress(self, card_id: str) -> bool:
+        """A saved progress of another game or Smithbox, or another job's file, to the Deleted bin (DP22). False, the
+        file kept, when it could not go."""
+        try:
+            self._bin_progress(card_id)
+            return True
+        except (OSError, deleted.BinError) as e:
+            _job_log.warn("the job %s's saved progress of another game version stays where it is, and this run keeps "
+                          "no progress: it could not be moved to the Deleted bin: %s", own(card_id), logbook.why(e))
+            return False
+
+    def removal_word(self, job_id: str) -> str:
+        """DP22: what removing the job needs confirmed. deleted.WORD (typed in) when the job holds saved progress,
+        collected data; else deleted.MOVE (a pop-up). ValueError for an unknown id."""
+        with self._lock:
+            card = self._cards.get(job_id) if isinstance(job_id, str) else None
+            if card is None:
+                raise ValueError("no such job")
+            return deleted.WORD if (self._folder(card.id) / MAPS_FILE).exists() else deleted.MOVE
 
     # ------------------------------------------------------------------------------------------------ checking
 
@@ -416,67 +453,141 @@ class Runner:
         for name in names:
             if not paths_mod.name_ok(name):
                 continue
-            state: dict = {}
-            try:
-                state = json.loads(fileio.read_limited(root / name / "state.json", 4 * 1024 * 1024).decode("utf-8"))
-                if not isinstance(state, dict) or state.get("format") != STATE_FORMAT:
-                    state = {}
-            except (OSError, ValueError):
-                state = {}
-            added = state.get("added")
-            if not isinstance(added, (int, float)) or isinstance(added, bool):
-                try:
-                    added = (root / name).stat().st_mtime
-                except OSError:
-                    added = 0.0
-            found.append((float(added), name, state))
+            added, state = self._read_state(root, name)
+            found.append((added, name, state))
         found.sort()
         stopped = 0
         with self._lock:
             for added, name, state in found:
-                try:
-                    raw = fileio.read_limited(root / name / "job.json", jobs.MAX_BYTES * 2)
-                except fileio.TooLarge:
-                    raw = None
-                except OSError:
+                card = self._load_card(root, name, added, state)
+                if card is None:
                     continue
-                if raw is None:
-                    try:
-                        sha = fileio.sha256_file(root / name / "job.json")
-                    except OSError:
-                        continue
-                    card = _Card(id=name, sha256=sha, title=None, format_ok=False, job=None,
-                                 refusals=[jobs.Refusal("(file)", "the file is over 256 KB", None)], preview=None,
-                                 state="refused", ops=[], added=added)
-                elif not raw:
-                    continue
-                else:
-                    card = self._make_card(raw, known=self._known_ids(), share_names=self._share_names(),
-                                           added=added, folder=name)
-                if card.job is not None:
-                    st = state.get("state")
-                    if st in ACTIVE:
-                        card.state = "stopped"
-                        stopped += 1
-                    elif st in ("done", "failed", "cancelled", "stopped"):
-                        card.state = st
-                    ops = state.get("ops")
-                    if isinstance(ops, list) and len(ops) == len(card.ops) and \
-                            all(isinstance(o, dict) and o.get("op") == c["op"] for o, c in zip(ops, card.ops)):
-                        card.ops = [dict(c, **{k: o.get(k) for k in ("state", "done", "of", "secs")})
-                                    for o, c in zip(ops, card.ops)]
-                        if card.state == "stopped":
-                            for o in card.ops:
-                                if o["state"] in ("running", "waiting"):
-                                    o["state"] = "stopped"
-                    result = state.get("result")
-                    card.result = result if isinstance(result, dict) and card.state in (
-                        "done", "failed", "cancelled", "stopped") else None
                 self._cards[card.id] = card
                 if card.state == "stopped" and state.get("state") in ACTIVE:
+                    stopped += 1
                     self._save(card)
         _job_log.info("jobs folder read: %s jobs, %s stopped by the last quit", logbook.n(len(found)),
                       logbook.n(stopped))
+
+    @staticmethod
+    def _read_state(root: Path, name: str) -> tuple[float, dict]:
+        """jobs/<name>/state.json as load_folder takes it: (when the job was added, the state, or {})."""
+        state: dict = {}
+        try:
+            state = json.loads(fileio.read_limited(root / name / "state.json", 4 * 1024 * 1024).decode("utf-8"))
+            if not isinstance(state, dict) or state.get("format") != STATE_FORMAT:
+                state = {}
+        except (OSError, ValueError):
+            state = {}
+        added = state.get("added")
+        if not isinstance(added, (int, float)) or isinstance(added, bool):
+            try:
+                added = (root / name).stat().st_mtime
+            except OSError:
+                added = 0.0
+        return float(added), state
+
+    def _load_card(self, root: Path, name: str, added: float, state: dict) -> _Card | None:
+        """One folder of jobs/ as its card, with its saved state (a job that was running shows "stopped"); None when
+        it holds no job file to read. Under self._lock."""
+        try:
+            raw = fileio.read_limited(root / name / "job.json", jobs.MAX_BYTES * 2)
+        except fileio.TooLarge:
+            raw = None
+        except OSError:
+            return None
+        if raw is None:
+            try:
+                sha = fileio.sha256_file(root / name / "job.json")
+            except OSError:
+                return None
+            card = _Card(id=name, sha256=sha, title=None, format_ok=False, job=None,
+                         refusals=[jobs.Refusal("(file)", "the file is over 256 KB", None)], preview=None,
+                         state="refused", ops=[], added=added)
+        elif not raw:
+            return None
+        else:
+            card = self._make_card(raw, known=self._known_ids(), share_names=self._share_names(),
+                                   added=added, folder=name)
+        if card.job is not None:
+            st = state.get("state")
+            if st in ACTIVE:
+                card.state = "stopped"
+            elif st in ("done", "failed", "cancelled", "stopped"):
+                card.state = st
+            ops = state.get("ops")
+            if isinstance(ops, list) and len(ops) == len(card.ops) and \
+                    all(isinstance(o, dict) and o.get("op") == c["op"] for o, c in zip(ops, card.ops)):
+                card.ops = [dict(c, **{k: o.get(k) for k in ("state", "done", "of", "secs")})
+                            for o, c in zip(ops, card.ops)]
+                if card.state == "stopped":
+                    for o in card.ops:
+                        if o["state"] in ("running", "waiting"):
+                            o["state"] = "stopped"
+            result = state.get("result")
+            card.result = result if isinstance(result, dict) and card.state in (
+                "done", "failed", "cancelled", "stopped") else None
+        return card
+
+    def restore_job(self, item_id: str, meta: dict) -> None:
+        """DP22: a removed job from the Deleted bin back in jobs/ and on the page, as it was when it was removed (a job
+        that was running shows "stopped"). Raises deleted.BinError, saying what is in the way and moving nothing, when
+        a job with its id is here, its folder holds a file of the same name, or its share file's name is another
+        job's now."""
+        extra = meta.get("extra") or {}
+        jid = extra.get("id")
+        if not paths_mod.name_ok(jid):
+            raise deleted.BinError(deleted.NO_ITEM)
+        p = self.paths
+        with self._cv:
+            if jid in self._cards:
+                raise deleted.BinError("Not restored: a job with the id %s is here. Remove it first. %s"
+                                       % (jid, deleted.KEPT))
+            if extra.get("checked"):
+                try:
+                    raw = deleted.read_file(p, item_id, "job.json", jobs.MAX_BYTES * 2)
+                except (OSError, fileio.TooLarge):
+                    raw = b""
+                probe = self._make_card(raw, known=self._known_ids(), share_names=self._share_names(), added=0.0,
+                                        folder=jid) if raw else None
+                if probe is not None and probe.job is None:
+                    why = probe.refusals[0].text if probe.refusals else "the job no longer passes its checks"
+                    raise deleted.BinError("Not restored: %s. %s" % (why, deleted.KEPT))
+            folder = self._folder(jid)
+            deleted.move_back(p, item_id, meta, {f["name"]: folder / f["name"] for f in meta["files"]},
+                              "Not restored: the folder of the job %s holds its files now." % jid)
+            added, state = self._read_state(p.jobs, jid)
+            card = self._load_card(p.jobs, jid, added, state)
+            if card is None:
+                _job_log.warn("job %s restored from the Deleted bin without a job file to read", own(jid))
+                return
+            self._cards[card.id] = card
+            if card.state == "stopped" and state.get("state") in ACTIVE:
+                self._save(card)
+        _job_log.info("job %s restored from the Deleted bin", own(card.id))
+        events.emit("job.added", id=own(card.id), state=own(card.state))
+
+    def restore_progress(self, item_id: str, meta: dict) -> None:
+        """DP22: a job's saved progress from the Deleted bin back in its folder, for Resume job. Raises
+        deleted.BinError, moving nothing, when the job is not here, is running, or holds saved progress of its own."""
+        jid = (meta.get("extra") or {}).get("id")
+        if not paths_mod.name_ok(jid):
+            raise deleted.BinError(deleted.NO_ITEM)
+        with self._cv:
+            card = self._cards.get(jid)
+            if card is None:
+                raise deleted.BinError("Not restored: the job %s is not here. Restore the job first. %s"
+                                       % (jid, deleted.KEPT))
+            if card.state in ACTIVE:
+                raise deleted.BinError("Not restored: the job %s is running. Restore its saved progress once it has "
+                                       "stopped. %s" % (jid, deleted.KEPT))
+            deleted.move_back(self.paths, item_id, meta, {MAPS_FILE: self._folder(jid) / MAPS_FILE},
+                              "Not restored: the job %s holds saved progress of its own now." % jid)
+            if card.result is not None and card.state in ("failed", "cancelled", "stopped"):
+                card.result["kept"] = None             # counted again from the file (cards)
+                self._save(card)
+        _job_log.info("the saved progress of the job %s restored from the Deleted bin", own(jid))
+        events.emit("job.state", id=own(jid), state=own(card.state))
 
     def add(self, filename: str, raw: bytes) -> tuple[dict, bool]:
         """Keep raw as jobs/<id>/job.json, check it, return (card, again). again is True when the same sha256 is
@@ -496,7 +607,11 @@ class Runner:
                 if old.job is not None:            # cannot happen: an accepted id is never usable again
                     card = replace(card, id="refused-" + sha[:12])
                 else:
-                    self._drop_folder(old.id)      # a refused card with this id: the new file takes its place
+                    # a refused card with this id: the new file takes its place, the old one goes to the Deleted bin
+                    try:
+                        self._drop_folder(old)
+                    except deleted.BinError as e:
+                        raise OSError("the refused file of this id could not be moved to the Deleted bin") from e
                     del self._cards[old.id]
             try:
                 folder = self._folder(card.id)
@@ -547,7 +662,13 @@ class Runner:
                         "This job loads %s maps in Smithbox, ten at a time. Smithbox's view changes, not its data, "
                         "and loading may take a long while. Start it?" % "{:,}".format(maps))}}
                 if what == "start":
-                    _MapProgress(self._folder(card.id) / MAPS_FILE, {}).clear()
+                    try:
+                        self._bin_progress(card.id)       # DP22: what was kept goes to the Deleted bin
+                    except (OSError, deleted.BinError) as e:
+                        _job_log.warn("job %s did not start again: its saved progress could not be moved to the "
+                                      "Deleted bin: %s", own(card.id), logbook.why(e))
+                        return {"ok": False, "error": "The job did not start again: its saved progress could not be "
+                                                      "moved to the Deleted bin (%s)." % logbook.why(e)}
                 card.cancel = threading.Event()
                 card.state, card.wait, card.result = "queued", None, None
                 card.ops = _ops_public(card.job)
@@ -567,17 +688,23 @@ class Runner:
                     card.cancel.set()
                     self._cv.notify_all()
                 return {"ok": True}
-            # remove
+            # remove: DP22, to the Deleted bin
             if self._current == ("job", card.id):
                 card.cancel.set()
                 card.remove_after = True
                 self._cv.notify_all()
                 return {"ok": True}
+            try:
+                self._drop_folder(card)
+            except (OSError, deleted.BinError) as e:
+                _job_log.warn("job %s not removed: its files could not be moved to the Deleted bin: %s", own(card.id),
+                              logbook.why(e))
+                return {"ok": False, "error": "The job was not removed: its files could not be moved to the Deleted "
+                                              "bin (%s)." % logbook.why(e)}
             if ("job", card.id) in self._queue:
                 self._queue.remove(("job", card.id))
-            self._drop_folder(card.id)
             del self._cards[card.id]
-            _job_log.info("job %s removed", own(card.id))
+            _job_log.info("job %s removed to the Deleted bin", own(card.id))
             events.emit("job.state", id=own(card.id), state=own("removed"))
             return {"ok": True}
 
@@ -849,9 +976,16 @@ class Runner:
                     if item[0] == "job":
                         card = self._cards.get(item[1])
                         if card is not None and card.remove_after:
-                            self._drop_folder(card.id)
-                            del self._cards[card.id]
-                            events.emit("job.state", id=own(card.id), state=own("removed"))
+                            try:
+                                self._drop_folder(card)
+                            except (OSError, deleted.BinError) as e:
+                                card.remove_after = False
+                                _job_log.warn("job %s not removed: its files could not be moved to the Deleted bin: "
+                                              "%s", own(card.id), logbook.why(e))
+                            else:
+                                del self._cards[card.id]
+                                _job_log.info("job %s removed to the Deleted bin", own(card.id))
+                                events.emit("job.state", id=own(card.id), state=own("removed"))
                     self._cv.notify_all()
 
     def _link_reason(self) -> str | None:
@@ -1418,8 +1552,11 @@ class Runner:
             return
         prov = self.provenance() or {}
         key = {"job_sha256": ctx.job.sha256, **{k: prov.get(k) for k in MAPS_KEY}}
-        ctx.progress = _MapProgress(self._folder(card_id) / MAPS_FILE, key)
+        ctx.progress = _MapProgress(self._folder(card_id) / MAPS_FILE, key,
+                                    drop=lambda: self._bin_stale_progress(card_id))
         ctx.kept = ctx.progress.load()
+        if ctx.progress.stale:
+            ctx.progress, ctx.kept = None, {}
         if ctx.kept:
             ctx.log.info("%s maps read by an earlier run of this job are kept and not read again",
                          logbook.n(len(ctx.kept)))

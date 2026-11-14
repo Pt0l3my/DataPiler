@@ -1,9 +1,9 @@
-"""DataPiler's icon (S65): an original wavy katana in a rising slash, with a trail of blood-red flame behind it.
-The blade is polished steel with even, regular waves along both edges, after the old flame-bladed swords
-(flamberge), on a katana's gentle curve, with a katana's guard and wrapped handle; the flames stream off the whole
-blade, layered dark to bright, their edges broken so they flicker, and their red light catches the steel. Three
-levels of detail, so nothing is too small to see at 16 px. Our own drawing; no game art is used. Writes
-datapiler-large.svg, -medium.svg and -small.svg in the current folder."""
+"""DataPiler's icon (S65): an original katana whose blade is wrapped in blood-red flame, in a rising slash, with
+a trail of flame behind it. Only the handle, the guard and the collar show as metal; where the blade is, a bright core
+of fire runs along a katana's plain curve, with tongues of flame rising off both sides and streaming back into the
+trail, layered dark to bright, their edges broken so they flicker. Three levels of detail, so nothing is too small to
+see at 16 px. Our own drawing; no game art is used. Writes datapiler-large.svg, -medium.svg and -small.svg in the
+current folder."""
 import math
 
 K = (36.0, 222.0)          # the end of the handle (kashira), where the swing turns
@@ -120,7 +120,7 @@ def svg(level):
 </defs>''',
              '<rect x="8" y="8" width="240" height="240" rx="52" fill="url(#tile)" stroke="#7a2232" stroke-width="5"/>']
     global WAVES
-    WAVES = (7.0, 3.2) if L else ((5.0, 4.2) if M else (4.0, 5.5))
+    WAVES = (0.0, 0.0)                                  # a plain katana curve under the flames
     edge, back, center, yokote = blade_outline(bw)
     # the flame trail: one body of blood-red fire along the blade's back, breaking into tongues that stream back
     # along the swing and rise, longest towards the point where the blade moves fastest, hooked at their tips; each
@@ -191,25 +191,52 @@ def svg(level):
     parts.append(f'<g transform="translate({hb[0]:.1f} {hb[1]:.1f}) rotate({A1})"><rect x="{-COLLAR/2 - 1}" '
                  f'y="{-bw/2 - 2}" width="{COLLAR + 2}" height="{bw + 4}" rx="2" fill="#d8ad55" stroke="#5a4114" '
                  f'stroke-width="1.5"/></g>')
-    # the blade in polished steel: a bright edge, a darker back, a pale temper line along the edge, and the red
-    # light of the flames on its back half
-    outline = edge + back[::-1]
-    parts.append(f'<path d="{poly(outline)}" fill="#b9bec8" stroke="#14080b" stroke-width="{2.4 if L else 3.5}" '
-                 f'stroke-linejoin="round"/>')
-    nb = round(yokote * (len(center) - 1))
-    backband = [(x - px * w * 0.5, y - py * w * 0.5) for x, y, px, py, w, s in center]
-    ridge = [(x - px * w * 0.05, y - py * w * 0.05) for x, y, px, py, w, s in center]
-    parts.append(f'<path d="{poly(backband + ridge[::-1])}" fill="#6c707c"/>')
-    parts.append(f'<path d="{poly(backband + ridge[::-1])}" fill="#ff2a40" opacity="{0.45 if not S else 0.5}"/>')
-    edgeband = edge[:nb] + [(x + px * w * 0.18, y + py * w * 0.18) for x, y, px, py, w, s in center[:nb]][::-1]
-    parts.append(f'<path d="{poly(edgeband)}" fill="#f4f6fa"/>')
+    # the blade wrapped in fire: tongues rising off its edge side and leaning back along the swing, a red body over
+    # the blade's own outline, and a bright core along its length; edges broken by noise, so it all flickers
+    def edge_root(sk):
+        i = round(sk * (len(edge) - 1))
+        x, y = edge[min(i, len(edge) - 1)]
+        cx, cy = center[min(i, len(center) - 1)][:2]
+        return x + (cx - x) * 0.3, y + (cy - y) * 0.3
     if L:
-        hamon = [(x + px * w * 0.18, y + py * w * 0.18) for x, y, px, py, w, s in center[:nb]]
-        parts.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in hamon) +
-                     '" fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.7"/>')
-        yx, yy, ypx, ypy, yw, _ = center[nb]
-        parts.append(f'<line x1="{yx + ypx * yw * 0.5:.1f}" y1="{yy + ypy * yw * 0.5:.1f}" x2="{yx - ypx * yw * 0.5:.1f}" '
-                     f'y2="{yy - ypy * yw * 0.5:.1f}" stroke="#ffffff" stroke-width="1.2" opacity="0.8"/>')
+        wrap = ((0.08, -118, 40, 30, 20, 30), (0.2, -112, 46, 40, 24, -35), (0.33, -104, 52, 44, 24, 40),
+                (0.46, -98, 54, 46, 24, -40), (0.59, -90, 52, 44, 22, 40), (0.72, -84, 48, 40, 20, -35),
+                (0.84, -78, 44, 34, 18, 35), (0.94, -70, 40, 26, 14, -30), (0.27, -126, 30, 26, 12, 50),
+                (0.53, -122, 28, 28, 12, -50), (0.78, -112, 26, 24, 10, 45))
+    elif M:
+        wrap = ((0.12, -114, 44, 34, 28, 30), (0.36, -104, 52, 44, 30, -35), (0.6, -92, 52, 44, 28, 40),
+                (0.84, -80, 46, 36, 22, -35))
+    else:
+        wrap = ((0.25, -108, 40, 38, 36, 0), (0.7, -88, 42, 40, 34, 0))
+    wl = ['<g clip-path="url(#inTile)">']
+    wl.append('<g filter="url(#glow)" opacity="0.55">' + "".join(
+        f'<path d="{tongue(edge_root(sk), t0_, bd, ln, wd, hk)}" fill="#ff1838"/>' for sk, t0_, bd, ln, wd, hk in wrap)
+        + f'<path d="{poly(edge + back[::-1])}" fill="#ff1838" transform="translate(0 0)"/></g>')
+    fires = ("fire1", "fire2", "fire3", "fire3")
+    for k, (col, flen, fw, op) in enumerate(layers):
+        shapes = "".join(f'<path d="{tongue(edge_root(sk), t0_, bd, ln, wd, hk, flen, fw)}"/>'
+                         for sk, t0_, bd, ln, wd, hk in wrap)
+        if k == 0:
+            # the dark outer flame also covers the blade a little wider than the blade itself
+            wide = [(x + px * w * 0.95, y + py * w * 0.95) for x, y, px, py, w, s in center] + \
+                   [(x - px * w * 0.95, y - py * w * 0.95) for x, y, px, py, w, s in center][::-1]
+            shapes += f'<path d="{poly(wide)}"/>'
+        if k == 1:
+            shapes += f'<path d="{poly(edge + back[::-1])}"/>'
+        if S:
+            wl.append(f'<g fill="{col}" opacity="{op}">{shapes}</g>')
+        else:
+            wl.append(f'<g transform="rotate(-25 150 120)"><g filter="url(#{fires[k]})"><g transform="rotate(25 150 120)" '
+                      f'fill="{col}" opacity="{op}">{shapes}</g></g></g>')
+    # the core: a bright line of fire along the blade, from the collar to the point
+    core = [(x, y) for x, y, px, py, w, s in center[: round(0.97 * (len(center) - 1))]]
+    cw = 4.5 if L else (7 if M else 9)
+    wl.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in core) + f'" fill="none" stroke="#ff4a5e" '
+              f'stroke-width="{cw * 1.8:.1f}" stroke-linecap="round" opacity="0.9"/>')
+    wl.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in core) + f'" fill="none" stroke="#ffc2c9" '
+              f'stroke-width="{cw * 0.7:.1f}" stroke-linecap="round" opacity="{0.9 if not S else 0.8}"/>')
+    wl.append("</g>")
+    parts += wl
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">'
             + "".join(parts) + "</svg>")
 

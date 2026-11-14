@@ -1,8 +1,9 @@
-"""DataPiler's icon (S65): an original katana with a crimson blade in a rising slash, and behind it a trail of
-blood-red flame streaming off the whole blade: layered tongues, dark at their edges and bright at their cores, that
-sweep back along the swing and curl at their tips. The sword is drawn to a katana's proportions. Three levels of
-detail, so nothing is too small to see at 16 px. Our own drawing; no game art is used. Writes datapiler-large.svg,
--medium.svg and -small.svg in the current folder."""
+"""DataPiler's icon (S65): an original wavy katana in a rising slash, with a trail of blood-red flame behind it.
+The blade is polished steel with even, regular waves along both edges, after the old flame-bladed swords
+(flamberge), on a katana's gentle curve, with a katana's guard and wrapped handle; the flames stream off the whole
+blade, layered dark to bright, their edges broken so they flicker, and their red light catches the steel. Three
+levels of detail, so nothing is too small to see at 16 px. Our own drawing; no game art is used. Writes
+datapiler-large.svg, -medium.svg and -small.svg in the current folder."""
 import math
 
 K = (36.0, 222.0)          # the end of the handle (kashira), where the swing turns
@@ -10,6 +11,7 @@ A1 = -49.0                 # the sword's angle now (degrees; screen y points dow
 A0 = -35.0                 # its angle where the trail begins
 HANDLE, GUARD, COLLAR, BLADE = 64.0, 6.0, 9.0, 192.0
 SORI = 9.0                 # how far the blade's middle bows towards its edge
+WAVES = (7.0, 3.2)         # the blade's even waves: how many along it, and how far each swings (set per level)
 
 
 def unit(a):
@@ -49,8 +51,10 @@ def blade_outline(bw):
         ln = math.hypot(dx, dy)
         return dy / ln, -dx / ln
     edge, back, center = [], [], []
-    n = 80
+    n = 160
     yokote = 0.9
+    waves = WAVES[0]
+    amp = WAVES[1]
     for i in range(n + 1):
         s = i / n
         w = bw * (1 - 0.3 * s)
@@ -60,6 +64,9 @@ def blade_outline(bw):
             e = w / 2 * math.sqrt(max(0.0, 1 - f ** 1.6))
             b = w / 2 * (1 - f ** 3)
         x, y = at(s); px, py = normal(s)
+        fade = min(1.0, s / 0.08) * (min(1.0, (1 - s) / 0.14) if s > 0.86 else 1.0)
+        wv = amp * math.sin(2 * math.pi * waves * s) * fade      # an even wave, both edges together
+        x, y = x + px * wv, y + py * wv
         edge.append((x + px * e, y + py * e))
         back.append((x - px * b, y - py * b))
         center.append((x, y, px, py, w, s))
@@ -112,21 +119,23 @@ def svg(level):
   <filter id="fire3" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.03 0.09" numOctaves="2" seed="42" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="11" xChannelSelector="R" yChannelSelector="G"/></filter>
 </defs>''',
              '<rect x="8" y="8" width="240" height="240" rx="52" fill="url(#tile)" stroke="#7a2232" stroke-width="5"/>']
+    global WAVES
+    WAVES = (7.0, 3.2) if L else ((5.0, 4.2) if M else (4.0, 5.5))
     edge, back, center, yokote = blade_outline(bw)
     # the flame trail: one body of blood-red fire along the blade's back, breaking into tongues that stream back
     # along the swing and rise, longest towards the point where the blade moves fastest, hooked at their tips; each
     # a dark outer flame, a red body and a bright core; a soft glow beneath
     if L:
-        # (where on the blade, leaving angle, bend, length, width, hook)
-        tongues = ((0.16, 78, -70, 52, 34, -45), (0.29, 74, -84, 74, 40, 50), (0.42, 70, -96, 92, 44, -55),
-                   (0.55, 64, -104, 104, 46, 60), (0.67, 56, -108, 108, 46, -60), (0.78, 46, -104, 100, 42, 55),
-                   (0.88, 34, -96, 84, 36, -50), (0.96, 22, -84, 62, 28, 45), (0.48, 86, -70, 70, 28, 65),
-                   (0.73, 76, -86, 82, 26, -60))
+        # (where on the blade, leaving angle, bend, length, width, hook) - uneven on purpose, as fire is
+        tongues = ((0.15, 80, -64, 44, 30, -40), (0.27, 70, -88, 78, 44, 55), (0.41, 76, -104, 98, 40, -45),
+                   (0.52, 58, -96, 82, 50, 65), (0.64, 66, -118, 116, 46, -70), (0.77, 44, -100, 96, 40, 50),
+                   (0.86, 38, -84, 70, 30, -60), (0.95, 20, -90, 56, 24, 45), (0.34, 92, -60, 58, 18, 80),
+                   (0.70, 84, -70, 74, 16, -75), (0.58, 30, -120, 104, 14, 70))
     elif M:
-        tongues = ((0.22, 76, -80, 66, 46, -45), (0.45, 68, -98, 96, 54, 55), (0.68, 56, -106, 108, 54, -60),
-                   (0.90, 34, -94, 82, 44, 55))
+        tongues = ((0.22, 78, -78, 62, 46, -45), (0.44, 64, -102, 96, 56, 55), (0.66, 70, -114, 112, 50, -65),
+                   (0.88, 36, -92, 76, 40, 55))
     else:
-        tongues = ((0.34, 72, -88, 84, 66, 0), (0.72, 50, -100, 104, 66, 0))
+        tongues = ((0.32, 72, -88, 80, 66, 0), (0.70, 54, -104, 104, 66, 0))
     layers = ((("#5a000f", 1.0, 1.0, 1.0), ("#bf0d2b", 0.82, 0.66, 1.0), ("#ff2f46", 0.6, 0.36, 1.0),
                ("#ff9aa6", 0.38, 0.12, 0.8)) if L else
               (("#5e0010", 1.0, 1.0, 1.0), ("#cf1230", 0.8, 0.62, 1.0), ("#ff3a50", 0.55, 0.3, 1.0)) if M else
@@ -182,31 +191,25 @@ def svg(level):
     parts.append(f'<g transform="translate({hb[0]:.1f} {hb[1]:.1f}) rotate({A1})"><rect x="{-COLLAR/2 - 1}" '
                  f'y="{-bw/2 - 2}" width="{COLLAR + 2}" height="{bw + 4}" rx="2" fill="#d8ad55" stroke="#5a4114" '
                  f'stroke-width="1.5"/></g>')
-    # the blade: crimson, darker along its back, brighter at the edge, with a wavy temper line (hamon) near the edge,
-    # the ridge (shinogi) and the line across the point (yokote)
+    # the blade in polished steel: a bright edge, a darker back, a pale temper line along the edge, and the red
+    # light of the flames on its back half
     outline = edge + back[::-1]
-    parts.append(f'<path d="{poly(outline)}" fill="#a80f26" stroke="#1c0004" stroke-width="{2.4 if L else 3.5}" '
+    parts.append(f'<path d="{poly(outline)}" fill="#b9bec8" stroke="#14080b" stroke-width="{2.4 if L else 3.5}" '
                  f'stroke-linejoin="round"/>')
+    nb = round(yokote * (len(center) - 1))
     backband = [(x - px * w * 0.5, y - py * w * 0.5) for x, y, px, py, w, s in center]
     ridge = [(x - px * w * 0.05, y - py * w * 0.05) for x, y, px, py, w, s in center]
-    nb = round(yokote * (len(center) - 1))
-    parts.append(f'<path d="{poly(backband[:nb] + ridge[:nb][::-1])}" fill="#5e0612" opacity="0.85"/>')
-    if not S:
-        hamon = []
-        for i, (x, y, px, py, w, s) in enumerate(center[:nb]):
-            off = w * (0.16 + (0.07 if L else 0.05) * math.sin(s * (44 if L else 26)))
-            hamon.append((x + px * off, y + py * off))
-        edgeband = edge[:nb] + hamon[::-1]
-        parts.append(f'<path d="{poly(edgeband)}" fill="#ff5c6c" opacity="0.95"/>')
-        if L:
-            parts.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in hamon) +
-                         '" fill="none" stroke="#ffd0d5" stroke-width="1.2" opacity="0.8"/>')
-            yx, yy, ypx, ypy, yw, _ = center[nb]
-            parts.append(f'<line x1="{yx + ypx * yw * 0.5:.1f}" y1="{yy + ypy * yw * 0.5:.1f}" x2="{yx - ypx * yw * 0.5:.1f}" '
-                         f'y2="{yy - ypy * yw * 0.5:.1f}" stroke="#ffd0d5" stroke-width="1.3" opacity="0.85"/>')
-    else:
-        parts.append(f'<path d="{poly(edge[:nb] + [(x + px * w * 0.12, y + py * w * 0.12) for x, y, px, py, w, s in center[:nb]][::-1])}" '
-                     f'fill="#ff5c6c"/>')
+    parts.append(f'<path d="{poly(backband + ridge[::-1])}" fill="#6c707c"/>')
+    parts.append(f'<path d="{poly(backband + ridge[::-1])}" fill="#ff2a40" opacity="{0.45 if not S else 0.5}"/>')
+    edgeband = edge[:nb] + [(x + px * w * 0.18, y + py * w * 0.18) for x, y, px, py, w, s in center[:nb]][::-1]
+    parts.append(f'<path d="{poly(edgeband)}" fill="#f4f6fa"/>')
+    if L:
+        hamon = [(x + px * w * 0.18, y + py * w * 0.18) for x, y, px, py, w, s in center[:nb]]
+        parts.append('<path d="M ' + " L ".join(f"{x:.1f} {y:.1f}" for x, y in hamon) +
+                     '" fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.7"/>')
+        yx, yy, ypx, ypy, yw, _ = center[nb]
+        parts.append(f'<line x1="{yx + ypx * yw * 0.5:.1f}" y1="{yy + ypy * yw * 0.5:.1f}" x2="{yx - ypx * yw * 0.5:.1f}" '
+                     f'y2="{yy - ypy * yw * 0.5:.1f}" stroke="#ffffff" stroke-width="1.2" opacity="0.8"/>')
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">'
             + "".join(parts) + "</svg>")
 

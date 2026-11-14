@@ -182,7 +182,7 @@ def _cell_ok(t: str, v: object) -> bool:
 def fixed_words() -> frozenset[str]:
     """DataPiler's fixed words, which check 3 skips where a value is exactly one of them (S6, S20): the labels, the
     column types and enum values, the column names its operations make (fields.PARAMS's fields, the placements'
-    columns, `named` and `count`), the expansion's source and the format constant. Each is a word of DataPiler's
+    columns, `named` and `count`, and check_fields's `field`, `present` and `type`), the expansion's source and the format constant. Each is a word of DataPiler's
     own code, never one read from the game or a job; table names, job ids and every other value stay checked."""
     from . import jobs     # jobs imports this module: its columns are read here, at the check
 
@@ -194,6 +194,7 @@ def fixed_words() -> frozenset[str]:
         words.update(flds)
     words.update(c for c, _ in jobs.PLACEMENT_COLUMNS)
     words.update(jobs.MADE_COLUMNS)
+    words.update(c for c, _ in jobs.CHECK_COLUMNS)      # S68: check_fields's columns, `field`, `present`, `type`
     return frozenset(words)
 
 

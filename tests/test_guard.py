@@ -359,6 +359,18 @@ class GuardTest(unittest.TestCase):
             container="item", language="engus", sha256="1" * 64)
         self.assertEqual(self.failing(self.doc(notes=())), {})
 
+    def test_s68_check_fields_columns_against_ordinary_words(self):
+        """Found on the owner's PC (en-0015, 0.2.18; settled S68): check_fields's column `field` sits inside ordinary
+        words of the game's text, and was refused as a column name. Its three columns are fixed words now."""
+        words = ["Battlefield", "Omnipresent", "Archetype", "Fieldstone"]
+        self.db.import_export({"Name": "item", "FmgWrappers": [{"Name": "Invented", "ID": 9001, "Fmg": {
+            "Entries": [{"ID": 9300000 + i, "Text": w} for i, w in enumerate(words)]}}]},
+            container="item", language="engus", sha256="4" * 64)
+        data = self.doc(tables=[{"name": "fields_points", "columns": [("field", "int"), ("present", "bool"),
+                                                                      ("type", "int")],
+                                 "rows": [[0, True, 7], [1, False, 0]]}])
+        self.assertEqual(self.failing(data), {})
+
     def test_ordinary_words_that_hold_a_key_or_a_fixed_word(self):
         """One-word texts that hold the format's keys (rows, name, tables, type, provenance's names, wrappers) or
         DataPiler's fixed words (count, number, bool, summary, owner): none refuses a share file, and a table name
@@ -384,7 +396,7 @@ class GuardTest(unittest.TestCase):
         fixed = guard.fixed_words()
         for w in ("named_only", "summary", "int", "number", "bool", "label", "enum:source", "server", "guided",
                   "id", "nameId", "teamType", "npcType", "msgId", "map", "entityId", "npcParamId", "talkId", "model",
-                  "named", "count", "owner", guard.SHARE_FORMAT):
+                  "named", "count", "owner", "field", "present", "type", guard.SHARE_FORMAT):
             self.assertIn(w, fixed, w)
         self.assertNotIn("name", fixed)          # join_names's local text never reaches a share file
         self.assertNotIn("per_team", fixed)

@@ -13,6 +13,12 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.19 - 2026-11-14
+
+- Fixed: a share file with a `check_fields` table was refused by the guard's check 3 when the game's text in the
+  workspace holds a word with `field` in it, as the owner's does (S68). `field`, `present` and `type`, the columns
+  `check_fields` makes, are now among DataPiler's fixed words, as `count` is.
+
 ## 0.2.18 - 2026-11-14
 
 - A new job operation, `check_fields` (S67): whether a param's rows have the fields a job names, and their types, as

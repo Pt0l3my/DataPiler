@@ -395,6 +395,15 @@ or erases an item from it, each with DELETE typed in.
 
 **Owner's words.** The request above; then "Until I empty it (Recommended)".
 
+**Later changes.**
+- *2026-11-14, the owner, on the built bin.* "yes anything that deletes a dataset brings up a pop up WITH text field
+  requiring entering DELETE first, until that word in capital is entered the delete button on the pop up is greyed
+  out." So every removal of a dataset asks for DELETE typed exactly, in capitals, with the button disabled until then,
+  and the API refuses without it: share and workspace files, imported game text, a map job's saved progress (whether
+  removed with its job or dropped by Start again) and erasing from the bin. Removing a job that holds no data asks in a
+  plain pop-up. The owner also approved that a map job's progress file is deleted when the job finishes, as its
+  outputs then hold what was read: "approved".
+
 ## DP23
 
 **Game updates: every version's data kept, re-read and compared** · *2026-11-14 · Decided by the owner, as recommended*

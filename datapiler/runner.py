@@ -60,7 +60,7 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
+UNITS = {"fetch_rows": "rows", "check_fields": "fields", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
@@ -1158,6 +1158,8 @@ class Runner:
         op = o["op"]
         if op == "fetch_rows":
             return self._fetch_rows(ctx, i, o)
+        if op == "check_fields":
+            return self._check_fields(ctx, i, o)
         if op == "load_maps":
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
@@ -1221,6 +1223,19 @@ class Runner:
         if op == "write_share":
             return self._write_share(ctx, i, o)
         raise _Fail("an operation DataPiler does not have")
+
+    def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S67: one row per field the job names: its place in the job's list, whether the server's answer for the
+        param's first row has it, and its type as a number (fields.type_code). No value and no name is kept."""
+        names = list(o["fields"])
+        ctx.on_op(i, "running", 0, len(names), None)
+        types = self.link.field_types(o["param"])
+        rows = [[j, f in types, fields.type_code(types.get(f))] for j, f in enumerate(names)]
+        ctx.tables[o["as"]] = ([c for c in jobs.CHECK_COLUMNS], rows)
+        found = sum(1 for r in rows if r[1])
+        ctx.log.info("op %s check_fields: %s of %s fields named are in the server's answer", i, logbook.n(found),
+                     logbook.n(len(names)))
+        return found, len(names)
 
     def _fetch_rows(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         param = o["param"]
@@ -1555,6 +1570,8 @@ class Runner:
         lin = ctx.job.lineage.get(table)
         if lin is not None and not lin.per_row and list(columns) == ["count"]:
             return None
+        if lin is not None and lin.source_op == "check_fields":
+            return None                          # S67: what fields are, never rows of a game table
         src = ctx.sources.get(lin.source) if lin is not None and lin.source is not None else None
         if lin is None or src is None:
             return (None, 0, UNKNOWN_SOURCE)

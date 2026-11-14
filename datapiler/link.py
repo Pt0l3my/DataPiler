@@ -437,6 +437,26 @@ class Link:
                 ids.append(rid)
         return ids
 
+    def field_types(self, param: str) -> dict[str, str]:
+        """S67: the fields of the param's first row as the server answers it, {name: its type}, for check_fields.
+        Values are never read. {} for a param with no rows. A name with an index (`name:4`) counts as its base name."""
+        _check_param(param)
+        ids = self.list_param_rows(param)
+        if not ids:
+            return {}
+        pb = self._messages()[2]
+        resp = self._call("GetParamRows", pb.GetParamRowsRequest(param_name=param, row_id=ids[0], vanilla=True),
+                          lambda r: len(r.rows))
+        out: dict[str, str] = {}
+        for row in list(resp.rows)[:1]:
+            for fv in row.values:
+                name = fv.internal_name
+                if not isinstance(name, str) or not name:
+                    continue
+                base = name.split(":", 1)[0] if re.fullmatch(r"[A-Za-z0-9_]+:\d+", name) else name
+                out.setdefault(base, fv.def_type if isinstance(fv.def_type, str) else "")
+        return out
+
     def get_param_rows(self, param: str, row_ids: Sequence[int], fields: Sequence[str], *,
                        cancel: threading.Event | None = None,
                        progress: Callable[[int, int], None] | None = None) -> list[dict[str, int | float | bool]]:

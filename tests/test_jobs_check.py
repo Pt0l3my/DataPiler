@@ -12,7 +12,7 @@ from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
-OPS_LIST = "fetch_rows, load_maps, read_placements, join_names, unused_names, filter, count, distinct, write_local, write_share"
+OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, join_names, unused_names, filter, count, distinct, write_local, write_share"
 
 # Each bad fixture gives exactly one refusal: (where, text).
 EXPECTED = {
@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.18", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.19", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -480,4 +480,31 @@ class BossOpsTest(unittest.TestCase):
         self.assertEqual(self.refused_at([PLACED, dict(slots, slots="all"), share("b", cols={"b": ["map"]})])[0][0],
                          "ops[1].slots")
         self.assertEqual(self.refused_at([NPC, dict(slots, rows="npc"), share("b")])[0][0], "ops[1].slots")
+
+
+class CheckFieldsTest(unittest.TestCase):
+    """S67: check_fields names any field of a param DataPiler reads, never a value; its table may be shared."""
+
+    CHECK = {"op": "check_fields", "as": "fc", "param": "WorldMapPointParam", "fields": ["posX", "areaNo", "iconId"]}
+
+    def test_it_passes_and_its_table_may_be_shared(self):
+        doc = job([self.CHECK, {"op": "write_share", "name": "map-fields", "tables": ["fc"],
+                                "columns": {"fc": ["field", "present", "type"]}}])
+        j = check(doc)
+        self.assertEqual(j.lineage["fc"].kind, "aggregate")
+        self.assertTrue(j.uses_link)
+        self.assertEqual(jobs.columns_of(j)["fc"], [("field", "int"), ("present", "bool"), ("type", "int")])
+
+    def test_its_refusals(self):
+        bad = [dict(self.CHECK, param="ShopLineupParam"), dict(self.CHECK, fields=["pos X"]),
+               dict(self.CHECK, fields=["posX", "posX"]), dict(self.CHECK, fields=["f%d" % k for k in range(33)]),
+               dict(self.CHECK, fields=[])]
+        wheres = [[r.where for r in refusals(job([o]))] for o in bad]
+        self.assertEqual(wheres, [["ops[0].param"], ["ops[0].fields[0]"], ["ops[0].fields[1]"], ["ops[0].fields"],
+                                  ["ops[0].fields"]])
+
+    def test_fetch_rows_still_reads_only_the_listed_fields(self):
+        o = {"op": "fetch_rows", "as": "pts", "param": "WorldMapPointParam", "fields": ["id", "posX"]}
+        self.assertEqual([r.where for r in refusals(job([o]))], ["ops[0].fields[1]"])
+        self.assertTrue(check(job([dict(o, fields=["id"])])).uses_link)
 

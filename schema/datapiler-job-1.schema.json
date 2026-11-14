@@ -41,6 +41,9 @@
             "$ref": "#/$defs/op_fetch_rows"
           },
           {
+            "$ref": "#/$defs/op_check_fields"
+          },
+          {
             "$ref": "#/$defs/op_load_maps"
           },
           {
@@ -224,7 +227,10 @@
             "NpcParam",
             "TalkParam",
             "WorldMapPlaceNameParam",
-            "BonfireWarpParam"
+            "BonfireWarpParam",
+            "WorldMapPointParam",
+            "WorldMapPieceParam",
+            "WorldMapLegacyConvParam"
           ]
         },
         "fields": {
@@ -367,8 +373,117 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapPointParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapPieceParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapLegacyConvParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "enum": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          }
         }
       ]
+    },
+    "op_check_fields": {
+      "type": "object",
+      "description": "Whether a param's rows have the fields named, and their types, as Smithbox's server answers for its first row: never a value. Makes a table with one row per field named: field (its place in the list), present, type (0 absent; 1 s8, 2 u8, 3 s16, 4 u16, 5 s32, 6 u32, 7 f32, 8 angle32, 9 f64, 10 b32, 11 fixstr, 12 fixstrW, 13 dummy8, 99 another). A field is added to the fields fetch_rows reads only once this has verified it (P4). The table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "param",
+        "fields"
+      ],
+      "properties": {
+        "op": {
+          "const": "check_fields"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "param": {
+          "enum": [
+            "NpcParam",
+            "TalkParam",
+            "WorldMapPlaceNameParam",
+            "BonfireWarpParam",
+            "WorldMapPointParam",
+            "WorldMapPieceParam",
+            "WorldMapLegacyConvParam"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+          }
+        }
+      }
     },
     "op_load_maps": {
       "type": "object",

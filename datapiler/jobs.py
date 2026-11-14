@@ -33,7 +33,7 @@ FORMAT = "datapiler-job/1"
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
-OPS = ("fetch_rows", "load_maps", "read_placements", "join_names", "unused_names", "filter", "count", "distinct",
+OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "join_names", "unused_names", "filter", "count", "distinct",
        "write_local", "write_share")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
@@ -67,6 +67,7 @@ INT_LIMIT = 2 ** 63
 TOP_KEYS: dict[str, bool] = {"format": True, "id": True, "title": True, "ops": True, "needs": False}
 ARGS: dict[str, dict[str, bool]] = {
     "fetch_rows": {"as": True, "param": True, "fields": True, "ids": False},
+    "check_fields": {"as": True, "param": True, "fields": True},
     "load_maps": {"maps": True, "timeout": False},
     "read_placements": {"as": True, "maps": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
@@ -77,8 +78,11 @@ ARGS: dict[str, dict[str, bool]] = {
     "write_local": {"name": True, "tables": True, "columns": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
-LINK_OPS = ("fetch_rows", "load_maps", "read_placements")
-READS = ("fetch_rows", "load_maps", "read_placements")
+LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
+READS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
+# What check_fields makes (S67): one row per field the job names, by its place in the list - whether the server's
+# answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
+CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
 COMPUTES = ("join_names", "unused_names", "filter", "count", "distinct")
 WRITES = ("write_local", "write_share")
 
@@ -517,6 +521,33 @@ class _Checker:
             self.tables[as_] = cols
             self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()))
 
+    def op_check_fields(self, place: str, i: int, o: dict) -> None:
+        # S67: which of the fields named the server's answer has, and their types; never a value. Any field name may
+        # be named here, as this is how a field is verified before fields.PARAMS lists it (build plan §10, P4).
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        param = o.get("param")
+        if "param" in o and not (isinstance(param, str) and param in fields.PARAMS):
+            self.add(place + ".param", _named(param, "is not a param DataPiler reads (%s)" % _PARAM_LIST,
+                                              "not a param DataPiler reads (%s)" % _PARAM_LIST), i)
+        fl = o.get("fields")
+        if "fields" in o:
+            if not isinstance(fl, list) or not 1 <= len(fl) <= MAX_FIELDS:
+                self.add(place + ".fields", "must be a list of 1 to %d field names" % MAX_FIELDS, i)
+            else:
+                seen: set[str] = set()
+                for j, f in enumerate(fl):
+                    p = "%s.fields[%d]" % (place, j)
+                    if not isinstance(f, str) or not FIELD_RX.fullmatch(f):
+                        self.add(p, "must be a field name (a letter, then letters, digits or _)", i)
+                    elif f in seen:
+                        self.add(p, "`%s` is named twice" % f, i)
+                    else:
+                        seen.add(f)
+        if as_ is not None:
+            self.tables[as_] = list(CHECK_COLUMNS)
+            # Holds no row of the game's tables, no id and no value: what a field is, never what it holds.
+            self.lineage[as_] = Lineage("aggregate", None, "check_fields", None, (), False, False, "")
+
     def ids(self, place: str, v: object, i: int) -> None:
         if isinstance(v, list):
             if not 1 <= len(v) <= MAX_IDS:
@@ -857,6 +888,7 @@ def _after_count(parent: Lineage, i: int, by: list[str]) -> Lineage:
 # The closed set: each operation's own check (a fixed table, never a name looked up from the job).
 _CHECKS = {
     "fetch_rows": _Checker.op_fetch_rows,
+    "check_fields": _Checker.op_check_fields,
     "load_maps": _Checker.op_load_maps,
     "read_placements": _Checker.op_read_placements,
     "join_names": _Checker.op_join_names,
@@ -1046,6 +1078,9 @@ def _line(o: dict) -> str:
         elif isinstance(ids, list):
             s += " - " + _plural(len(set(ids)), "row", "rows")
         return s
+    if op == "check_fields":
+        return "%s: whether its rows have %s, and their types - no values" % (
+            o["param"], _plural(len(o["fields"]), "field named", "fields named"))
     if op == "load_maps":
         s = "loads %s in Smithbox - its view changes, not its data" % _maps_words(o["maps"])
         return s + (", %d s a map before skipping it" % o["timeout"] if o.get("timeout") is not None else "")
@@ -1109,6 +1144,8 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
         op = o["op"]
         if op == "fetch_rows":
             tables[o["as"]] = [("id", "int")] + [(f, fields.PARAMS[o["param"]][f]) for f in o["fields"] if f != "id"]
+        elif op == "check_fields":
+            tables[o["as"]] = list(CHECK_COLUMNS)
         elif op == "read_placements":
             tables[o["as"]] = list(PLACEMENT_COLUMNS)
         elif op == "join_names":

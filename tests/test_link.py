@@ -256,6 +256,19 @@ class AgainstTheFake(unittest.TestCase):
         only_id = self.link.get_param_rows("TalkParam", [9100003], ["id"])
         self.assertEqual(only_id, [{"id": 9100003}])
 
+    def test_field_types_of_the_first_row_never_values(self):
+        self.link.switch(True)
+        types = self.link.field_types("NpcParam")
+        self.assertEqual(types["nameId"], "s32")
+        self.assertEqual(types["hitHeight"], "f32")
+        self.assertEqual(types["isGhost"], "b32")
+        self.assertEqual(types["padFlags"], "u8")            # `padFlags:4` counts as its base name
+        self.assertEqual(types["epithet"], "fixstrW")
+        self.assertEqual(len(self.fake.requests("GetParamRows")), 1)
+        self.assert_no_planted(types)
+        with self.assertRaises(ValueError):
+            self.link.field_types("../NpcParam")
+
     def test_a_text_cell_is_refused(self):
         self.link.switch(True)
         with self.assertRaises(link.LinkDataError) as cm:

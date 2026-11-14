@@ -17,8 +17,9 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 - **2026-11-09.** DP16 (an Imported tab).
 - **2026-11-14.** DP17 (the name numbers no row uses, shared whole) and DP18 (check 3 compares with the names only;
   Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job). DP20
-  (map jobs on Smithbox's OpenGL build, a setting).
-- **Open.** None.
+  (map jobs on Smithbox's OpenGL build, a setting). DP21 put to the owner (the map tables' coordinates in share
+  files).
+- **Open.** DP21.
 
 ## DP1
 
@@ -336,3 +337,31 @@ hand is a bother.
 Smithbox runs as its Vulkan build and says how to switch. The next map job is the trial.
 
 **Owner's words.** "OpenGL-only setting (Recommended)".
+
+## DP21
+
+**The map tables' coordinates in share files** · *2026-11-14 · Open*
+
+**Question.** For EldenNet's map (GraceUI proposal 0002; EldenNet roadmap S7.9.c), the research needs where the game
+puts things: the resting places, the map's points and place names, the pieces it reveals, and the table that carries
+the dungeons' own coordinates onto the open world. These are numbers in five param tables (`BonfireWarpParam`,
+`WorldMapPointParam`, `WorldMapPlaceNameParam`, `WorldMapPieceParam`, `WorldMapLegacyConvParam`): an area, a grid
+cell and a position for each row, and rectangles and scales for the pieces. DP8 lets a share file hold only rows a job
+picked by an explicit list of ids, the named rows, or counts, so whole tables of positions cannot go into one, and the
+row ids are not known beforehand. First 0.2.18's `check_fields` verifies which fields exist (S67), whatever is decided
+here.
+
+**Options.**
+- (a) **A narrow exception to DP8 for these five tables' coordinate columns**: area, grid and position numbers, the
+  pieces' rectangles and scales, and each row's id, for every row, in a share file marked by a new label (`map_coords`).
+  No text id, flag or other column. The file goes to the EldenNet research session only and is never committed;
+  what EldenNet commits from it is the method, the fitted conversion, counts and error figures.
+- (b) **No exception**: the coordinates stay on the owner's PC, and the conversion is fitted later in game by
+  EldenNet's spike, from the running game's own tables.
+- (c) **Counts only** now (rows per area and grid cell, which DP8 already allows), and the question again once the
+  spike has run.
+
+**Recommendation.** (a): the numbers are coordinates, not text or anything personal; without them the map's design
+cannot be checked before EldenNet runs in game, which is a long way off; and the rule that matters, that no raw table of
+the game's data is committed, holds. (b) keeps DP8 whole at the price of waiting; (c) is a partial step.
+

@@ -72,6 +72,14 @@ class FakeLink:
         self.calls.append(("ListParamRows", param))
         return sorted(self._table(param))
 
+    def field_types(self, param):
+        self._check()
+        self.calls.append(("FieldTypes", param))
+        if param != "NpcParam":
+            return {}
+        return {"nameId": "s32", "teamType": "u8", "npcType": "u8", "hitHeight": "f32", "isGhost": "b32",
+                "epithet": "fixstrW", "oddField": "s128"}
+
     def get_param_rows(self, param, row_ids, fields, *, cancel=None, progress=None):
         out = []
         for k, rid in enumerate(row_ids):
@@ -248,6 +256,21 @@ class JobRunTest(RunnerBase):
                          {"per_team": (None, 20, "NpcParam")})
         self.assertEqual(card["result"]["failed"], None)
         self.assertEqual(self.r.made_by()["roster-counts.json"], "en-0007-roster-counts")
+
+    def test_check_fields_gives_numbers_only_and_may_be_shared(self):
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0067-check", "title": "Fields (invented)", "ops": [
+            {"op": "check_fields", "as": "fc", "param": "NpcParam",
+             "fields": ["nameId", "hitHeight", "isGhost", "epithet", "oddField", "noSuch"]},
+            {"op": "write_share", "name": "fields-check", "tables": ["fc"],
+             "columns": {"fc": ["field", "present", "type"]}}]}).encode()
+        card = self.run_job(raw)
+        self.assertEqual(card["ops"][0]["done"], 5)
+        self.assertEqual(card["ops"][0]["of"], 6)
+        doc = json.loads((self.p.share / "fields-check.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["tables"][0]["rows"], [[0, True, 5], [1, True, 7], [2, True, 10], [3, True, 12],
+                                                    [4, True, 99], [5, False, 0]])
+        self.assertNotIn("nameId", json.dumps(doc["tables"]))
+        self.assertIn(("FieldTypes", "NpcParam"), self.link.calls)
 
     def test_every_op_and_the_local_file(self):
         card = self.run_job(fixture("job-files", "good-every-op.json"))

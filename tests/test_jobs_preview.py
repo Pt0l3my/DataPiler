@@ -28,6 +28,7 @@ class PreviewTest(unittest.TestCase):
     def test_every_op(self):
         self.assertEqual(jobs.preview(load("good-every-op.json")), {
             "reads": ["NpcParam rows: id, nameId, teamType, npcType - rows 9000000 to 9000099",
+                      "NpcParam: whether its rows have 2 fields named, and their types - no values",
                       "TalkParam rows: id, msgId - 3 rows",
                       "loads 2 maps in Smithbox - its view changes, not its data",
                       "placed characters of 2 maps: entity, row, dialogue and model ids"],

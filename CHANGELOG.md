@@ -13,6 +13,18 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.18 - 2026-11-14
+
+- A new job operation, `check_fields` (S67): whether a param's rows have the fields a job names, and their types, as
+  Smithbox's server answers for the param's first row. It reads no value and keeps no name: its table holds each
+  field's place in the job's list, whether it is there, and its type as a number, so it may go into a share file. It is
+  how a field is verified before `fetch_rows` may read it (build plan §10, P4).
+- `fetch_rows` and `check_fields` may name three more of the game's map tables, `WorldMapPointParam`,
+  `WorldMapPieceParam` and `WorldMapLegacyConvParam`, by row id only until their fields are verified, as
+  `WorldMapPlaceNameParam` and `BonfireWarpParam` already were.
+- Placements' positions cannot be read through Smithbox's server (S67): it sends single numbers and text only, and a
+  position is a vector it leaves out. No position column is added.
+
 ## 0.2.17 - 2026-11-14
 
 - The icon redrawn once more, at the owner's choice (S65): a crimson katana on a plain curve, wrapped and trailed by

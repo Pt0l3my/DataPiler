@@ -16,7 +16,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   seen by its process at all times).
 - **2026-11-09.** DP16 (an Imported tab).
 - **2026-11-14.** DP17 (the name numbers no row uses, shared whole) and DP18 (check 3 compares with the names only;
-  Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job).
+  Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job). DP20
+  (map jobs on Smithbox's OpenGL build, a setting).
 - **Open.** None.
 
 ## DP1
@@ -307,3 +308,31 @@ S58, S59). As Smithbox saves its preferences when it closes, the log says they m
 **Owner's words.** "would it be possible to double check if rendering is turned off for a map loader job, then make it
 10 sec fail check?"
 
+## DP20
+
+**Map jobs on Smithbox's OpenGL build** · *2026-11-14 · Decided by the owner, as recommended*
+
+**Question.** After en-0011's third run brought the graphics driver down (EldenNet WHY§51), the owner asked: "is it
+possible to add a setting to datapiler to disable GPU usage for these rendering based jobs?" DataPiler itself never
+uses the GPU; Smithbox does, and no program with a window can run without it. What can be chosen is which of
+Smithbox's two builds runs: by its source at 2.2.6 (`Universe.cs` `LoadMapAsync`), its Vulkan build prepares every
+loaded map's model and texture lists even with rendering off, and its OpenGL build (`Smithbox.OpenGL.exe`, in the
+owner's Smithbox folder) does not. DataPiler already sees which build is running. That the OpenGL build spares the
+graphics card in practice is not yet tried.
+
+**Options.**
+- (a) **A setting, on by default: map jobs run on Smithbox's OpenGL build only.** A map job waits while Smithbox runs as
+  its Vulkan build, and its card says to close Smithbox and start `Smithbox.OpenGL.exe`. No new power for DataPiler.
+- (b) **(a), plus a button that starts Smithbox's OpenGL build** from the Smithbox folder DataPiler knows, only while
+  Smithbox is not running. DataPiler would start a program for the first time; it would never close Smithbox, which
+  may hold unsaved work.
+- (c) **No setting**: the README's advice to use the OpenGL build for map jobs.
+
+**Recommendation.** (a): the setting the owner asked for, with nothing DataPiler does not do already; the next map job
+is then the trial, and the setting can be turned off if the OpenGL build disappoints. (b) only if starting Smithbox by
+hand is a bother.
+
+**Decision.** (a): a setting, on by default, that map jobs run on Smithbox's OpenGL build only; a map job waits while
+Smithbox runs as its Vulkan build and says how to switch. The next map job is the trial.
+
+**Owner's words.** "OpenGL-only setting (Recommended)".

@@ -34,7 +34,7 @@ PROJECT_ASK = ("Is the project open in Smithbox the project folder set in Settin
                "project Smithbox has open, and the server link must never read a project in the game's own folder. "
                "OK switches the link on; you are asked once a session.")
 LEVELS = logbook.LEVELS
-ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths")
+ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths", "map_opengl")
 FOLDER_WANTS = {"smithbox_dir": "smithbox", "game_dir": "game", "project_dir": "project"}
 _PATH_CONTROL_RX = re.compile(r"[\x00-\x1f\x7f]")
 

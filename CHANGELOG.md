@@ -13,6 +13,14 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.13 - 2026-11-14
+
+- A setting, on by default: **Map jobs on Smithbox's OpenGL build only** (DP20, S64). Smithbox's Vulkan build prepares
+  graphics data for every map it loads, even with rendering off; its OpenGL build (`Smithbox.OpenGL.exe`, in
+  Smithbox's folder) does not. While the setting is on and Smithbox runs as its Vulkan build, a map job waits and its
+  card says how to switch; once the OpenGL build runs, the job waits for Smithbox to open its project, then goes on.
+  Switch it off on the Settings tab.
+
 ## 0.2.12 - 2026-11-14
 
 - Map jobs keep what they read as they go (S63). Each map's placed characters are read as soon as the map loads and

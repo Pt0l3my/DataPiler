@@ -51,6 +51,8 @@ MAPS_FILE = "maps.jsonl"            # S63: a job's placements read so far, map b
 MAPS_FORMAT = "datapiler-mapprogress/1"
 MAPS_PER_SESSION = 300              # S63: the most maps a job asks Smithbox to hold at once; then it pauses
 MAPS_KEY = ("game_version", "regulation_sha256", "smithbox_build")
+MAPS_READY_WAIT = 600.0             # S64: after a switch to the OpenGL build, how long to wait for Smithbox's maps
+MAPS_READY_POLL = 2.0
 WAIT_POLL = 0.5
 
 LINK_WAITS = {
@@ -307,7 +309,7 @@ def _local_bytes(job_id: str, tables: list[tuple[str, list[tuple[str, str]], lis
 class Runner:
     def __init__(self, paths: "paths_mod.Paths | Callable[[], paths_mod.Paths]", link: LinkLike, textdb: "TextDB",
                  guard: "Guard", provenance: Callable[[], dict], game: Callable[[], "GameRunning"],
-                 language: Callable[[], str]):
+                 language: Callable[[], str], *, map_opengl: Callable[[], bool] = lambda: False):
         """paths: the Paths, or a callable giving the current ones (Settings can move the workspace and the share
         folder; the folders are read afresh at each write)."""
         self._paths = paths
@@ -317,6 +319,7 @@ class Runner:
         self.provenance = provenance
         self.game = game
         self.language = language
+        self.map_opengl = map_opengl
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
@@ -846,6 +849,66 @@ class Runner:
                     return False
                 self._cv.wait(WAIT_POLL)
 
+    def _build_reason(self) -> str | None:
+        """DP20 (S64): with the setting on, why a map job may not load maps now: Smithbox runs as its Vulkan build and
+        not as its OpenGL build. None when it may, or when the process list cannot be read."""
+        try:
+            if not self.map_opengl():
+                return None
+        except Exception:
+            return None
+        rs = smithbox_mod.seen()
+        if not rs:
+            return None
+        names = [r.name.lower() for r in rs if isinstance(r.name, str)]
+        if any("opengl" in n for n in names) or not any("vulkan" in n for n in names):
+            return None
+        return ("Smithbox runs as its Vulkan build, and map jobs run on its OpenGL build only (Settings): close "
+                "Smithbox, start Smithbox.OpenGL.exe from Smithbox's folder with the same project, keep its Map Editor "
+                "tab in front, and the job goes on")
+
+    def _wait_for_build(self, ctx: _Ctx) -> bool:
+        """Wait until _build_reason clears (S64). False when cancelled or stopping."""
+        said: str | None = None
+        while True:
+            if ctx.cancel.is_set() or self._stopping:
+                return False
+            reason = self._build_reason()
+            if reason is None:
+                if said is not None:
+                    # Smithbox was just started again: give it time to open its project before asking for maps, as
+                    # a map job started at once met UNAVAILABLE (2026-11-14).
+                    if not self._wait_for_maps(ctx):
+                        return False
+                    ctx.on_wait(None)
+                return True
+            if reason != said:
+                ctx.on_wait(reason)
+                said = reason
+            with self._cv:
+                if ctx.cancel.is_set() or self._stopping:
+                    return False
+                self._cv.wait(WAIT_POLL)
+
+    def _wait_for_maps(self, ctx: _Ctx) -> bool:
+        """After a switch of Smithbox's build: wait, up to MAPS_READY_WAIT seconds, until its server lists the
+        project's maps; then the job goes on either way, and load_maps says what is wrong if anything is."""
+        ctx.on_wait("waiting for Smithbox to open its project and its server to answer")
+        end = time.monotonic() + MAPS_READY_WAIT
+        while time.monotonic() < end:
+            if ctx.cancel.is_set() or self._stopping:
+                return False
+            try:
+                if self.link.all_maps():
+                    return True
+            except link_mod.LinkError:
+                pass
+            with self._cv:
+                if ctx.cancel.is_set() or self._stopping:
+                    return False
+                self._cv.wait(MAPS_READY_POLL)
+        return True
+
     # ---- a job
 
     def _run_job(self, job_id: str) -> None:
@@ -996,6 +1059,8 @@ class Runner:
                 if ctx.cancel.is_set() or self._stopping:
                     return "cancelled", None
                 if op in jobs.LINK_OPS and not self._wait_for_link(ctx.cancel, ctx.on_wait):
+                    return "cancelled", None
+                if op == "load_maps" and not ctx.builtin and not self._wait_for_build(ctx):
                     return "cancelled", None
                 ctx.on_op(i, "running", 0, None, None)
                 t0 = time.monotonic()

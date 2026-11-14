@@ -128,6 +128,11 @@ stops partway, **Start again** goes on where it stopped. A job pauses once Smith
 Smithbox's Vulkan build keeps graphics memory for every map it has loaded and has brought a graphics driver down with
 about 700: close Smithbox, start it again, and press **Start again**.
 
+With **Map jobs on Smithbox's OpenGL build only** on (Settings; on at first), a map job waits while Smithbox runs as
+its Vulkan build: close Smithbox and start `Smithbox.OpenGL.exe` from Smithbox's folder, with the same project. The
+OpenGL build skips the graphics data the Vulkan build prepares for every map. It may show a warning about OpenGL when
+it starts; that does not matter for map jobs.
+
 A map that loads with nothing in it, as some tiles of the open world do, counts as loaded. For long map jobs, turn
 Smithbox's auto-save off first: every five minutes it saves each loaded map into your Smithbox project folder (your
 game folder is never touched), and with hundreds of maps loaded that adds up. Restart Smithbox after a big map job to

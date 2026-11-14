@@ -795,8 +795,11 @@ class FoldersApiTest(ApiBase):
         self.assertEqual(self.live.settings.expansion, "yes")
         self.assertEqual(self.post("/api/settings/one", {"key": "mask_paths", "value": True})[0], 200)
         self.assertTrue(self.live.settings.mask_paths)
+        self.assertTrue(self.live.settings.map_opengl)                      # DP20: on at first
+        self.assertEqual(self.post("/api/settings/one", {"key": "map_opengl", "value": False})[0], 200)
+        self.assertFalse(self.live.settings.map_opengl)
         for body in ({"key": "recent", "value": []}, {"key": "port", "value": 1}, {"key": "expansion", "value": "x"},
-                     {"key": "mask_paths", "value": "yes"}, {"key": "game_dir", "value": 5},
+                     {"key": "mask_paths", "value": "yes"}, {"key": "map_opengl", "value": 1}, {"key": "game_dir", "value": 5},
                      {"key": "game_dir", "value": "C:\\x\x07"}, {"key": "game_dir", "value": "C:\\" + "x" * 1100},
                      {"key": "game_dir", "value": "", "more": 1}):
             with self.subTest(body=body):

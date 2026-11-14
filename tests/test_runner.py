@@ -984,6 +984,49 @@ class ProgressTest(RunnerBase):
         self.assertFalse(f.exists())
 
 
+class BuildTest(RunnerBase):
+    """DP20 (S64): with the setting on, a map job waits while Smithbox runs as its Vulkan build."""
+
+    def doc(self) -> bytes:
+        return json.dumps({"format": jobs.FORMAT, "id": "en-0095-build", "title": "Build", "ops": [
+            {"op": "load_maps", "maps": ["m99_00_00_03"]},
+            {"op": "read_placements", "as": "placed", "maps": ["m99_00_00_03"]},
+            {"op": "count", "as": "per_map", "rows": "placed", "by": ["map"]},
+            {"op": "write_share", "name": "build", "tables": ["per_map"], "columns": {"per_map": ["map", "count"]}}]}
+        ).encode()
+
+    def setUp(self):
+        super().setUp()
+        self.gl = True
+        self.builds = ["Smithbox.Vulkan.exe"]
+        self.r = runner.Runner(lambda: self.p, self.link, self.db, self.guard, lambda: self.provenance(),
+                               lambda: GameRunning(self.game_running, None), lambda: "engus",
+                               map_opengl=lambda: self.gl)
+        self.runners.append(self.r)
+        self.seen = mock.patch.object(runner.smithbox_mod, "seen", lambda: [
+            runner.smithbox_mod.Running(n, None, None, None) for n in self.builds])
+        self.seen.start()
+        self.addCleanup(self.seen.stop)
+
+    def test_a_map_job_waits_for_the_opengl_build(self):
+        card, _ = self.r.add("job.json", self.doc())
+        self.assertEqual(self.r.act(card["id"], "start"), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "waiting"), self.card(card["id"]))
+        self.assertIn("Smithbox.OpenGL.exe", self.card(card["id"])["wait"])
+        self.assertNotIn(("OpenResource", ("m99_00_00_03",)), self.link.calls)
+        self.builds = ["Smithbox.OpenGL.exe"]                   # the owner starts the OpenGL build
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"), self.card(card["id"]))
+        self.assertIn(("OpenResource", ("m99_00_00_03",)), self.link.calls)
+
+    def test_with_the_setting_off_or_no_smithbox_seen_it_runs(self):
+        self.gl = False
+        self.run_job(self.doc())
+        self.gl = True
+        self.builds = []
+        self.r.act(self.r.cards()[0]["id"], "start")
+        self.assertTrue(wait_for(lambda: self.r.cards()[0]["state"] == "done"), self.r.cards()[0])
+
+
 class CardsTest(RunnerBase):
     def test_each_card_carries_when_it_was_added(self):
         # S54: the page sorts the newest first by `added`, so every card must carry it.

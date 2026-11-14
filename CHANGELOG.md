@@ -9,6 +9,15 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.7 - 2026-11-14
+
+- Maps load one at a time (S53). Smithbox refuses to start a map load while another runs, so 0.2.3 to 0.2.6 lost nine of
+  every ten maps they asked for at once and waited for them in vain. A map not loaded yet is asked for again every
+  10 s until Smithbox takes it; the fake server now refuses a load while another runs, as Smithbox does.
+- Job cards (S54): the newest job first; each card folds to its title row (▸/▾, remembered in the browser), with Fold
+  all and Unfold all; the title row shows the step the job is at and its share done, and every op line its percentage.
+- Row reads run four calls at once (S55), the answers kept in the row ids' order; a failure or Cancel stops the rest.
 ## 0.2.6 - 2026-11-14
 
 - Map loading says what it does (S52): the job card shows maps loaded of maps to load, the time so far and a rough

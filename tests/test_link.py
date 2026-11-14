@@ -281,7 +281,11 @@ class AgainstTheFake(unittest.TestCase):
         with self.assertRaises(link.LinkCancelled):
             self.link.get_param_rows("TalkParam", list(fake_soapstone.TALK_IDS), ["msgId"], cancel=cancel,
                                      progress=progress)
-        self.assertEqual(len(self.fake.requests("GetParamRows")), 3)
+        # S55: up to ROW_WORKERS calls run at once, so a few more may have gone out; the rest never do.
+        sent = len(self.fake.requests("GetParamRows"))
+        self.assertGreaterEqual(sent, 3)
+        self.assertLessEqual(sent, 3 + link.ROW_WORKERS)
+        self.assertLess(sent, len(fake_soapstone.TALK_IDS))
 
     def test_a_failed_call_names_the_code_only(self):
         self.link.switch(True)
@@ -306,8 +310,8 @@ class AgainstTheFake(unittest.TestCase):
         self.assertEqual(n, len(fake_soapstone.MAPS))
         opened = self.fake.requests("OpenResource")
         self.assertEqual(len(opened), len(fake_soapstone.MAPS) - len(fake_soapstone.LOADED_AT_START))
-        self.assertLessEqual(self.fake.max_pending, link.MAP_BATCH)
-        self.assertEqual(self.fake.max_pending, link.MAP_BATCH)
+        self.assertEqual(self.fake.max_pending, 1)             # S53: one map at a time
+        self.assertEqual(self.fake.refused, 0)
         for r in opened:
             self.assertEqual(r.resource.type, common_pb2.EDITOR_RESOURCE_TYPE_MAP)
             self.assertRegex(r.resource.name, r"^m\d{2}_\d{2}_\d{2}_\d{2}$")
@@ -364,6 +368,18 @@ class AgainstTheFake(unittest.TestCase):
         self.link.placements("m99_00_00_00")
         reqs = self.fake.requests("SearchObjects")
         self.assertTrue(reqs and all(r.HasField("search") for r in reqs))
+
+    def test_a_refused_load_is_asked_again(self):
+        # S53: Smithbox refuses a load while it still finishes the last map; DataPiler asks again until it takes it.
+        self.link.switch(True)
+        self.fake.busy_after_load = 3
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05"])
+        self.assertEqual(n, 3)
+        self.assertGreater(self.fake.refused, 0)
+        self.assertEqual(sorted(self.link.loaded_maps()), sorted(set(fake_soapstone.LOADED_AT_START) |
+                                                                {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}))
 
     def test_open_maps_gives_up_on_a_batch_that_never_loads(self):
         self.link.switch(True)

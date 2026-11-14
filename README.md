@@ -111,6 +111,12 @@ Project and a restart of Smithbox). While a job loads maps, keep Smithbox's wind
 Editor tab in front: Smithbox takes its load commands only then. The job card shows the maps loaded so far and a guess
 of the time left.
 
+**Faster map loading.** Smithbox loads one map at a time, and by its code (2.2.6) most of that time goes into what its
+3D view needs: each map's models and textures (on the Vulkan build, while viewport rendering is on) and its Havok
+collision (unless its setting to skip Havok loading is on). DataPiler reads only the placed characters, so for map
+jobs turn viewport rendering off and skip Havok loading in Smithbox's settings, or start `Smithbox.OpenGL.exe`, which
+by the same code never loads map models or textures.
+
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any

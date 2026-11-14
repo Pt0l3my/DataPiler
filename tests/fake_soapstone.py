@@ -109,6 +109,9 @@ class FakeSoapstone:
         self.load_after = load_after
         self.fail_maps = False          # True: map searches fail on the server's side
         self.no_map_editor = False      # True: no map is listed, as when the project has no Visual Map Editor
+        self.busy = 0                   # looks during which Smithbox still finishes a loaded map, refusing loads
+        self.busy_after_load = 0
+        self.refused = 0                # loads refused while another ran
         self.list_params_extra = ("Bad Name!", "x" * 70)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         served = (
@@ -184,11 +187,14 @@ class FakeSoapstone:
 
     def _look_at_maps(self) -> set[str]:
         with self.lock:
+            if self.busy:
+                self.busy -= 1
             for m in list(self.pending):
                 self.pending[m] += 1
                 if self.pending[m] >= self.load_after:
                     del self.pending[m]
                     self.loaded.add(m)
+                    self.busy = self.busy_after_load
             return set(self.loaded)
 
     def search_objects(self, request, context):
@@ -243,6 +249,10 @@ class FakeSoapstone:
             context.abort(grpc.StatusCode.NOT_FOUND, "no such resource: Ostrel Vanehollow")
         with self.lock:
             if res.name not in self.loaded and res.name not in self.pending:
+                if self.pending or self.busy:
+                    # As Smithbox 2.2.6 does: a load while another runs is refused ("map already loading", S53).
+                    self.refused += 1
+                    return pb.OpenResourceResponse()
                 self.pending[res.name] = 0
             self.max_pending = max(self.max_pending, len(self.pending))
         return pb.OpenResourceResponse()

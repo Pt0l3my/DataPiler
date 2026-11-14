@@ -356,7 +356,7 @@ function listCol(title, items) {
 }
 function opLine(o) {
   const parts = ["op " + o.n + " " + o.op + ": " + o.state];
-  if (o.of) parts.push(fmtN(o.done) + " of " + fmtN(o.of) + (o.unit ? " " + o.unit : ""));
+  if (o.of) parts.push(fmtN(o.done) + " of " + fmtN(o.of) + (o.unit ? " " + o.unit : "") + " (" + Math.floor(100 * o.done / o.of) + "%)");
   else if (o.done) parts.push(fmtN(o.done) + (o.unit ? " " + o.unit : ""));
   if (o.secs != null) parts.push(o.secs >= 120 ? Math.floor(o.secs / 60) + " min " + Math.round(o.secs % 60) + " s" : Number(o.secs).toFixed(1) + " s");
   if (o.state === "running" && o.of && o.done < o.of && o.done > 0 && o.secs > 0) {
@@ -371,13 +371,47 @@ function jobAct(j, what, confirm) {
     if (r.ask && window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps);
   }).catch((e) => note(e.message));
 }
+// S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
+function foldKey(j) { return String(j.sha256 || j.id || ""); }
+function folded() { try { return new Set(JSON.parse(store.get("dp.jobs.folded") || "[]")); } catch (e) { return new Set(); } }
+function setFolded(key, on) {
+  const s = folded();
+  if (on) s.add(key); else s.delete(key);
+  store.set("dp.jobs.folded", JSON.stringify([...s].slice(-200)));
+}
+// S54: where the job is, as a step of its ops and a share of the whole, for every state that has ops.
+function jobProgress(j) {
+  const ops = j.ops || [];
+  if (!ops.length || ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped"].indexOf(j.state) < 0) return null;
+  const n = ops.length;
+  const done = ops.filter((o) => o.state === "done").length;
+  const cur = ops.find((o) => o.state === "running" || o.state === "failed") || null;
+  let frac = done;
+  if (cur && cur.state === "running" && cur.of) frac += Math.min(1, cur.done / cur.of);
+  const pct = Math.floor(100 * frac / n);
+  if (j.state === "done") return "all " + n + " steps done (100%)";
+  if (cur) return "step " + (cur.n + 1) + " of " + n + " (" + cur.op + ") · " + pct + "%";
+  return done + " of " + n + " steps done · " + pct + "%";
+}
 function jobCard(j) {
-  const c = el("div", "jobcard");
+  const key = foldKey(j);
+  const c = el("div", "jobcard" + (folded().has(key) ? " folded" : ""));
   const head = el("div", "jhead");
+  const fold = el("button", "fold", folded().has(key) ? "▸" : "▾");
+  fold.title = "Fold or unfold this job";
+  fold.addEventListener("click", () => {
+    const on = !c.classList.contains("folded");
+    c.classList.toggle("folded", on);
+    fold.textContent = on ? "▸" : "▾";
+    setFolded(key, on);
+  });
+  add(head, fold);
   add(head, el("b", null, j.title || j.id || "a job file"));
   if (j.id) add(head, el("span", "pill mute", j.id));
   if (j.format) add(head, el("span", "pill mute", j.format));
   add(head, jobPill(j));
+  const prog = jobProgress(j);
+  if (prog) add(head, el("span", "jprog", prog));
   if (j.sha256) add(head, el("span", "mono mute", "sha256 " + short(j.sha256)));
   add(c, head);
   if (j.preview && j.state !== "refused") {
@@ -429,7 +463,8 @@ function paintJobs(s) {
   JOBS_KEY = key;
   const box = clear($("jobs"));
   if (!s.jobs.length) { add(box, el("div", "mute", "No job files yet.")); return; }
-  s.jobs.forEach((j) => add(box, jobCard(j)));
+  // S54: the newest job first, then older ones, by when each was added.
+  s.jobs.slice().sort((a, b) => (Number(b.added) || 0) - (Number(a.added) || 0)).forEach((j) => add(box, jobCard(j)));
 }
 function addFiles(files) {
   Array.prototype.forEach.call(files, (f) => {
@@ -654,6 +689,8 @@ $("quit").addEventListener("click", () => {
 $("run").addEventListener("click", () => runRows([...PICK], $("loadMaps").checked, null));
 $("cancel").addEventListener("click", () => api("/api/extract/cancel", {}).then(poll).catch((e) => note(e.message)));
 $("pick").addEventListener("click", (e) => { e.stopPropagation(); $("file").click(); });
+$("foldAll").addEventListener("click", () => { if (ST) { ST.jobs.forEach((j) => setFolded(foldKey(j), true)); JOBS_KEY = ""; paintJobs(ST); } });
+$("unfoldAll").addEventListener("click", () => { if (ST) { ST.jobs.forEach((j) => setFolded(foldKey(j), false)); JOBS_KEY = ""; paintJobs(ST); } });
 $("drop").addEventListener("click", () => $("file").click());
 $("file").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
 ["dragenter", "dragover"].forEach((t) => $("drop").addEventListener(t, (e) => { e.preventDefault(); $("drop").classList.add("over"); }));

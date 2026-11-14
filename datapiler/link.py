@@ -23,6 +23,7 @@ import socket
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Sequence
@@ -39,7 +40,7 @@ PORT = 22720
 ALLOWED = ("ListParams", "ListParamRows", "GetParamRows", "SearchObjects", "GetObject",
            "BatchGetObjects", "OpenResource")
 MAP_RX = re.compile(r"m\d{2}_\d{2}_\d{2}_\d{2}")
-MAP_BATCH = 10                      # S8
+MAP_BATCH = 10                      # S8's ten; since S53 maps load one at a time, and the owner is asked above ten
 
 PARAM_RX = re.compile(r"[A-Za-z0-9_]{1,64}")
 FIELD_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
@@ -86,6 +87,7 @@ PLACEMENT_PROPS = (("entity_id", "EntityID"), ("npc_param_id", "NPCParamID"), ("
                    ("model", "ModelName"))
 MODEL_RX = re.compile(r"c(\d{4})")
 OBJECT_BATCH = 200                  # keys per BatchGetObjects
+ROW_WORKERS = 4                     # GetParamRows calls at once (S55)
 
 # Field types of a param cell (internal.proto's ParamFieldInfo lists them). Only these become numbers; any other
 # type, text among them, is refused.
@@ -311,6 +313,7 @@ class Link:
     map_poll = 2.0                      # how often open_maps looks for its batch in the loaded maps
     map_wait = 900.0                    # how long Smithbox may go without loading another map (S52)
     map_heartbeat = 60.0                # how often open_maps says it is still waiting
+    map_reask = 10.0                    # how often a map not yet loaded is asked for again (S53)
 
     def __init__(self, game: Callable[[], "GameRunning"], *, libs: bool, _test_port: int | None = None):
         """libs False (from --no-link or available()) makes the state "no_libs" for good. The host is always HOST;
@@ -444,11 +447,30 @@ class Link:
         out: list[dict[str, int | float | bool]] = []
         missing = 0
         total = len(ids)
-        for done, rid in enumerate(ids):
+
+        def one(rid: int):
             if cancel is not None and cancel.is_set():
                 raise LinkCancelled(_CANCELLED)
-            resp = self._call("GetParamRows", pb.GetParamRowsRequest(param_name=param, row_id=rid, vanilla=True),
+            return self._call("GetParamRows", pb.GetParamRowsRequest(param_name=param, row_id=rid, vanilla=True),
                               lambda r: len(r.rows))
+
+        # S55: ROW_WORKERS calls at once, as Smithbox answers each from its vanilla bank on its own; the answers are
+        # taken in the row ids' order, and the first failure stops the rest.
+        answers: list[object] = [None] * total
+        pool = ThreadPoolExecutor(max_workers=max(1, min(ROW_WORKERS, total or 1)), thread_name_prefix="datapiler-rows")
+        try:
+            futures = {pool.submit(one, rid): k for k, rid in enumerate(ids)}
+            done = 0
+            for fut in as_completed(futures):
+                answers[futures[fut]] = fut.result()
+                done += 1
+                if progress is not None:
+                    progress(done, total)
+        except BaseException:
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
+        for rid, resp in zip(ids, answers):
             if not resp.rows:
                 missing += 1
             for row in resp.rows:
@@ -468,8 +490,6 @@ class Link:
                         raise LinkDataError("the server's answer has no field %d of those asked" % i)
                     rec[f] = _cell(cell[0], cell[1], "field %d" % i)
                 out.append(rec)
-            if progress is not None:
-                progress(done + 1, total)
         if missing:
             _log.info("GetParamRows: %s of %s row ids had no row", logbook.n(missing), logbook.n(total))
         return out
@@ -532,8 +552,8 @@ class Link:
 
     def open_maps(self, map_ids: Sequence[str], *, cancel: threading.Event | None = None,
                   progress: Callable[[int, int], None] | None = None) -> int:
-        """OpenResource for map resources only, MAP_BATCH at a time, waiting for each map of a batch to read as
-        loaded (is_loaded); returns how many of map_ids are loaded. Map ids the project does not have are skipped,
+        """OpenResource for map resources only, one map at a time, asked again until it reads as loaded (is_loaded,
+        S53); returns how many of map_ids are loaded. Map ids the project does not have are skipped,
         with a log line of their count; maps loaded already are not opened again. Progress is reported map by map, and
         while waiting at every poll; a log line says each batch and, every map_heartbeat seconds, how far it is (S52).
         LinkError when Smithbox loads no map for map_wait seconds. Asking the owner above ten is the runner's (S8)."""
@@ -556,31 +576,26 @@ class Link:
         done = 0
         if progress is not None:
             progress(0, total)
-        for start in range(0, total, MAP_BATCH):
-            batch = todo[start:start + MAP_BATCH]
-            _log.info("loading maps %s to %s of %s in Smithbox (keep its Map Editor tab in front)",
-                      logbook.n(start + 1), logbook.n(start + len(batch)), logbook.n(total))
-            for m in batch:
-                if cancel is not None and cancel.is_set():
-                    raise LinkCancelled(_CANCELLED)
-                self._call("OpenResource", pb.OpenResourceRequest(resource=self._map_resource(m)), lambda r: 1)
-            last_load = time.monotonic()
-            next_word = last_load + self.map_heartbeat
-            while True:
-                for m in [x for x in batch if x not in loaded]:
-                    if self.is_loaded(m):
-                        loaded.add(m)
-                        done += 1
-                        last_load = time.monotonic()
-                        if progress is not None:
-                            progress(done, total)
-                if all(m in loaded for m in batch):
-                    break
+        # S53: one map at a time. Smithbox refuses to start a load while another runs ("map already loading",
+        # MapUniverse.LoadMap at 2.2.6), dropping the request, so a map not yet loaded is asked for again every
+        # map_reask seconds until Smithbox takes it.
+        for k, m in enumerate(todo):
+            _log.info("loading map %s of %s in Smithbox (keep its Map Editor tab in front)", logbook.n(k + 1),
+                      logbook.n(total))
+            if cancel is not None and cancel.is_set():
+                raise LinkCancelled(_CANCELLED)
+            self._open_map(pb, m)
+            started = last_ask = time.monotonic()
+            next_word = started + self.map_heartbeat
+            while not self.is_loaded(m):
                 now = time.monotonic()
-                if now - last_load >= self.map_wait:
+                if now - started >= self.map_wait:
                     raise LinkError(_MAPS_STALLED % (int(self.map_wait), done, total))
+                if now - last_ask >= self.map_reask:
+                    self._open_map(pb, m)
+                    last_ask = now
                 if now >= next_word:
-                    _log.info("still loading: %s of %s maps loaded", logbook.n(done), logbook.n(total))
+                    _log.info("still loading map %s of %s", logbook.n(k + 1), logbook.n(total))
                     next_word = now + self.map_heartbeat
                 if progress is not None:
                     progress(done, total)          # the card's clock moves on while Smithbox loads
@@ -589,7 +604,15 @@ class Link:
                         raise LinkCancelled(_CANCELLED)
                 else:
                     time.sleep(self.map_poll)
+            loaded.add(m)
+            done += 1
+            if progress is not None:
+                progress(done, total)
         return sum(1 for m in wanted if m in loaded)
+
+    def _open_map(self, pb, map_id: str) -> None:
+        """The one OpenResource DataPiler sends: a map resource, by its id."""
+        self._call("OpenResource", pb.OpenResourceRequest(resource=self._map_resource(map_id)), lambda r: 1)
 
     def placements(self, map_id: str) -> list[Placement]:
         """SearchObjects and BatchGetObjects on a loaded map: the placed characters, numbers only. LinkError when

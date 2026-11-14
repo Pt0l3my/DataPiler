@@ -19,6 +19,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job). DP20
   (map jobs on Smithbox's OpenGL build, a setting). DP21 (the map tables' coordinates in share files, for
   research: decided the same day).
+- **2026-11-14.** DP22 (nothing collected is lost: a Deleted bin, confirmations) and DP23 (game updates: every
+  version's data kept, re-read and compare), both decided the same day, as recommended.
 - **Open.** None.
 
 ## DP1
@@ -373,4 +375,48 @@ it was for every other table.
 
 **Owner's words.** "what is this about, using game data for research and development is fine, we are just careful what
 we ship online."
+
+## DP22
+
+**Nothing collected is lost: confirmations and a Deleted bin** · *2026-11-14 · Decided by the owner, as recommended*
+
+**The owner's request.** "preserve jobs and collected data files (deleting should ask in pop up prompt, accidental
+deletion should be undone by restore feature, collected data also requires entering "DELETE" in text box in pop up
+message)."
+
+**Question.** Deleted jobs and collected data (share files, workspace files, imported game text, a map job's kept
+progress) go to a Deleted bin with a Restore button instead of being erased. How long does the bin keep them?
+(a) **until the owner empties it** (recommended): nothing is erased on its own; emptying the bin, or erasing one item
+from it, also needs DELETE typed in. (b) 30 days, then erased at start. (c) Until a size limit, oldest first.
+
+**Decision.** (a). Removing a job asks in a pop-up; removing collected data asks for DELETE typed in a text box; both
+move what they remove into the bin, from which Restore puts it back. Nothing is erased until the owner empties the bin
+or erases an item from it, each with DELETE typed in.
+
+**Owner's words.** The request above; then "Until I empty it (Recommended)".
+
+## DP23
+
+**Game updates: every version's data kept, re-read and compared** · *2026-11-14 · Decided by the owner, as recommended*
+
+**The owner's request.** "updates of game version, and ability to compare data. so when Elden Rings gets an update,
+datapiler would be able to detect and see which parts of the game have been updated, which parts of the affected data
+need to be rerun, or added, so lets say a 10000 dataset gets added 50 entires (so it becomes 10050) and line 8000 and
+8001 gets changes (so those won't match anymore). Then datapiler only reruns line 8000 and 8001, then adds 10001 -
+10050 lines."
+
+**Questions.** (1) Smithbox cannot tell which map files a patch changed without loading them, so a map job must re-read
+every map it needs after an update, then keep only what changed; param jobs re-read in seconds and are compared row by
+row. Acceptable? (a) **yes, re-read and compare** (recommended); (b) params only for now; (c) look for a faster map
+route first. (2) Keep every game version's data side by side, so any two can be compared? (a) **keep every version**
+(recommended); (b) the current and the previous only.
+
+**Decision.** (1) (a) and (2) (a). DataPiler sees a game update in the provenance it already records (game version,
+regulation hash, Smithbox build). A job whose last run was on another version shows it, with an action that re-reads
+what the job reads, compares it with the last run row by row (params, by row id) or map by map (placements), keeps what
+is unchanged, replaces what changed, adds what is new, marks what was removed, rebuilds the job's outputs from the
+merged data and writes a change report. Every version's data stays in the workspace, and any two can be compared.
+
+**Owner's words.** The request above; then "Yes, re-read and compare (Recommended)" and "Keep every version
+(Recommended)".
 

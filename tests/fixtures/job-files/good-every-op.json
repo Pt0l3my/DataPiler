@@ -9,11 +9,12 @@
     {"op": "load_maps", "maps": ["m99_00_00_00", "m99_00_00_01"]},
     {"op": "read_placements", "as": "placed", "maps": ["m99_00_00_00", "m99_00_00_01"]},
     {"op": "join_names", "as": "npc_named", "rows": "npc", "key": "nameId", "text": "character_names"},
+    {"op": "unused_names", "as": "unused", "rows": "npc", "key": "nameId", "text": "character_names"},
     {"op": "filter", "as": "npc_kept", "rows": "npc_named", "where": {"teamType": {"ge": 6, "le": 30}, "npcType": {"in": [1, 2, 3]}, "named": {"ne": false}}},
     {"op": "count", "as": "per_team", "rows": "npc_kept", "by": ["teamType", "named"], "where": {"nameId": {"gt": -1}}},
     {"op": "count", "as": "all_placed", "rows": "placed"},
     {"op": "distinct", "as": "models", "rows": "placed", "by": ["model"]},
-    {"op": "write_local", "name": "npc-named", "tables": ["npc_named", "models"], "columns": {"npc_named": ["id", "nameId", "name"]}},
+    {"op": "write_local", "name": "npc-named", "tables": ["npc_named", "models", "unused"], "columns": {"npc_named": ["id", "nameId", "name"]}},
     {"op": "write_share", "name": "every-op-counts", "tables": ["per_team", "all_placed"], "columns": {"per_team": ["teamType", "named", "count"], "all_placed": ["count"]}, "notes": ["named_only", "vanilla_rows"]}
   ]
 }

@@ -32,12 +32,13 @@ class PreviewTest(unittest.TestCase):
                       "loads 2 maps in Smithbox - its view changes, not its data",
                       "placed characters of 2 maps: entity, row, dialogue and model ids"],
             "computes": ["join npc with the character names - local",
+                         "the entries of the character names that no row of npc names by nameId - local",
                          "keeps the rows of npc_named where teamType >= 6 and teamType <= 30 and npcType in 3 values "
                          "and named is not false",
                          "counts the rows of npc_kept per teamType and named, where nameId > -1",
                          "counts the rows of placed",
                          "distinct model of placed"],
-            "writes": ["workspace file `npc-named.json`: 2 tables (local)",
+            "writes": ["workspace file `npc-named.json`: 3 tables (local)",
                        "share file `every-op-counts.json`: 2 tables"],
         })
 

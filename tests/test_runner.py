@@ -16,7 +16,7 @@ from unittest import mock
 
 from dataclasses import replace
 
-from datapiler import catalogue, events, guard, link, logbook, paths, runner, textdb
+from datapiler import catalogue, events, guard, jobs, link, logbook, paths, runner, textdb
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -48,7 +48,8 @@ class FakeLink:
                                   "npcType": i % 3} for i in range(20)}
         self.talk = {9000000 + i: {"msgId": 9500000 + i if i % 2 == 0 else -1} for i in range(10)}
         self.loaded = ["m99_00_00_00", "m99_00_00_01"]
-        self.all_maps: list[str] | None = None
+        self.every_map: list[str] | None = None   # every map of the project, when a test sets it
+        self.extra_placements: list[tuple[int, int]] = []   # (entity id, row) added to each map's placements
         self.fail: Exception | None = None
         self.drop_at: int | None = None          # the link goes off after this many rows, once
         self.started = threading.Event()
@@ -97,7 +98,17 @@ class FakeLink:
         return list(self.loaded)
 
     def map_ids(self):
-        return self.all_maps
+        return self.every_map
+
+    def all_maps(self):
+        self._check()
+        if self.every_map is not None:
+            return list(self.every_map)
+        return sorted(set(self.loaded) | {"m99_00_00_%02d" % i for i in range(15)})
+
+    def is_loaded(self, map_id):
+        self._check()
+        return map_id in self.loaded
 
     def open_maps(self, map_ids, *, cancel=None, progress=None):
         self._check()
@@ -115,7 +126,9 @@ class FakeLink:
             raise link.LinkError("the map %s is not loaded in Smithbox" % map_id)
         self.calls.append(("BatchGetObjects", map_id))
         return [link.Placement(map=link.map_key(map_id), entity_id=9001000 + i, npc_param_id=9000000 + i,
-                               talk_id=9000000 + i, model=9990 + i % 3) for i in range(3)]
+                               talk_id=9000000 + i, model=9990 + i % 3) for i in range(3)] + \
+            [link.Placement(map=link.map_key(map_id), entity_id=e, npc_param_id=r, talk_id=-1, model=9999)
+             for e, r in self.extra_placements]
 
 
 def wait_for(pred, timeout: float = 6.0) -> bool:
@@ -754,7 +767,7 @@ class ExtractTest(RunnerBase):
             self.assertEqual(rows["place_names"]["grey"], "the text container of these names is not confirmed yet")
 
     def test_the_map_question_above_ten(self):
-        self.link.all_maps = ["m99_00_00_%02d" % i for i in range(12)]
+        self.link.every_map = ["m99_00_00_%02d" % i for i in range(12)]
         out = self.r.run_extract(["map_placements"], load_maps=True)
         self.assertEqual(out["ok"], False)
         self.assertEqual(out["ask"]["maps"], 12)
@@ -762,7 +775,7 @@ class ExtractTest(RunnerBase):
         self.assertEqual(self.link.calls, [])
         self.assertEqual(self.r.run_extract(["map_placements"], load_maps=True, confirm_maps=12), {"ok": True})
         self.assertTrue(wait_for(lambda: self.r.extract_state()["rows"][3]["state"] == "done"))
-        self.assertIn(("OpenResource", tuple(self.link.all_maps)), self.link.calls)
+        self.assertIn(("OpenResource", tuple(self.link.every_map)), self.link.calls)
         row = self.r.extract_state()["rows"][3]
         self.assertEqual((row["id"], row["result"]["count"], row["result"]["unit"]), ("map_placements", 36,
                                                                                        "placements"))
@@ -811,3 +824,56 @@ class ExtractTest(RunnerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BossesTest(RunnerBase):
+    """0.2.3: the names no row uses (S47), map families (S45) and boss slots (S46)."""
+
+    def test_unused_names_shares_the_names_no_row_uses(self):
+        entries = [{"ID": n, "Text": "Invented %d" % k} for k, n in enumerate((9000000, 9000001, 9000004, 9000777,
+                                                                                 9000888))]
+        self.db.import_export({"Name": "item", "FmgWrappers": [{"Name": "Invented", "ID": 9001, "Fmg": {
+            "Name": "Invented", "Entries": entries}}]}, container="item", language="engus", sha256="1" * 64)
+        doc = {"format": jobs.FORMAT, "id": "en-0099-unused", "title": "Unused names", "ops": [
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"]},
+            {"op": "unused_names", "as": "unused", "rows": "npc", "key": "nameId", "text": "character_names"},
+            {"op": "write_local", "name": "unused-local", "tables": ["unused"]},
+            {"op": "write_share", "name": "unused", "tables": ["unused"], "columns": {"unused": ["nameId", "layer"]}}]}
+        card = self.run_job(json.dumps(doc).encode())
+        with open(os.path.join(self.p.share, "unused.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["tables"][0]["rows"], [[9000777, 0], [9000888, 0]])
+        self.assertEqual(card["ops"][1]["done"], 2)
+        text = json.dumps(data)
+        self.assertNotIn("Invented", text)                    # names stay local
+
+    def test_unused_names_over_half_the_set_is_refused(self):
+        doc = {"format": jobs.FORMAT, "id": "en-0098-unused", "title": "Unused names", "ops": [
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"], "ids": [9000003]},
+            {"op": "unused_names", "as": "unused", "rows": "npc", "key": "nameId", "text": "character_names"},
+            {"op": "write_share", "name": "unused", "tables": ["unused"], "columns": {"unused": ["nameId"]}}]}
+        card = self.run_job(json.dumps(doc).encode(), state="failed")
+        self.assertIn("guard", card["result"]["failed"]["why"])
+        self.assertNotIn("unused.json", self.share_files())
+
+    def test_boss_slots_from_map_families(self):
+        self.link.every_map = ["m99_00_00_00", "m99_00_00_01", "m99_00_00_02", "m98_00_00_00"]
+        self.link.extra_placements = [(9000800, 9000003), (9000950, 9000002)]
+        doc = {"format": jobs.FORMAT, "id": "en-0097-bosses", "title": "Boss slots", "ops": [
+            {"op": "load_maps", "maps": ["m99_*"]},
+            {"op": "read_placements", "as": "placed", "maps": ["m99_*"]},
+            {"op": "filter", "as": "bosses", "rows": "placed", "slots": "boss"},
+            {"op": "write_share", "name": "bosses", "tables": ["bosses"],
+             "columns": {"bosses": ["map", "entityId", "npcParamId"]}}]}
+        card, _ = self.r.add("job.json", json.dumps(doc).encode())
+        out = self.r.act(card["id"], "start")
+        self.assertFalse(out["ok"])
+        self.assertIn("m99_*", out["ask"]["text"])
+        self.assertEqual(self.r.act(card["id"], "start", confirm_maps=out["ask"]["maps"]), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"), self.card(card["id"]))
+        self.assertIn(("OpenResource", ("m99_00_00_00", "m99_00_00_01", "m99_00_00_02")), self.link.calls)
+        with open(os.path.join(self.p.share, "bosses.json"), encoding="utf-8") as f:
+            rows = json.load(f)["tables"][0]["rows"]
+        self.assertEqual(sorted(r[1] for r in rows), [9000800] * 3)
+        self.assertEqual({r[2] for r in rows}, {9000003})
+

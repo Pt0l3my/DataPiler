@@ -12,7 +12,7 @@ from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
-OPS_LIST = "fetch_rows, load_maps, read_placements, join_names, filter, count, distinct, write_local, write_share"
+OPS_LIST = "fetch_rows, load_maps, read_placements, join_names, unused_names, filter, count, distinct, write_local, write_share"
 
 # Each bad fixture gives exactly one refusal: (where, text).
 EXPECTED = {
@@ -220,7 +220,7 @@ class LineageTest(unittest.TestCase):
 
     def test_ids_rules(self):
         self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc"}, share("f")])[0],
-                         ("ops[1]", "a filter needs `where`, `ids` or both"))
+                         ("ops[1]", "a filter needs `where`, `ids`, `slots` or more than one"))
         self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc", "key": "id",
                                                 "where": {"teamType": 1}},
                                           {"op": "count", "as": "c", "rows": "f"}, share("c", cols={"c": ["count"]})]),
@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.3", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.4", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -444,3 +444,40 @@ class RefusedCardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BossOpsTest(unittest.TestCase):
+    """0.2.3: unused_names (S47), map families (S45) and boss slots (S46)."""
+
+    def refused_at(self, ops: list) -> list:
+        return [(r.where, r.text) for r in refusals(job(ops))]
+
+    def test_unused_names_is_narrowed_and_shareable(self):
+        un = {"op": "unused_names", "as": "un", "rows": "npc", "key": "nameId", "text": "character_names"}
+        j = check(job([NPC, un, share("un", cols={"un": ["nameId", "layer"]})]))
+        self.assertEqual(j.lineage["un"].kind, "narrowed")
+        self.assertEqual(jobs.columns_of(j)["un"], list(jobs.UNUSED_COLUMNS))
+        self.assertEqual(self.refused_at([NPC, dict(un, text="weapon_names"), share("un", cols={"un": ["nameId"]})])[0][0],
+                         "ops[1].text")
+        self.assertEqual(self.refused_at([NPC, dict(un, key="nope"), share("un", cols={"un": ["nameId"]})])[0][0],
+                         "ops[1].key")
+
+    def test_map_families(self):
+        j = check(job([{"op": "load_maps", "maps": ["m10_*", "m11_00_00_00"]},
+                       {"op": "read_placements", "as": "placed", "maps": ["m10_*"]},
+                       {"op": "count", "as": "c", "rows": "placed"}, share("c", cols={"c": ["count"]})]))
+        self.assertEqual((j.maps, j.map_families), (1, ("m10_*",)))
+        self.assertEqual(jobs.preview(j)["reads"][0],
+                         "loads the maps of m10_* and 1 map in Smithbox - its view changes, not its data")
+        for bad in ("m1_*", "m10*", "m10_00_*", "*"):
+            self.assertEqual(self.refused_at([{"op": "load_maps", "maps": [bad]}])[0][0], "ops[0].maps[0]")
+
+    def test_boss_slots(self):
+        slots = {"op": "filter", "as": "b", "rows": "placed", "slots": "boss"}
+        j = check(job([PLACED, slots, share("b", cols={"b": ["map", "entityId", "npcParamId"]})]))
+        self.assertEqual(j.lineage["b"].kind, "narrowed")
+        self.assertIn("boss slot", jobs.preview(j)["computes"][0])
+        self.assertEqual(self.refused_at([PLACED, dict(slots, slots="all"), share("b", cols={"b": ["map"]})])[0][0],
+                         "ops[1].slots")
+        self.assertEqual(self.refused_at([NPC, dict(slots, rows="npc"), share("b")])[0][0], "ops[1].slots")
+

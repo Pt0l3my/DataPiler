@@ -5,6 +5,21 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.3 - 2026-11-14
+
+- `unused_names` (S47): the entries of a text set that no row of a table names, with their layers and, locally,
+  their texts. Narrowed from the start, as a pick for a purpose (the names the game sets elsewhere, boss bars among
+  them); check 6 measures it against the set's entries.
+- Maps (S44): Smithbox lists every map of its project for a file search, loaded or not, so 0.2.x read every map as
+  loaded. The link now lists the project's maps (`all_maps`, also `map_ids`, so Extract can load every map) and
+  tells a loaded map by an entry search. `open_maps` skips map ids the project does not have and waits for real
+  loading; `read_placements` skips such ids and still fails on a map the project has but has not loaded. When the
+  server fails on maps (UNKNOWN), the error says the Map Editor is most likely not enabled in the project.
+- Map families (S45): `load_maps` and `read_placements` take `m10_*` for every map of an area; a job naming one asks
+  before it starts.
+- Boss slots (S46): `filter` takes `"slots": "boss"`, keeping placements whose entity id ends 800 to 899, a pick for a
+  purpose (DP8).
 ## 0.2.2 - 2026-11-08
 
 - `join_names` also makes `layer`: the earliest layer of the imported text that holds the name, 0 the base game, 1

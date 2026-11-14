@@ -68,7 +68,8 @@ class WithoutGrpc(unittest.TestCase):
             lk.list_param_rows("NpcParam")
         self.assertEqual(lk.switch(False), "no_libs")
         self.assertEqual(lk.stats(), {"calls": 0, "last_call": None, "last_methods": []})
-        self.assertIsNone(lk.map_ids())
+        with self.assertRaises(link.LibsMissing):
+            lk.map_ids()
 
     def test_would_call_names_allowed_methods_only(self):
         rows = link.Link(FakeGame(), libs=False).would_call()
@@ -315,6 +316,33 @@ class AgainstTheFake(unittest.TestCase):
         for bad in ("m99_00_00", "chr/c0000", ""):
             with self.assertRaises(ValueError):
                 self.link.open_maps([bad])
+
+    def test_all_maps_lists_every_map_loaded_or_not(self):
+        # S44: Smithbox answers a file search with every map of its bank; loaded is told by an entry search.
+        self.link.switch(True)
+        self.assertEqual(self.link.all_maps(), sorted(fake_soapstone.MAPS))
+        self.assertEqual(self.link.map_ids(), sorted(fake_soapstone.MAPS))
+        self.assertTrue(self.link.is_loaded("m99_00_00_00"))
+        self.assertFalse(self.link.is_loaded("m99_00_00_05"))
+        asked = [r for r in self.fake.requests("SearchObjects")
+                 if r.result_type.category == internal_pb2.PRIMARY_KEY_CATEGORY_ENTRY]
+        self.assertTrue(asked and all(r.options.max_results == 1 for r in asked))
+        with self.assertRaises(link.LinkError):
+            self.link.placements("m99_00_00_05")             # known, not loaded
+
+    def test_open_maps_skips_maps_the_project_does_not_have(self):
+        self.link.switch(True)
+        n = self.link.open_maps(["m99_00_00_03", "m98_00_00_00"])
+        self.assertEqual(n, 1)
+        self.assertEqual([r.resource.name for r in self.fake.requests("OpenResource")], ["m99_00_00_03"])
+
+    def test_no_map_editor_says_so(self):
+        self.link.switch(True)
+        self.fake.fail_maps = True
+        for call in (self.link.all_maps, self.link.loaded_maps, lambda: self.link.is_loaded("m99_00_00_00")):
+            with self.assertRaises(link.LinkError) as cm:
+                call()
+            self.assertIn("Map Editor", str(cm.exception))
 
     def test_open_maps_gives_up_on_a_batch_that_never_loads(self):
         self.link.switch(True)

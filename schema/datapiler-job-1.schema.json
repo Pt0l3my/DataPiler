@@ -50,6 +50,9 @@
             "$ref": "#/$defs/op_join_names"
           },
           {
+            "$ref": "#/$defs/op_unused_names"
+          },
+          {
             "$ref": "#/$defs/op_filter"
           },
           {
@@ -94,7 +97,14 @@
       "maxItems": 2000,
       "uniqueItems": true,
       "items": {
-        "$ref": "#/$defs/map_id"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/map_id"
+          },
+          {
+            "$ref": "#/$defs/map_family"
+          }
+        ]
       }
     },
     "row_id": {
@@ -362,7 +372,7 @@
     },
     "op_load_maps": {
       "type": "object",
-      "description": "Loads maps in Smithbox (OpenResource, map resources only), ten at a time, asking above ten. Its view changes, not its data. \"all\" is not accepted in 0.1: no allowed call lists every map.",
+      "description": "Loads maps in Smithbox (OpenResource, map resources only), ten at a time, asking above ten and whenever a family (m10_*) is named. Its view changes, not its data. Map ids the project does not have are skipped. \"all\" is not accepted.",
       "additionalProperties": false,
       "required": [
         "op",
@@ -407,7 +417,7 @@
     },
     "op_join_names": {
       "type": "object",
-      "description": "Joins a table with the local text database by a name number (key, a column of whole numbers). Makes the table's columns, named (a flag) and name (local text: workspace files only).",
+      "description": "Joins a table with the local text database by a name number (key, a column of whole numbers). Makes the table's columns, named (a flag), layer (the earliest layer of the text holding the name: 0 the base game, 1 DLC 1, 2 DLC 2, -1 none) and name (local text: workspace files only).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -439,7 +449,7 @@
     },
     "op_filter": {
       "type": "object",
-      "description": "Keeps the rows where every condition holds and, with `ids`, whose row id is one of those listed (an explicit list of ids narrows a table for a share file, DP8). Needs `where`, `ids` or both; `key` names the column `ids` picks by (default: the table's row-id column, `id` from fetch_rows or `entityId` from read_placements; `npcParamId` also picks placements).",
+      "description": "Keeps the rows where every condition holds and, with `ids`, whose row id is one of those listed (an explicit list of ids narrows a table for a share file, DP8). Needs `where`, `ids`, `slots` or more than one; `slots: \"boss\"` keeps placements in boss slots (entity ids ending 800 to 899); `key` names the column `ids` picks by (default: the table's row-id column, `id` from fetch_rows or `entityId` from read_placements; `npcParamId` also picks placements).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -470,6 +480,10 @@
         },
         "key": {
           "$ref": "#/$defs/column"
+        },
+        "slots": {
+          "const": "boss",
+          "description": "Keeps placements whose entity id ends 800 to 899, the slots FromSoftware's maps give their bosses by habit; picks rows for a purpose (DP8), from a table of read_placements that keeps entityId."
         }
       },
       "anyOf": [
@@ -481,6 +495,11 @@
         {
           "required": [
             "ids"
+          ]
+        },
+        {
+          "required": [
+            "slots"
           ]
         }
       ],
@@ -625,6 +644,43 @@
               "summary"
             ]
           }
+        }
+      }
+    },
+    "map_family": {
+      "type": "string",
+      "pattern": "^m[0-9]{2}_\\*$",
+      "description": "A family of maps by area, as m10_*: every map of the Smithbox project whose id starts m10_ (0.2.3)."
+    },
+    "op_unused_names": {
+      "type": "object",
+      "description": "The entries of a text set that no row of a table names in its key column: nameId, layer and name (local text). Narrowed from the start (DP8: the names the game sets elsewhere, boss bars among them); check 6 measures it against the set's entries.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "rows",
+        "key",
+        "text"
+      ],
+      "properties": {
+        "op": {
+          "const": "unused_names"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "rows": {
+          "$ref": "#/$defs/table"
+        },
+        "key": {
+          "$ref": "#/$defs/column"
+        },
+        "text": {
+          "enum": [
+            "character_names",
+            "place_names"
+          ]
         }
       }
     }

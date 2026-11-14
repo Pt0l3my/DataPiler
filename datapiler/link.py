@@ -113,6 +113,9 @@ _OFF = "the server link is off"
 _BLOCKED = "the game is running"
 _NO_LIBS = "the server link needs its libraries - restart DataPiler and answer Y"
 _CANCELLED = "cancelled"
+_MAP_EDITOR = ("Smithbox's server could not list the maps (UNKNOWN): most likely the Map Editor is not enabled "
+               "in your Smithbox project. Enable it in the project's settings, open the Map Editor once, then run "
+               "again")
 
 _log = logbook.get("link")
 
@@ -465,13 +468,21 @@ class Link:
             _log.info("GetParamRows: %s of %s row ids had no row", logbook.n(missing), logbook.n(total))
         return out
 
-    def loaded_maps(self) -> list[str]:
-        """The map ids loaded in Smithbox's map view, sorted."""
+    def all_maps(self) -> list[str]:
+        """Every map id of Smithbox's project, loaded or not, sorted. Smithbox answers a file search over its map bank
+        with every map it knows, whether loaded or not (`SoapstoneService.cs` at 2.2.6; settled S44), so this is the
+        list of maps, not of loaded ones. A failure of the server here (UNKNOWN) most likely means the project has no
+        Map Editor (WHY§6), and the error says so."""
         _, common, pb = self._messages()
         req = pb.SearchObjectsRequest(resource=self._map_resource(""),
                                       result_type=pb.PrimaryKeyType(file=MAP_FILE_TEMPLATE,
                                                                     category=pb.PRIMARY_KEY_CATEGORY_FILE))
-        resp = self._call("SearchObjects", req, lambda r: len(r.results))
+        try:
+            resp = self._call("SearchObjects", req, lambda r: len(r.results))
+        except LinkCallError as e:
+            if e.code == "UNKNOWN":
+                raise LinkError(_MAP_EDITOR) from None
+            raise
         maps: set[str] = set()
         for obj in resp.results:
             m = _MAP_FILE_RX.fullmatch(obj.key.file)
@@ -479,17 +490,39 @@ class Link:
                 maps.add(m.group(1))
         return sorted(maps)
 
+    def is_loaded(self, map_id: str) -> bool:
+        """Whether a map is loaded in Smithbox's map view: Smithbox lists the entries of loaded maps only, so an entry
+        search on the map, one result at most, finds one exactly when it is loaded (S44)."""
+        if not isinstance(map_id, str) or not MAP_RX.fullmatch(map_id):
+            raise ValueError("not a map id")
+        _, common, pb = self._messages()
+        req = pb.SearchObjectsRequest(resource=self._map_resource(map_id),
+                                      result_type=pb.PrimaryKeyType(file=MAP_FILE_TEMPLATE,
+                                                                    category=pb.PRIMARY_KEY_CATEGORY_ENTRY),
+                                      options=common.SearchOptions(max_results=1))
+        try:
+            resp = self._call("SearchObjects", req, lambda r: len(r.results))
+        except LinkCallError as e:
+            if e.code == "UNKNOWN":
+                raise LinkError(_MAP_EDITOR) from None
+            raise
+        return len(resp.results) > 0
+
+    def loaded_maps(self) -> list[str]:
+        """The map ids loaded in Smithbox's map view, sorted: every map of the project, each asked whether it is
+        loaded (S44)."""
+        return [m for m in self.all_maps() if self.is_loaded(m)]
+
     def map_ids(self) -> list[str] | None:
-        """Every map id, if an allowed call lists them; None otherwise (§10, P5). None of the seven lists every map
-        (soapstone/SOURCE.md), so this is None in 0.1 and makes no call."""
-        return None
+        """Every map id of the project (all_maps, S44); in 0.1 to 0.2.2 no allowed call was known to list them."""
+        return self.all_maps()
 
     def open_maps(self, map_ids: Sequence[str], *, cancel: threading.Event | None = None,
                   progress: Callable[[int, int], None] | None = None) -> int:
-        """OpenResource for map resources only, MAP_BATCH at a time, waiting for each batch to show in
-        loaded_maps(); returns how many of map_ids are loaded. Maps loaded already are not opened again. A batch
-        that does not load within map_wait seconds raises LinkError. Asking the owner above ten is the runner's
-        (S8)."""
+        """OpenResource for map resources only, MAP_BATCH at a time, waiting for each map of a batch to read as
+        loaded (is_loaded); returns how many of map_ids are loaded. Map ids the project does not have are skipped,
+        with a log line of their count; maps loaded already are not opened again. A batch that does not load within
+        map_wait seconds raises LinkError. Asking the owner above ten is the runner's (S8)."""
         wanted: list[str] = []
         for m in map_ids:
             if not isinstance(m, str) or not MAP_RX.fullmatch(m):
@@ -497,7 +530,13 @@ class Link:
             if m not in wanted:
                 wanted.append(m)
         _, common, pb = self._messages()
-        loaded = set(self.loaded_maps())
+        known = set(self.all_maps())
+        unknown = [m for m in wanted if m not in known]
+        if unknown:
+            _log.info("%s of the map ids asked are not maps of this Smithbox project, and were skipped",
+                      logbook.n(len(unknown)))
+        wanted = [m for m in wanted if m in known]
+        loaded = {m for m in wanted if self.is_loaded(m)}
         todo = [m for m in wanted if m not in loaded]
         total = len(todo)
         done = 0
@@ -508,7 +547,10 @@ class Link:
                 self._call("OpenResource", pb.OpenResourceRequest(resource=self._map_resource(m)), lambda r: 1)
             deadline = time.monotonic() + self.map_wait
             while True:
-                loaded = set(self.loaded_maps())
+                waiting = [m for m in batch if m not in loaded]
+                for m in waiting:
+                    if self.is_loaded(m):
+                        loaded.add(m)
                 if all(m in loaded for m in batch):
                     break
                 if time.monotonic() >= deadline:
@@ -529,7 +571,7 @@ class Link:
         if not isinstance(map_id, str) or not MAP_RX.fullmatch(map_id):
             raise ValueError("not a map id")
         _, common, pb = self._messages()
-        if map_id not in self.loaded_maps():
+        if not self.is_loaded(map_id):
             raise LinkError("the map %s is not loaded in Smithbox" % map_id)
         number = map_key(map_id)
         file = "map/mapstudio/%s.msb" % map_id

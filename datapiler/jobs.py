@@ -26,11 +26,14 @@ from typing import Collection, Mapping
 from . import VERSION, fields, fileio, guard, paths
 from .link import MAP_RX
 
+# A family of maps by area, as `m10_*`: every map of the project whose id starts `m10_` (S45).
+MAP_FAMILY_RX = re.compile(r"m\d{2}_\*")
+
 FORMAT = "datapiler-job/1"
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
-OPS = ("fetch_rows", "load_maps", "read_placements", "join_names", "filter", "count", "distinct",
+OPS = ("fetch_rows", "load_maps", "read_placements", "join_names", "unused_names", "filter", "count", "distinct",
        "write_local", "write_share")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
@@ -67,7 +70,8 @@ ARGS: dict[str, dict[str, bool]] = {
     "load_maps": {"maps": True},
     "read_placements": {"as": True, "maps": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
-    "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False},
+    "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False, "slots": False},
+    "unused_names": {"as": True, "rows": True, "key": True, "text": True},
     "count": {"as": True, "rows": True, "by": False, "where": False},
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
@@ -75,7 +79,7 @@ ARGS: dict[str, dict[str, bool]] = {
 }
 LINK_OPS = ("fetch_rows", "load_maps", "read_placements")
 READS = ("fetch_rows", "load_maps", "read_placements")
-COMPUTES = ("join_names", "filter", "count", "distinct")
+COMPUTES = ("join_names", "unused_names", "filter", "count", "distinct")
 WRITES = ("write_local", "write_share")
 
 # What read_placements and join_names make (build plan §4.6).
@@ -85,9 +89,14 @@ PLACEMENT_COLUMNS: tuple[tuple[str, str], ...] = (("map", "int"), ("entityId", "
 # text only. `layer` is the earliest layer that holds the name: 0 the base game, 1 DLC 1, 2 DLC 2, -1 none (S43).
 MADE_COLUMNS = ("named", "layer", "count")
 JOIN_COLUMNS: tuple[tuple[str, str], ...] = (("named", "bool"), ("layer", "int"), ("name", "text_local"))
+# What unused_names makes (S47): each entry of a text set that no row of a table names, with its layer; `name` local.
+UNUSED_COLUMNS: tuple[tuple[str, str], ...] = (("nameId", "int"), ("layer", "int"), ("name", "text_local"))
+# filter's `slots: "boss"` (S46): placements whose entity id ends 800 to 899, the slots FromSoftware's maps give
+# their bosses by habit (a lead, WHY§34).
+BOSS_SLOTS = (800, 899)
 # Each source's row-id column (the id column of DP8 and check 6), and the columns `ids` may pick rows by.
-ID_COLUMN = {"fetch_rows": "id", "read_placements": "entityId"}
-PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParamId")}
+ID_COLUMN = {"fetch_rows": "id", "read_placements": "entityId", "unused_names": "nameId"}
+PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParamId"), "unused_names": ("nameId",)}
 # The placements' columns that hold other tables' ids (fields.REFERENCES holds the params'): a count of raw placements
 # by one of them stays raw (DP8, S18; build plan §10, P15).
 PLACEMENT_REFERENCES = ("npcParamId", "talkId", "model")
@@ -155,8 +164,9 @@ class Job:
     ops: tuple[dict, ...]
     needs: str | None
     uses_link: bool               # any fetch_rows, load_maps or read_placements
-    maps: int | None              # how many maps load_maps names; None for "all"
+    maps: int | None              # how many maps load_maps names by id; None for "all"
     share_name: str | None
+    map_families: tuple[str, ...] = ()   # the families load_maps names (`m10_*`), counted only at run time (S45)
     lineage: Mapping[str, Lineage] = field(default_factory=dict, compare=False)   # every table's (DP8)
 
 
@@ -270,6 +280,7 @@ class _Checker:
         self.share_name: str | None = None
         self.job_id: str | None = None
         self.maps: set[str] = set()
+        self.families: set[str] = set()
 
     def add(self, where: str, text: str, op: int | None = None) -> None:
         if len(self.refusals) >= _MAX_REFUSALS:
@@ -428,14 +439,15 @@ class _Checker:
                             "maps by id", i)
             return None
         if not isinstance(v, list) or not 1 <= len(v) <= MAX_MAPS:
-            self.add(place, "must be a list of 1 to 2,000 map ids%s" % (", or \"all\"" if all_ok else ""), i)
+            self.add(place, "must be a list of 1 to 2,000 map ids or families (m10_*)%s"
+                     % (", or \"all\"" if all_ok else ""), i)
             return None
         out: list[str] = []
         for j, m in enumerate(v):
             p = "%s[%d]" % (place, j)
-            if not isinstance(m, str) or not MAP_RX.fullmatch(m):
-                self.add(p, _named(m, "is not a map id of the form m00_00_00_00",
-                                   "not a map id of the form m00_00_00_00"), i)
+            if not isinstance(m, str) or not (MAP_RX.fullmatch(m) or MAP_FAMILY_RX.fullmatch(m)):
+                self.add(p, _named(m, "is not a map id of the form m00_00_00_00, nor a family of the form m00_*",
+                                   "not a map id of the form m00_00_00_00, nor a family of the form m00_*"), i)
                 return None
             if m in out:
                 self.add(p, "`%s` is named twice" % m, i)
@@ -535,7 +547,8 @@ class _Checker:
         if "maps" in o:
             maps = self.map_list(place + ".maps", o["maps"], i, all_ok=LOAD_ALL_MAPS)
             if isinstance(maps, list):
-                self.maps.update(maps)
+                self.maps.update(m for m in maps if MAP_RX.fullmatch(m))
+                self.families.update(m for m in maps if MAP_FAMILY_RX.fullmatch(m))
 
     def op_read_placements(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
@@ -567,11 +580,34 @@ class _Checker:
             self.tables[as_] = (list(cols) + list(JOIN_COLUMNS)) if ok and cols else None
             self.lineage[as_] = _after_join(self.lineage.get(r[0]), i) if ok and cols and r is not None else None
 
+    def op_unused_names(self, place: str, i: int, o: dict) -> None:
+        """The entries of a text set that no row of a table names in its key column (S47): a pick for a purpose,
+        the names the game sets elsewhere (boss bars among them), so the table is narrowed from the start, measured by
+        check 6 against the set's entries."""
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
+        cols = r[1] if r is not None else None
+        ok = r is not None and cols is not None
+        if "key" in o:
+            table = r[0] if r is not None else "its table"
+            if self.column(place + ".key", o["key"], table, cols, i, ("int",),
+                           "the key is a column of whole numbers") is None:
+                ok = False
+        t = o.get("text")
+        if "text" in o and t not in TEXTS:
+            self.add(place + ".text", _named(t, "is not a text set DataPiler has (%s)" % ", ".join(TEXTS),
+                                             "not a text set DataPiler has (%s)" % ", ".join(TEXTS)), i)
+            ok = False
+        if as_ is not None:
+            self.tables[as_] = list(UNUSED_COLUMNS) if ok else None
+            self.lineage[as_] = Lineage("narrowed", i, "unused_names", "nameId", ("nameId",), True, False, "", ()) \
+                if ok else None
+
     def op_filter(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
         r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
-        if "where" not in o and "ids" not in o:
-            self.add(place, "a filter needs `where`, `ids` or both", i)
+        if "where" not in o and "ids" not in o and "slots" not in o:
+            self.add(place, "a filter needs `where`, `ids`, `slots` or more than one", i)
         if "where" in o:
             self.where(place + ".where", o["where"], r[0] if r else "its table", r[1] if r else None, i)
         parent = self.lineage.get(r[0]) if r is not None else None
@@ -580,6 +616,15 @@ class _Checker:
             self.add(place + ".key", "`key` names the column `ids` picks by - give `ids` too", i)
         if "ids" in o:
             picked = self.pick(place, o, r, parent, i)
+        if "slots" in o:
+            if o["slots"] != "boss":
+                self.add(place + ".slots", "the only slots a filter knows are \"boss\"", i)
+            elif parent is None or parent.source_op != "read_placements" or r is None or r[1] is None or \
+                    "entityId" not in [c for c, _ in r[1]]:
+                self.add(place + ".slots", "boss slots pick placements by their entity id: filter a table of "
+                                           "read_placements that keeps `entityId`", i)
+            else:
+                picked = True
         if as_ is not None:
             self.tables[as_] = list(r[1]) if r is not None and r[1] is not None else None
             if parent is not None and r is not None and r[1] is not None:
@@ -813,6 +858,7 @@ _CHECKS = {
     "load_maps": _Checker.op_load_maps,
     "read_placements": _Checker.op_read_placements,
     "join_names": _Checker.op_join_names,
+    "unused_names": _Checker.op_unused_names,
     "filter": _Checker.op_filter,
     "count": _Checker.op_count,
     "distinct": _Checker.op_distinct,
@@ -950,7 +996,7 @@ def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, s
     lineage = {t: lin for t, lin in c.lineage.items() if lin is not None}
     return Job(id=job_id, title=title, sha256=sha, ops=plain_ops, needs=needs if "needs" in doc else None,
                uses_link=any(o["op"] in LINK_OPS for o in plain_ops), maps=len(c.maps), share_name=c.share_name,
-               lineage=lineage)
+               map_families=tuple(sorted(c.families)), lineage=lineage)
 
 
 def canonical_sha256(ops: object) -> str:
@@ -999,10 +1045,12 @@ def _line(o: dict) -> str:
             s += " - " + _plural(len(set(ids)), "row", "rows")
         return s
     if op == "load_maps":
-        return "loads %s in Smithbox - its view changes, not its data" % _plural(len(o["maps"]), "map", "maps")
+        return "loads %s in Smithbox - its view changes, not its data" % _maps_words(o["maps"])
     if op == "read_placements":
-        of = "the loaded maps" if o["maps"] == "all" else _plural(len(o["maps"]), "map", "maps")
+        of = "the loaded maps" if o["maps"] == "all" else _maps_words(o["maps"])
         return "placed characters of %s: entity, row, dialogue and model ids" % of
+    if op == "unused_names":
+        return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
         return "join %s with %s - local" % (o["rows"], TEXT_WORDS[o["text"]])
     if op == "filter":
@@ -1010,6 +1058,8 @@ def _line(o: dict) -> str:
         if o.get("ids") is not None:
             parts.append("whose %s is one of %s listed" % (o.get("key") or "row id",
                                                           _plural(len(set(o["ids"])), "id", "ids")))
+        if o.get("slots") == "boss":
+            parts.append("whose entity id is a boss slot (ending %d to %d)" % BOSS_SLOTS)
         if o.get("where"):
             parts.append("where %s" % conditions(o["where"]))
         return "keeps the rows of %s %s" % (o["rows"], " and ".join(parts))
@@ -1027,6 +1077,16 @@ def _line(o: dict) -> str:
     if op == "write_share":
         return "share file `%s.json`: %s" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
     return op
+
+
+def _maps_words(maps: list) -> str:
+    """"3 maps", "the maps of m10_* and m11_*", or "the maps of m10_* and 2 maps"."""
+    ids = [m for m in maps if not MAP_FAMILY_RX.fullmatch(m)]
+    fams = [m for m in maps if MAP_FAMILY_RX.fullmatch(m)]
+    if not fams:
+        return _plural(len(ids), "map", "maps")
+    s = "the maps of " + _and(fams)
+    return s + (" and " + _plural(len(ids), "map", "maps") if ids else "")
 
 
 def preview(job: Job) -> dict[str, list[str]]:
@@ -1050,6 +1110,8 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
             tables[o["as"]] = list(PLACEMENT_COLUMNS)
         elif op == "join_names":
             tables[o["as"]] = tables[o["rows"]] + list(JOIN_COLUMNS)
+        elif op == "unused_names":
+            tables[o["as"]] = list(UNUSED_COLUMNS)
         elif op == "filter":
             tables[o["as"]] = list(tables[o["rows"]])
         elif op == "count":

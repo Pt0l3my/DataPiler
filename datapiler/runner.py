@@ -53,7 +53,7 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "load_maps": "maps", "read_placements": "maps", "join_names": "rows",
+UNITS = {"fetch_rows": "rows", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
@@ -459,6 +459,12 @@ class Runner:
                 if card.state in ACTIVE:
                     return {"ok": True}
                 maps = card.job.maps or 0
+                fams = tuple(getattr(card.job, "map_families", ()) or ())
+                if fams and confirm_maps != maps:
+                    return {"ok": False, "ask": {"maps": maps, "text": (
+                        "This job loads every map of %s in Smithbox%s, ten at a time; how many is known once Smithbox "
+                        "lists them. Smithbox's view changes, not its data, and loading may take a long while. Start "
+                        "it?" % (jobs._and(list(fams)), " and %s more" % "{:,}".format(maps) if maps else ""))}}
                 if maps > MAP_QUESTION and confirm_maps != maps:
                     return {"ok": False, "ask": {"maps": maps, "text": (
                         "This job loads %s maps in Smithbox, ten at a time. Smithbox's view changes, not its data, "
@@ -978,9 +984,11 @@ class Runner:
         if op == "fetch_rows":
             return self._fetch_rows(ctx, i, o)
         if op == "load_maps":
-            maps = list(o["maps"])
+            maps = self._resolve_maps(o["maps"])
             n = self.link.open_maps(maps, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
             return n, len(maps)
+        if op == "unused_names":
+            return self._unused_names(ctx, i, o)
         if op == "read_placements":
             return self._read_placements(ctx, i, o)
         if op == "join_names":
@@ -988,6 +996,11 @@ class Runner:
         if op == "filter":
             cols, rows = ctx.tables[o["rows"]]
             keep = _predicate(o.get("where"), cols)
+            if o.get("slots") == "boss":
+                e = [c for c, _ in cols].index("entityId")
+                lo, hi = jobs.BOSS_SLOTS
+                where_keep = keep
+                keep = lambda r, w=where_keep: isinstance(r[e], int) and r[e] > 0 and lo <= r[e] % 1000 <= hi and w(r)  # noqa: E731
             if o.get("ids") is not None:
                 j = [c for c, _ in cols].index(o["key"])
                 picked = frozenset(o["ids"])
@@ -1049,6 +1062,40 @@ class Runner:
                               logbook.n(time.monotonic() - t0))
         return len(rows), len(rows)
 
+    def _resolve_maps(self, maps: Sequence[str]) -> list[str]:
+        """A job's map list with each family (`m10_*`, S45) replaced by the project's maps of that area, in order,
+        each once. Ids the project does not have stay; open_maps and read_placements skip them."""
+        fams = [m for m in maps if jobs.MAP_FAMILY_RX.fullmatch(m)]
+        known = list(self.link.all_maps()) if fams else []
+        out: list[str] = []
+        for m in maps:
+            for x in ([k for k in known if k.startswith(m[:-1])] if m in fams else [m]):
+                if x not in out:
+                    out.append(x)
+        return out
+
+    def _unused_names(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """The entries of a text set that no row of a table names (S47), with their layers and, locally, their
+        texts. Check 6 measures the table against the set's entries (a source of its own)."""
+        text = o["text"]
+        words = jobs.TEXT_WORDS[text]
+        lang = self.language()
+        from . import textdb as textdb_mod
+        pairs = textdb_mod.TEXT_SETS.get(text) or ()
+        if not any(self.textdb.has(c, lang) for c in dict.fromkeys(c for c, _ in pairs)):
+            raise _Fail("%s are not imported yet - run Extract's guided row for them first" % words.capitalize())
+        layers = self.textdb.layers(text, lang)
+        names = self.textdb.names(text, lang)
+        cols, rows = ctx.tables[o["rows"]]
+        k = [c for c, _ in cols].index(o["key"])
+        used = {r[k] for r in rows if isinstance(r[k], int) and not isinstance(r[k], bool)}
+        out = [(n, layers[n], names.get(n)) for n in sorted(layers) if n not in used]
+        ctx.tables[o["as"]] = (list(jobs.UNUSED_COLUMNS), out)
+        ctx.sources[i] = _Source(text, len(layers), True)
+        ctx.log.info("op %s unused_names: %s of %s entries of %s are named by no row of %s", i,
+                     logbook.n(len(out)), logbook.n(len(layers)), own(text), own(o["rows"]))
+        return len(out), len(layers)
+
     def _read_placements(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         if o["maps"] == "all":
             maps = list(self.link.loaded_maps())
@@ -1057,7 +1104,14 @@ class Runner:
                     self._map_hint = "load the maps in Smithbox first"
                 raise _Fail("no map is loaded in Smithbox - load the maps in Smithbox first")
         else:
-            maps = list(o["maps"])
+            maps = self._resolve_maps(o["maps"])
+            known = set(self.link.all_maps())
+            have = [m for m in maps if m in known]
+            if len(have) < len(maps):
+                # A map id the project does not have is skipped; a map it has but has not loaded fails, clearly.
+                ctx.log.info("op %s read_placements: %s of %s map ids are not maps of this Smithbox project and were "
+                             "skipped", i, logbook.n(len(maps) - len(have)), logbook.n(len(maps)))
+            maps = have
         rows: list[tuple] = []
         per_map: dict[str, int] = {}
         ctx.on_op(i, "running", 0, len(maps), None)

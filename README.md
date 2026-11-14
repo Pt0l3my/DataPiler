@@ -124,9 +124,10 @@ Rendering and the skipping of Havok loading, and nothing else of that file; Smit
 change you just made may not show yet.
 
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
-stops partway, **Start again** goes on where it stopped. A job pauses once Smithbox holds 300 maps, because
-Smithbox's Vulkan build keeps graphics memory for every map it has loaded and has brought a graphics driver down with
-about 700: close Smithbox, start it again, and press **Start again**.
+stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
+first, then starts from the beginning. A whole map job runs in one go; Smithbox's Vulkan build,
+which keeps graphics memory for every map it has loaded, once brought a graphics driver down with about 700, which
+is why map jobs run on its OpenGL build (below).
 
 With **Map jobs on Smithbox's OpenGL build only** on (Settings; on at first), a map job waits while Smithbox runs as
 its Vulkan build: close Smithbox and start `Smithbox.OpenGL.exe` from Smithbox's folder, with the same project. The

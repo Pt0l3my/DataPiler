@@ -9,7 +9,8 @@ this start) for as long as that window is open, as a first start may wait for th
 opens the browser there. While an update runs (from Install and restart until the new version's page is up, while
 `update\pending.json` is there), a start only says "DataPiler is updating - see its window." and opens nothing. It
 asks for no elevation (`asInvoker`), probes no socket and embeds no Python. Its source is
-`launcher-src/launcher.cpp`, with `app.rc` (its name and version) and `app.manifest`; 0.1 has no icon.
+`launcher-src/launcher.cpp`, with `app.rc` (its name, version and icon), `app.manifest` and `app.ico`; 0.1 to 0.2.13
+had no icon.
 
 Two routes give the same exe: a local build with MinGW-w64, and the release workflow on GitHub.
 
@@ -17,11 +18,11 @@ Two routes give the same exe: a local build with MinGW-w64, and the release work
 
 You need MinGW-w64 (`x86_64-w64-mingw32-g++` and `x86_64-w64-mingw32-windres`): `sudo apt-get install mingw-w64` on
 Linux, or MSYS2's `mingw-w64-x86_64-gcc` on Windows (in its MINGW64 shell the same tools are `g++` and `windres`).
-`app.rc` names `app.manifest` by its bare file name, so build in a folder holding the three inputs. From the
+`app.rc` names `app.manifest` and `app.ico` by their bare file names, so build in a folder holding the four inputs. From the
 repository's root (`build/` is ignored by git):
 
 ```
-mkdir -p build && cp launcher-src/launcher.cpp launcher-src/app.rc launcher-src/app.manifest build/ && cd build
+mkdir -p build && cp launcher-src/launcher.cpp launcher-src/app.rc launcher-src/app.manifest launcher-src/app.ico build/ && cd build
 x86_64-w64-mingw32-windres app.rc -O coff -o app.res
 x86_64-w64-mingw32-g++ -std=c++17 -O2 -municode -mwindows -static -s -Wl,--no-insert-timestamp launcher.cpp app.res -o DataPiler.exe -lshell32 -lole32
 ```
@@ -36,7 +37,7 @@ Then check it:
   `PE32+ executable (GUI) x86-64 ...` and file 5.46 or later `PE32+ executable for MS Windows <version> (GUI),
   x86-64, ...`; `file -b DataPiler.exe | grep -Eq '^PE32\+ executable .*\(GUI\).*x86-64'` checks both, as the
   release workflow does.
-- `strings -a -el DataPiler.exe | grep 0.2.13.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
+- `strings -a -el DataPiler.exe | grep 0.2.14.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
 - `x86_64-w64-mingw32-objdump -p DataPiler.exe | grep "DLL Name"` lists only `KERNEL32.dll`, `msvcrt.dll`,
   `SHELL32.dll` and `USER32.dll`: no socket library.
 
@@ -76,3 +77,18 @@ that tag.
 Another compiler version, such as Linux's MinGW-w64, gives an exe that works the same but differs in its bytes.
 
 The exe is unsigned, so Windows' SmartScreen may warn on its first start: More info, then Run anyway.
+
+## The icon
+
+`launcher-src/app.ico` is DataPiler's own drawing (S65): a blood-red katana in a rising slash, with blood drops, on a
+dark tile; no game art is used. It is drawn in three levels of detail, so nothing is too small to see at 16 px, and
+holds eight sizes, 16 to 256 px. To make it again, in an empty folder:
+
+```
+python3 -I <repo>/tools/icon/make_svg.py
+mkdir -p png && node <repo>/tools/icon/render.js
+python3 -I <repo>/tools/icon/make_ico.py png <repo>/launcher-src/app.ico
+```
+
+`render.js` uses Playwright's Chromium; any SVG renderer that writes `png/<size>.png` at 256, 128, 64, 48 (from the
+large and medium drawings), 32, 24, 20 and 16 px will do.

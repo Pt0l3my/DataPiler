@@ -13,6 +13,17 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.14 - 2026-11-14
+
+- No more pause at 300 maps (S65): a map job runs in one go. It still keeps each map as soon as it is read, so a
+  crash costs only the map in hand, and **Resume job** goes on from there.
+- DataPiler.exe has an icon (S65): our own blood-red katana in a rising slash, with blood drops, readable from 16 to
+  256 px. It comes with the exe, which a new release (or the patch's own build) carries.
+- **Resume job** (S66): a job that failed, was cancelled or stopped with maps kept shows how much is kept and where it
+  picks up ("Saved progress: 300 of 829 maps read and kept ... Resume job picks up at map 301 of 829 (m60_...)"), and
+  a **Resume job** button that goes on from there. **Start again** now asks first, and starts from the beginning,
+  dropping what was kept.
+
 ## 0.2.13 - 2026-11-14
 
 - A setting, on by default: **Map jobs on Smithbox's OpenGL build only** (DP20, S64). Smithbox's Vulkan build prepares

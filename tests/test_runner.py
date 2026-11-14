@@ -912,8 +912,8 @@ class ProgressTest(RunnerBase):
     def progress_file(self, card_id: str) -> Path:
         return Path(self.p.jobs) / card_id / runner.MAPS_FILE
 
-    def again(self, card_id: str, state: str = "done") -> dict:
-        self.assertEqual(self.r.act(card_id, "start"), {"ok": True})
+    def again(self, card_id: str, state: str = "done", what: str = "resume") -> dict:
+        self.assertEqual(self.r.act(card_id, what), {"ok": True})
         self.assertTrue(wait_for(lambda: self.card(card_id)["state"] == state), self.card(card_id))
         return self.card(card_id)
 
@@ -929,6 +929,8 @@ class ProgressTest(RunnerBase):
         self.assertIn("UNAVAILABLE", card["result"]["failed"]["why"])
         kept = runner._MapProgress(self.progress_file(card["id"]), {}).path.read_text("ascii").splitlines()
         self.assertEqual(len(kept), 3)                       # the header and the two maps read before the crash
+        # S66: the card says what is kept and where Resume picks up
+        self.assertEqual(card["result"]["kept"], {"maps": 2, "of": 5, "next": "m99_00_00_02", "next_n": 3})
         self.link.crash_on_read = None
         self.link.calls = []
         card = self.again(card["id"])
@@ -952,6 +954,32 @@ class ProgressTest(RunnerBase):
             self.link.loaded = []
             self.again(card["id"])
         self.assertEqual([r[1] for r in self.per_map()], [3] * 5)
+
+    def test_start_again_begins_from_the_beginning(self):
+        # S66: Start again drops what was kept; only Resume goes on from it
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 3
+        card = self.run_job(self.doc(), state="failed")
+        self.assertTrue(self.progress_file(card["id"]).exists())
+        self.link.crash_on_read = None
+        self.link.loaded = []
+        self.link.calls = []
+        self.again(card["id"], what="start")
+        self.assertEqual([c for c in self.link.calls if c[0] == "OpenResource"], [("OpenResource", tuple(self.MAPS))])
+        self.assertEqual(len([c for c in self.link.calls if c[0] == "BatchGetObjects"]), 5)
+
+    def test_a_run_before_the_summary_shows_its_count(self):
+        # a job stopped by 0.2.12 or 0.2.13 has kept maps but no summary on its card
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 4
+        card = self.run_job(self.doc(), state="failed")
+        with self.r._lock:
+            self.r._cards[card["id"]].result.pop("kept")
+        self.assertEqual(self.card(card["id"])["result"]["kept"], {"maps": 3, "of": None, "next": None, "next_n": None})
+        self.progress_file(card["id"]).unlink()
+        self.assertIsNone(self.card(card["id"])["result"]["kept"])
 
     def test_a_kept_file_of_another_job_or_game_is_dropped(self):
         self.link.every_map = list(self.MAPS)

@@ -67,7 +67,7 @@ jobs:
       - name: Build as BUILD.md says
         run: |
           mkdir -p build
-          cp launcher-src/launcher.cpp launcher-src/app.rc launcher-src/app.manifest build/
+          cp launcher-src/launcher.cpp launcher-src/app.rc launcher-src/app.manifest launcher-src/app.ico build/
           cd build
           windres app.rc -O coff -o app.res
           g++ -std=c++17 -O2 -municode -mwindows -static -s -Wl,--no-insert-timestamp launcher.cpp app.res -o DataPiler.exe -lshell32 -lole32

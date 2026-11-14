@@ -97,6 +97,7 @@ tr.off td { opacity: .5; }
 .oplines { margin-top: 8px; font-size: 12px; }
 .oplines div { padding: 1px 0; }
 .result { margin-top: 8px; }
+.result .kept { margin-top: 6px; color: var(--ok); }
 .result .bad { color: var(--err); }
 
 /* Outputs */

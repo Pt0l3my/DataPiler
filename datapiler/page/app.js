@@ -365,6 +365,18 @@ function opLine(o) {
   }
   return el("div", null, parts.join(" · "));
 }
+// S66: what a stopped run kept, which Resume job goes on from; none for a job that is running, queued or done.
+function keptOf(j) {
+  if (!j.result || !j.result.kept || ["failed", "cancelled", "stopped"].indexOf(j.state) < 0) return null;
+  return j.result.kept.maps > 0 ? j.result.kept : null;
+}
+function keptNote(k) {
+  let t = "Saved progress: " + fmtN(k.maps) + (k.of ? " of " + fmtN(k.of) : "") + " maps read and kept from the last run. ";
+  if (k.next) t += "Resume job picks up at map " + fmtN(k.next_n) + (k.of ? " of " + fmtN(k.of) : "") + " (" + k.next + ").";
+  else if (k.of && k.maps >= k.of) t += "Every map is read: Resume job goes on with the steps after them.";
+  else t += "Resume job goes on from there.";
+  return t;
+}
 function jobAct(j, what, confirm) {
   api("/api/jobs/act", { id: j.id, what: what, confirm_maps: confirm == null ? null : confirm }).then((r) => {
     if (r.ok) { poll(); return; }
@@ -446,12 +458,25 @@ function jobCard(j) {
       if (f.check != null) t += " (check " + f.check + (f.where ? " at " + f.where : "") + ")";
       add(res, el("div", "bad", t));
     }
+    if (keptOf(j)) add(res, el("div", "kept", keptNote(keptOf(j))));
     add(c, res);
   }
   const act = el("div", "actions");
   const canStart = ["checked", "cancelled", "stopped", "failed", "done"].indexOf(j.state) >= 0;
   const canCancel = ["queued", "waiting", "running"].indexOf(j.state) >= 0;
-  if (canStart) { const b = el("button", "pri", j.state === "checked" ? "Start" : "Start again"); b.addEventListener("click", () => jobAct(j, "start")); add(act, b); }
+  const kept = keptOf(j);
+  if (canStart && kept) { const b = el("button", "pri", "Resume job"); b.addEventListener("click", () => jobAct(j, "resume")); add(act, b); }
+  if (canStart) {
+    const b = el("button", kept ? null : "pri", j.state === "checked" ? "Start" : "Start again");
+    b.addEventListener("click", () => {
+      // S66: starting again from the beginning is asked first; it drops what an earlier run kept.
+      if (j.state !== "checked" && !window.confirm(kept
+        ? "Start this job again from the beginning? The " + fmtN(kept.maps) + " maps kept from the last run are dropped and read again. To go on from them, choose Resume job instead."
+        : "Start this job again from the beginning?")) return;
+      jobAct(j, "start");
+    });
+    add(act, b);
+  }
   if (canCancel) { const b = el("button", null, "Cancel"); b.addEventListener("click", () => jobAct(j, "cancel")); add(act, b); }
   if (!canCancel) { const b = el("button", null, "Remove"); b.addEventListener("click", () => jobAct(j, "remove")); add(act, b); }
   add(c, act);

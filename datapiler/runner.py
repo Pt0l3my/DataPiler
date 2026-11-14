@@ -49,7 +49,7 @@ STATE_FORMAT = "datapiler-jobstate/1"
 LOCAL_FORMAT = "datapiler-local/1"
 MAPS_FILE = "maps.jsonl"            # S63: a job's placements read so far, map by map, in its own folder
 MAPS_FORMAT = "datapiler-mapprogress/1"
-MAPS_PER_SESSION = 300              # S63: the most maps a job asks Smithbox to hold at once; then it pauses
+MAPS_PER_SESSION: int | None = None  # S63, S65: no pause since 0.2.14, by the owner's word; a number brings it back
 MAPS_KEY = ("game_version", "regulation_sha256", "smithbox_build")
 MAPS_READY_WAIT = 600.0             # S64: after a switch to the OpenGL build, how long to wait for Smithbox's maps
 MAPS_READY_POLL = 2.0
@@ -152,6 +152,7 @@ class _Ctx:
     names: dict = field(default_factory=dict)        # text set -> provenance.names's record (P3)
     progress: "_MapProgress | None" = None           # S63: where the maps read so far are kept
     kept: dict = field(default_factory=dict)         # S63: map -> its placement rows, read in this run or before
+    plan: list = field(default_factory=list)         # S66: the maps the job reads, in order, once it knows them
     local: list = field(default_factory=list)
     share: tuple | None = None
     fetched: int = 0
@@ -332,6 +333,7 @@ class Runner:
         self._extract_cancel = threading.Event()
         self._ask: dict | None = None
         self._map_hint: str | None = None
+        self._kept_cache: dict[str, tuple] = {}
         self._unsubs = [events.subscribe("link.state", self._wake),
                         events.subscribe("settings.saved", self._wake),
                         events.subscribe("inbox.import", self._on_import),
@@ -519,15 +521,16 @@ class Runner:
             return card.public(), False
 
     def act(self, job_id: str, what: str, *, confirm_maps: int | None = None) -> dict:
-        """what: "start", "cancel" or "remove". {"ok": True}, or {"ok": False, "ask": {...}} when Start would load
-        more than ten maps and confirm_maps does not equal that number (S8). ValueError for an unknown id or what."""
-        if what not in ("start", "cancel", "remove"):
+        """what: "start", "resume", "cancel" or "remove". {"ok": True}, or {"ok": False, "ask": {...}} when Start would
+        load more than ten maps and confirm_maps does not equal that number (S8). S66: "start" begins again from the
+        beginning, dropping what an earlier run kept; "resume" goes on from it. ValueError for an unknown id or what."""
+        if what not in ("start", "resume", "cancel", "remove"):
             raise ValueError("not something a job can do")
         with self._cv:
             card = self._cards.get(job_id) if isinstance(job_id, str) else None
             if card is None:
                 raise ValueError("no such job")
-            if what == "start":
+            if what in ("start", "resume"):
                 if card.job is None:
                     return {"ok": False, "error": "a refused job cannot start - drop a corrected file"}
                 if card.state in ACTIVE:
@@ -543,6 +546,8 @@ class Runner:
                     return {"ok": False, "ask": {"maps": maps, "text": (
                         "This job loads %s maps in Smithbox, ten at a time. Smithbox's view changes, not its data, "
                         "and loading may take a long while. Start it?" % "{:,}".format(maps))}}
+                if what == "start":
+                    _MapProgress(self._folder(card.id) / MAPS_FILE, {}).clear()
                 card.cancel = threading.Event()
                 card.state, card.wait, card.result = "queued", None, None
                 card.ops = _ops_public(card.job)
@@ -577,9 +582,40 @@ class Runner:
             return {"ok": True}
 
     def cards(self) -> list[dict]:
-        """/api/state "jobs", in the order they were added."""
+        """/api/state "jobs", in the order they were added. S66: a result's "kept" (what Resume goes on from) is
+        shown only while its file is still there."""
         with self._lock:
-            return [c.public() for c in self._cards.values()]
+            out = [c.public() for c in self._cards.values()]
+        for c in out:
+            r = c.get("result")
+            if not r or c.get("state") not in ("failed", "cancelled", "stopped"):
+                continue
+            f = self._folder(c["id"]) / MAPS_FILE
+            if not f.exists():
+                r["kept"] = None
+            elif not r.get("kept"):
+                # a run before 0.2.14 kept maps without a summary: count them from the file
+                n = self._kept_count(f)
+                r["kept"] = {"maps": n, "of": None, "next": None, "next_n": None} if n else None
+        return out
+
+    def _kept_count(self, f: Path) -> int:
+        """The maps a progress file holds (its lines after the header), cached by its size and time."""
+        try:
+            st = f.stat()
+        except OSError:
+            return 0
+        key = (str(f), st.st_size, st.st_mtime_ns)
+        hit = self._kept_cache.get(str(f))
+        if hit and hit[0] == key:
+            return hit[1]
+        try:
+            with open(f, "rb") as fh:
+                n = max(0, sum(1 for line in fh if line.strip()) - 1)
+        except OSError:
+            n = 0
+        self._kept_cache[str(f)] = (key, n)
+        return n
 
     # ------------------------------------------------------------------------------------------------ Extract
 
@@ -960,12 +996,12 @@ class Runner:
                             own("a share file" if share else "no share file"))
                 elif outcome == "failed":
                     assert fail is not None
-                    card.result = {"share": None, "local": list(ctx.local), "failed": fail}
+                    card.result = {"share": None, "local": list(ctx.local), "failed": fail, "kept": self._kept(ctx)}
                     card.state = "failed"
                     jl.error("failed at op %s (%s): %s", fail["op"], own(job.ops[fail["op"]]["op"]),
                              own(fail["why"]))
                 else:
-                    card.result = {"share": None, "local": list(ctx.local), "failed": None}
+                    card.result = {"share": None, "local": list(ctx.local), "failed": None, "kept": self._kept(ctx)}
                     card.state = "stopped" if self._stopping and not card.remove_after else "cancelled"
                     jl.info("%s between calls", own(card.state))
                     for o in card.ops:
@@ -1126,6 +1162,8 @@ class Runner:
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
             # S63: a map whose placements this run or an earlier one read and kept is not loaded again.
+            if not ctx.plan:
+                ctx.plan = list(maps)
             kept = [m for m in maps if m in ctx.kept]
             todo = [m for m in maps if m not in ctx.kept]
             if kept:
@@ -1137,7 +1175,8 @@ class Runner:
             if ctx.progress is not None:
                 reads = self._maps_read_later(ctx, i)
                 kw["on_loaded"] = lambda m: self._read_now(ctx, m) if m in reads else None
-                kw["session_cap"] = MAPS_PER_SESSION
+                if MAPS_PER_SESSION:
+                    kw["session_cap"] = MAPS_PER_SESSION
             n = self.link.open_maps(todo, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(
                 i, "running", d, t, round(time.monotonic() - t0, 1)), **kw)
             capped = getattr(self.link, "capped", None) if ctx.progress is not None else None
@@ -1304,6 +1343,8 @@ class Runner:
         rows: list[tuple] = []
         per_map: dict[str, int] = {}
         t0 = time.monotonic()
+        if o["maps"] != "all" and not ctx.plan:
+            ctx.plan = list(maps)
         ctx.on_op(i, "running", 0, len(maps), None)
         kept = sum(1 for m in maps if m in ctx.kept)
         if kept and o["maps"] != "all":
@@ -1331,6 +1372,19 @@ class Runner:
             ctx.fetched += len(rows)
             ctx.unit = "placements"
         return len(maps), len(maps)
+
+    @staticmethod
+    def _kept(ctx: _Ctx) -> dict | None:
+        """S66: what Resume goes on from - maps read and kept of the maps the job reads, and the first it has yet to
+        read - or None when nothing is kept."""
+        if ctx.progress is None or not ctx.kept:
+            return None
+        if ctx.plan:
+            done = [m for m in ctx.plan if m in ctx.kept]
+            nxt = next((k for k, m in enumerate(ctx.plan) if m not in ctx.kept), None)
+            return {"maps": len(done), "of": len(ctx.plan), "next": ctx.plan[nxt] if nxt is not None else None,
+                    "next_n": nxt + 1 if nxt is not None else None}
+        return {"maps": len(ctx.kept), "of": None, "next": None, "next_n": None}
 
     def _placements_of(self, map_id: str) -> list[tuple]:
         """The placed characters of one loaded map, as rows of numbers (PLACEMENT_COLUMNS)."""

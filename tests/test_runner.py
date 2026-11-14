@@ -880,3 +880,11 @@ class BossesTest(RunnerBase):
         self.assertEqual(sorted(r[1] for r in rows), [9000800] * 3)
         self.assertEqual({r[2] for r in rows}, {9000003})
 
+
+class CardsTest(RunnerBase):
+    def test_each_card_carries_when_it_was_added(self):
+        # S54: the page sorts the newest first by `added`, so every card must carry it.
+        self.r.add("a.json", fixture("job-files", "good-example.json"))
+        cards = self.r.cards()
+        self.assertTrue(cards and all(isinstance(c.get("added"), (int, float)) for c in cards))
+

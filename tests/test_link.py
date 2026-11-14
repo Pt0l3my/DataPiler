@@ -381,13 +381,36 @@ class AgainstTheFake(unittest.TestCase):
         self.assertEqual(sorted(self.link.loaded_maps()), sorted(set(fake_soapstone.LOADED_AT_START) |
                                                                 {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}))
 
+    def test_a_map_that_will_not_load_is_skipped(self):
+        # S57: named in the log, skipped after map_skip, and the next map asked for.
+        self.link.switch(True)
+        self.fake.broken = {"m99_00_00_04"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        self.link.map_skip = 0.2
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05"])
+        self.assertEqual(n, 2)
+        self.assertEqual(self.link.skipped_maps, ["m99_00_00_04"])
+
+    def test_three_maps_in_a_row_that_will_not_load_stop_it(self):
+        self.link.switch(True)
+        self.fake.broken = {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        self.link.map_skip = 0.1
+        with self.assertRaises(link.LinkError) as cm:
+            self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05", "m99_00_00_06"])
+        self.assertIn("3 maps in a row did not load", str(cm.exception))
+
     def test_open_maps_gives_up_on_a_batch_that_never_loads(self):
+        # S57: nothing loading at all ends in three skips in a row and an error that says what to look at.
         self.link.switch(True)
         self.fake.load_after = 10 ** 6
-        self.link.map_wait = 0.2
+        self.link.map_poll = 0.01
+        self.link.map_skip = 0.1
         with self.assertRaises(link.LinkError) as cm:
-            self.link.open_maps(["m99_00_00_05"])
-        self.assertIn("Map Editor tab is in front", str(cm.exception))      # S52: what to do about it
+            self.link.open_maps(["m99_00_00_05", "m99_00_00_06", "m99_00_00_07"])
+        self.assertIn("Map Editor tab in front", str(cm.exception))
 
     def test_placements_as_numbers(self):
         self.link.switch(True)

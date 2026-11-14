@@ -112,6 +112,7 @@ class FakeSoapstone:
         self.busy = 0                   # looks during which Smithbox still finishes a loaded map, refusing loads
         self.busy_after_load = 0
         self.refused = 0                # loads refused while another ran
+        self.broken: set[str] = set()     # maps that never load
         self.list_params_extra = ("Bad Name!", "x" * 70)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         served = (
@@ -249,6 +250,9 @@ class FakeSoapstone:
             context.abort(grpc.StatusCode.NOT_FOUND, "no such resource: Ostrel Vanehollow")
         with self.lock:
             if res.name not in self.loaded and res.name not in self.pending:
+                if res.name in self.broken:
+                    # A map whose load fails in Smithbox every time it is asked for (S57).
+                    return pb.OpenResourceResponse()
                 if self.pending or self.busy:
                     # As Smithbox 2.2.6 does: a load while another runs is refused ("map already loading", S53).
                     self.refused += 1

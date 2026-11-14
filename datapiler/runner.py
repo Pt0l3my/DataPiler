@@ -107,7 +107,8 @@ class _Card:
                 "sha256": self.sha256, "state": self.state,
                 "refusals": [{"op": r.op, "where": r.where, "text": r.text} for r in self.refusals],
                 "preview": self.preview, "wait": self.wait, "ops": [dict(o) for o in self.ops],
-                "result": json.loads(json.dumps(self.result)) if self.result is not None else None}
+                "result": json.loads(json.dumps(self.result)) if self.result is not None else None,
+                "added": self.added}          # S54: the page sorts the newest first by it
 
 
 @dataclass
@@ -1109,6 +1110,12 @@ class Runner:
         else:
             maps = self._resolve_maps(o["maps"])
             known = set(self.link.all_maps())
+            # S57: a map load_maps skipped (it would not load) is left out here too, with a log line.
+            skip = set(getattr(self.link, "skipped_maps", None) or ())
+            if skip & set(maps):
+                ctx.log.info("op %s read_placements: %s maps that did not load are left out", i,
+                             logbook.n(len(skip & set(maps))))
+            maps = [m for m in maps if m not in skip]
             have = [m for m in maps if m in known]
             if len(have) < len(maps):
                 # A map id the project does not have is skipped; a map it has but has not loaded fails, clearly.

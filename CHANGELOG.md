@@ -10,6 +10,15 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.8 - 2026-11-14
+
+- The newest job really is first (S54): each card now carries the time it was added, which the page sorts by; 0.2.7
+  sorted on a field the page never received.
+- The top bar shows the full version, 0.2.8 rather than 0.2 (S56).
+- A map that will not load no longer holds up the rest (S57): the log names each map as it loads, a map not loaded
+  after 5 minutes is skipped with a warning and the next one asked for, and read_placements leaves the skipped maps
+  out. Three skipped maps in a row stop the job, as Smithbox is then likely stuck.
 ## 0.2.7 - 2026-11-14
 
 - Maps load one at a time (S53). Smithbox refuses to start a map load while another runs, so 0.2.3 to 0.2.6 lost nine of

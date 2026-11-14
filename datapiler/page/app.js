@@ -153,7 +153,7 @@ function pill(id, kind, value) {
   e.textContent = "● " + p[1];
 }
 function paintTop(s) {
-  $("ver").textContent = String(s.version || "").split(".").slice(0, 2).join(".");
+  $("ver").textContent = String(s.version || "");          // the full version, 0.2.8 not 0.2 (S56)
   pill("pSmithbox", "smithbox", s.pills.smithbox);
   pill("pGame", "game", s.pills.game);
   pill("pLink", "link", s.pills.link);

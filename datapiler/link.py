@@ -121,6 +121,8 @@ _MAP_EDITOR = ("Smithbox lists no maps: most likely its Visual Map Editor is not
 _MAP_SEARCH = "Smithbox's server could not answer a map search (UNKNOWN) - its own log in Smithbox may say why"
 # Smithbox hands a queued "map load" to its Map Editor only while that editor's window is drawn (MapEditorStub.cs at
 # 2.2.6), so a minimised Smithbox, or another tab in front, loads nothing (S52, WHY§40).
+_MAPS_STUCK = ("%d maps in a row did not load (%d of %d done) - Smithbox may be stuck: look at its own log, keep its Map "
+               "Editor tab in front and not minimised, then start the job again")
 _MAPS_STALLED = ("Smithbox loaded no map for %d s (%d of %d loaded). Smithbox loads maps only while its Map Editor "
                  "tab is in front and its window is not minimised - bring it up, then start the job again")
 
@@ -314,6 +316,8 @@ class Link:
     map_wait = 900.0                    # how long Smithbox may go without loading another map (S52)
     map_heartbeat = 60.0                # how often open_maps says it is still waiting
     map_reask = 10.0                    # how often a map not yet loaded is asked for again (S53)
+    map_skip = 300.0                    # a map not loaded after this long is skipped, and the next asked for (S57)
+    map_skips_in_a_row = 3              # this many skipped maps in a row stop the load: Smithbox is likely stuck
 
     def __init__(self, game: Callable[[], "GameRunning"], *, libs: bool, _test_port: int | None = None):
         """libs False (from --no-link or available()) makes the state "no_libs" for good. The host is always HOST;
@@ -323,6 +327,7 @@ class Link:
         self._port = PORT if _test_port is None else int(_test_port)
         self._lock = threading.RLock()
         self._session = False
+        self.skipped_maps: list[str] = []      # the maps the last open_maps skipped (S57)
         self._blocked = False
         self._channel = None
         self._fns: dict[str, object] = {}
@@ -579,23 +584,29 @@ class Link:
         # S53: one map at a time. Smithbox refuses to start a load while another runs ("map already loading",
         # MapUniverse.LoadMap at 2.2.6), dropping the request, so a map not yet loaded is asked for again every
         # map_reask seconds until Smithbox takes it.
+        skipped: list[str] = []
+        in_a_row = 0
         for k, m in enumerate(todo):
-            _log.info("loading map %s of %s in Smithbox (keep its Map Editor tab in front)", logbook.n(k + 1),
-                      logbook.n(total))
+            # S57: the map's id is named, so a map that will not load can be found in Smithbox's own log.
+            _log.info("loading map %s of %s in Smithbox: %s (keep its Map Editor tab in front)", logbook.n(k + 1),
+                      logbook.n(total), own(m))
             if cancel is not None and cancel.is_set():
                 raise LinkCancelled(_CANCELLED)
             self._open_map(pb, m)
             started = last_ask = time.monotonic()
             next_word = started + self.map_heartbeat
+            ok = True
             while not self.is_loaded(m):
                 now = time.monotonic()
-                if now - started >= self.map_wait:
-                    raise LinkError(_MAPS_STALLED % (int(self.map_wait), done, total))
+                if now - started >= self.map_skip:
+                    ok = False
+                    break
                 if now - last_ask >= self.map_reask:
                     self._open_map(pb, m)
                     last_ask = now
                 if now >= next_word:
-                    _log.info("still loading map %s of %s", logbook.n(k + 1), logbook.n(total))
+                    _log.info("still loading map %s of %s (%s), %s s so far", logbook.n(k + 1), logbook.n(total),
+                              own(m), logbook.n(int(now - started)))
                     next_word = now + self.map_heartbeat
                 if progress is not None:
                     progress(done, total)          # the card's clock moves on while Smithbox loads
@@ -604,10 +615,24 @@ class Link:
                         raise LinkCancelled(_CANCELLED)
                 else:
                     time.sleep(self.map_poll)
-            loaded.add(m)
+            if not ok:
+                skipped.append(m)
+                in_a_row += 1
+                _log.warn("map %s did not load in %s s - skipped; Smithbox's own log may say why", own(m),
+                          logbook.n(int(self.map_skip)))
+                if in_a_row >= self.map_skips_in_a_row:
+                    self.skipped_maps = list(skipped)
+                    raise LinkError(_MAPS_STUCK % (in_a_row, done, total))
+            else:
+                in_a_row = 0
+                loaded.add(m)
             done += 1
             if progress is not None:
                 progress(done, total)
+        self.skipped_maps = list(skipped)
+        if skipped:
+            _log.warn("%s of %s maps did not load and were skipped: %s", logbook.n(len(skipped)), logbook.n(total),
+                      own(", ".join(skipped)))
         return sum(1 for m in wanted if m in loaded)
 
     def _open_map(self, pb, map_id: str) -> None:

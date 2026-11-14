@@ -338,11 +338,28 @@ class AgainstTheFake(unittest.TestCase):
 
     def test_no_map_editor_says_so(self):
         self.link.switch(True)
-        self.fake.fail_maps = True
-        for call in (self.link.all_maps, self.link.loaded_maps, lambda: self.link.is_loaded("m99_00_00_00")):
+        self.fake.no_map_editor = True
+        for call in (self.link.all_maps, self.link.loaded_maps, lambda: self.link.open_maps(["m99_00_00_03"])):
             with self.assertRaises(link.LinkError) as cm:
                 call()
-            self.assertIn("Map Editor", str(cm.exception))
+            self.assertIn("Visual Map Editor", str(cm.exception))
+
+    def test_a_server_failure_on_maps_says_so(self):
+        self.link.switch(True)
+        self.fake.fail_maps = True
+        for call in (self.link.all_maps, lambda: self.link.is_loaded("m99_00_00_00")):
+            with self.assertRaises(link.LinkError) as cm:
+                call()
+            self.assertIn("could not answer a map search", str(cm.exception))
+
+    def test_every_search_carries_its_search_clause(self):
+        # S51: SoapstoneLib refuses a SearchObjects without `search` (UNKNOWN); the fake refuses it too.
+        self.link.switch(True)
+        self.link.all_maps()
+        self.link.is_loaded("m99_00_00_00")
+        self.link.placements("m99_00_00_00")
+        reqs = self.fake.requests("SearchObjects")
+        self.assertTrue(reqs and all(r.HasField("search") for r in reqs))
 
     def test_open_maps_gives_up_on_a_batch_that_never_loads(self):
         self.link.switch(True)

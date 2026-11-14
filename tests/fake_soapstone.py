@@ -107,7 +107,8 @@ class FakeSoapstone:
         self.pending: dict[str, int] = {}
         self.max_pending = 0
         self.load_after = load_after
-        self.fail_maps = False          # True: map searches fail as with no Map Editor (WHY§6)
+        self.fail_maps = False          # True: map searches fail on the server's side
+        self.no_map_editor = False      # True: no map is listed, as when the project has no Visual Map Editor
         self.list_params_extra = ("Bad Name!", "x" * 70)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         served = (
@@ -195,8 +196,13 @@ class FakeSoapstone:
         if res.type != common.EDITOR_RESOURCE_TYPE_MAP:
             return pb.SearchObjectsResponse()
         loaded = self._look_at_maps()
+        if not request.HasField("search"):
+            # As SoapstoneLib does: CheckNonNull(request.Search) throws, and the client sees UNKNOWN (S51).
+            context.abort(grpc.StatusCode.UNKNOWN, "Exception was thrown by handler.")
         if self.fail_maps:
             context.abort(grpc.StatusCode.UNKNOWN, "Exception was thrown by handler.")
+        if self.no_map_editor:
+            return pb.SearchObjectsResponse()
         if request.result_type.category == pb.PRIMARY_KEY_CATEGORY_FILE:
             # As Smithbox 2.2.6 does: a file search lists every map of the bank, loaded or not (S44).
             maps = sorted(MAPS) if res.name == "" else [res.name] if res.name in MAPS else []

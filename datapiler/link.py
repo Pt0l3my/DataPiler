@@ -113,9 +113,10 @@ _OFF = "the server link is off"
 _BLOCKED = "the game is running"
 _NO_LIBS = "the server link needs its libraries - restart DataPiler and answer Y"
 _CANCELLED = "cancelled"
-_MAP_EDITOR = ("Smithbox's server could not list the maps (UNKNOWN): most likely the Map Editor is not enabled "
-               "in your Smithbox project. Enable it in the project's settings, open the Map Editor once, then run "
-               "again")
+_MAP_EDITOR = ("Smithbox lists no maps: most likely its Visual Map Editor is not enabled in the project. Tick it under "
+               "Available Editors in the Projects tab, press Update Project, restart Smithbox and open its Map Editor "
+               "tab, then run again")
+_MAP_SEARCH = "Smithbox's server could not answer a map search (UNKNOWN) - its own log in Smithbox may say why"
 
 _log = logbook.get("link")
 
@@ -474,20 +475,26 @@ class Link:
         list of maps, not of loaded ones. A failure of the server here (UNKNOWN) most likely means the project has no
         Map Editor (WHY§6), and the error says so."""
         _, common, pb = self._messages()
+        # Smithbox's server refuses a search without its search clause (`CheckNonNull(request.Search)` in
+        # SoapstoneLib's SoapstoneServer.cs, an UNKNOWN to us), so every search carries one, empty when it filters
+        # nothing (settled S51, WHY§39).
         req = pb.SearchObjectsRequest(resource=self._map_resource(""),
                                       result_type=pb.PrimaryKeyType(file=MAP_FILE_TEMPLATE,
-                                                                    category=pb.PRIMARY_KEY_CATEGORY_FILE))
+                                                                    category=pb.PRIMARY_KEY_CATEGORY_FILE),
+                                      search=pb.PropertySearch())
         try:
             resp = self._call("SearchObjects", req, lambda r: len(r.results))
         except LinkCallError as e:
             if e.code == "UNKNOWN":
-                raise LinkError(_MAP_EDITOR) from None
+                raise LinkError(_MAP_SEARCH) from None
             raise
         maps: set[str] = set()
         for obj in resp.results:
             m = _MAP_FILE_RX.fullmatch(obj.key.file)
             if m is not None:
                 maps.add(m.group(1))
+        if not maps:
+            raise LinkError(_MAP_EDITOR)
         return sorted(maps)
 
     def is_loaded(self, map_id: str) -> bool:
@@ -499,12 +506,13 @@ class Link:
         req = pb.SearchObjectsRequest(resource=self._map_resource(map_id),
                                       result_type=pb.PrimaryKeyType(file=MAP_FILE_TEMPLATE,
                                                                     category=pb.PRIMARY_KEY_CATEGORY_ENTRY),
+                                      search=pb.PropertySearch(),
                                       options=common.SearchOptions(max_results=1))
         try:
             resp = self._call("SearchObjects", req, lambda r: len(r.results))
         except LinkCallError as e:
             if e.code == "UNKNOWN":
-                raise LinkError(_MAP_EDITOR) from None
+                raise LinkError(_MAP_SEARCH) from None
             raise
         return len(resp.results) > 0
 

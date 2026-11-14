@@ -7,6 +7,15 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.5 - 2026-11-14
+
+- Map searches carry their search clause (S51). Smithbox's server library refuses a SearchObjects without one
+  (`CheckNonNull(request.Search)`), which DataPiler saw as UNKNOWN: listing the maps sent none, from 0.1.0 on, so every
+  map job failed whatever the project's editors. Listing and the loaded check now send an empty clause; the fake
+  server refuses a search without one, as Smithbox does.
+- A project that lists no map now says to enable the Visual Map Editor (its name in Smithbox 2.2.6's Available
+  Editors), press Update Project and restart Smithbox; an UNKNOWN on a map search says the server failed.
 ## 0.2.4 - 2026-11-14
 
 - DP17 (S48): what `unused_names` makes, numbers and layers only, is not held to check 6's half, so job en-0006's 269

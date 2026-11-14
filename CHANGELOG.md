@@ -13,6 +13,14 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.11 - 2026-11-14
+
+- A map that loads with nothing in it now counts as loaded (S62). DataPiler asks Smithbox which maps are loaded by the
+  maps' file keys (BatchGetObjects, already on DP4's list), which Smithbox answers for every loaded map, empty or not;
+  the entry search it used before saw only maps with something in them. en-0011 stopped twice on three empty tiles of
+  the open world in a row, which looked like a stuck Smithbox. Should Smithbox refuse that call, the entry search takes
+  over, with a warning. The loaded maps are also asked for together, not one call per map.
+
 ## 0.2.10 - 2026-11-14
 
 - A placed character's property that the part does not have is read as -1 (S60): Smithbox leaves it out of its answer,

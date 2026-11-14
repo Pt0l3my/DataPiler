@@ -123,6 +123,11 @@ it. DataPiler cannot see why Smithbox did not load it, as Smithbox keeps its log
 Rendering and the skipping of Havok loading, and nothing else of that file; Smithbox saves them when it closes, so a
 change you just made may not show yet.
 
+A map that loads with nothing in it, as some tiles of the open world do, counts as loaded. For long map jobs, turn
+Smithbox's auto-save off first: every five minutes it saves each loaded map into your Smithbox project folder (your
+game folder is never touched), and with hundreds of maps loaded that adds up. Restart Smithbox after a big map job to
+free what the loaded maps hold.
+
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any

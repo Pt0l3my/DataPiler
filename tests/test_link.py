@@ -326,17 +326,50 @@ class AgainstTheFake(unittest.TestCase):
                 self.link.open_maps([bad])
 
     def test_all_maps_lists_every_map_loaded_or_not(self):
-        # S44: Smithbox answers a file search with every map of its bank; loaded is told by an entry search.
+        # S44: Smithbox answers a file search with every map of its bank; loaded is told by the maps' file keys (S62).
         self.link.switch(True)
         self.assertEqual(self.link.all_maps(), sorted(fake_soapstone.MAPS))
         self.assertEqual(self.link.map_ids(), sorted(fake_soapstone.MAPS))
         self.assertTrue(self.link.is_loaded("m99_00_00_00"))
         self.assertFalse(self.link.is_loaded("m99_00_00_05"))
-        asked = [r for r in self.fake.requests("SearchObjects")
-                 if r.result_type.category == internal_pb2.PRIMARY_KEY_CATEGORY_ENTRY]
-        self.assertTrue(asked and all(r.options.max_results == 1 for r in asked))
+        self.assertEqual(self.link.loaded_of(["m99_00_00_01", "m99_00_00_05", "m99_00_00_01"]), {"m99_00_00_01"})
+        self.assertEqual(self.link.loaded_of([]), set())
+        asked = [r for r in self.fake.requests("BatchGetObjects") if r.keys and not r.keys[0].str_id]
+        self.assertTrue(asked)
+        for r in asked:
+            self.assertEqual(r.resource.name, "")
+            self.assertTrue(all(not k.str_id and k.file.startswith("map/mapstudio/m99_") for k in r.keys))
         with self.assertRaises(link.LinkError):
             self.link.placements("m99_00_00_05")             # known, not loaded
+        with self.assertRaises(ValueError):
+            self.link.loaded_of(["m99_00_00"])
+
+    def test_an_empty_map_reads_as_loaded(self):
+        # S62 (WHY§50): tiles that hold nothing loaded in Smithbox, but an entry search could not tell them from a
+        # failed load, so three in a row stopped en-0011. By file key they read as loaded, with no placements.
+        self.link.switch(True)
+        self.fake.empty = {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        self.link.map_skip = 0.5
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05", "m99_00_00_06"])
+        self.assertEqual(n, 4)
+        self.assertEqual(self.link.skipped_maps, [])
+        self.assertEqual(self.link.placements("m99_00_00_04"), [])
+        self.assertEqual(len(self.link.placements("m99_00_00_06")), 3)
+
+    def test_a_refused_file_key_check_falls_back_to_entries(self):
+        self.link.switch(True)
+        self.fake.fail_file_keys = True
+        self.assertTrue(self.link.is_loaded("m99_00_00_00"))
+        self.assertFalse(self.link.is_loaded("m99_00_00_05"))
+        file_key_asks = [r for r in self.fake.requests("BatchGetObjects") if r.keys and not r.keys[0].str_id]
+        self.assertEqual(len(file_key_asks), 1)                # asked once, then the entry search for the session
+        self.assertFalse(self.link._file_keys)
+        self.fake.fail_maps = True
+        with self.assertRaises(link.LinkError) as cm:
+            self.link.is_loaded("m99_00_00_00")
+        self.assertIn("could not answer a map search", str(cm.exception))
 
     def test_open_maps_skips_maps_the_project_does_not_have(self):
         self.link.switch(True)
@@ -355,7 +388,7 @@ class AgainstTheFake(unittest.TestCase):
     def test_a_server_failure_on_maps_says_so(self):
         self.link.switch(True)
         self.fake.fail_maps = True
-        for call in (self.link.all_maps, lambda: self.link.is_loaded("m99_00_00_00")):
+        for call in (self.link.all_maps, self.link.loaded_maps):
             with self.assertRaises(link.LinkError) as cm:
                 call()
             self.assertIn("could not answer a map search", str(cm.exception))

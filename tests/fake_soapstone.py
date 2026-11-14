@@ -54,8 +54,11 @@ def _talk_row(rid: int, index: int) -> pb.GetParamRowResponse:
                                   values=values, row_index=index)
 
 
-def _parts(map_id: str) -> list[tuple[pb.PrimaryKey, dict[str, pb.PropertyValue]]]:
-    """Three placed characters and one map piece per map; the last character's model is not of the form c0000."""
+def _parts(map_id: str, empty: frozenset[str] = frozenset()) -> list[tuple[pb.PrimaryKey, dict[str, pb.PropertyValue]]]:
+    """Three placed characters and one map piece per map; the last character's model is not of the form c0000. A map
+    in `empty` holds nothing, as some of the open world's tiles do (WHY§50)."""
+    if map_id in empty:
+        return []
     m = int(map_id[-2:])
     out = []
     for j, model in enumerate(("c9990", "c9991", "Ostrel Vanehollow")):
@@ -115,6 +118,8 @@ class FakeSoapstone:
         self.busy_after_load = 0
         self.refused = 0                # loads refused while another ran
         self.broken: set[str] = set()     # maps that never load
+        self.empty: set[str] = set()      # maps that load with nothing in them (S62)
+        self.fail_file_keys = False       # True: a file-key BatchGetObjects fails on the server's side
         self.list_params_extra = ("Bad Name!", "x" * 70)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         served = (
@@ -221,7 +226,7 @@ class FakeSoapstone:
             return pb.SearchObjectsResponse()
         out = []
         limit = request.options.max_results if request.HasField("options") else 0
-        for key, props in _parts(res.name):
+        for key, props in _parts(res.name, frozenset(self.empty)):
             if _matches(props, request.search):
                 out.append(pb.GameObject(key=key, properties=[
                     pb.GameProperty(key=p.key, value=props[p.key]) for p in request.properties if p.key in props]))
@@ -230,7 +235,7 @@ class FakeSoapstone:
         return pb.SearchObjectsResponse(results=out)
 
     def _object(self, map_id: str, key: pb.PrimaryKey, wanted) -> pb.GameObject | None:
-        for k, props in _parts(map_id):
+        for k, props in _parts(map_id, frozenset(self.empty)):
             if k == key:
                 return pb.GameObject(key=k, properties=[
                     pb.GameProperty(key=p.key, value=props[p.key]) for p in wanted if p.key in props])
@@ -241,10 +246,24 @@ class FakeSoapstone:
         return pb.GetObjectResponse(result=obj) if obj is not None else pb.GetObjectResponse()
 
     def batch_get_objects(self, request, context):
-        if request.resource.name not in self._look_at_maps():
-            return pb.BatchGetObjectsResponse()
-        out = [self._object(request.resource.name, k, request.properties) for k in request.keys]
-        return pb.BatchGetObjectsResponse(results=[o for o in out if o is not None])
+        # As Smithbox 2.2.6 does (GetObjects, S62): each key is answered only while its map is loaded and the resource
+        # names that map or none; a map's file key (no id) gets the file object, an entry key the entry.
+        loaded = self._look_at_maps()
+        if self.fail_file_keys and any(not k.str_id for k in request.keys):
+            context.abort(grpc.StatusCode.UNKNOWN, "Exception was thrown by handler.")
+        out = []
+        for k in request.keys:
+            m = k.file[len("map/mapstudio/"):-len(".msb")] if k.file.startswith("map/mapstudio/") and \
+                k.file.endswith(".msb") else None
+            if m is None or m not in loaded or request.resource.name not in ("", m):
+                continue
+            if not k.str_id:
+                out.append(pb.GameObject(key=pb.PrimaryKey(file=k.file)))
+            else:
+                o = self._object(m, k, request.properties)
+                if o is not None:
+                    out.append(o)
+        return pb.BatchGetObjectsResponse(results=out)
 
     def open_resource(self, request, context):
         res = request.resource

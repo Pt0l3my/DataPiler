@@ -330,6 +330,7 @@ class Link:
         self._lock = threading.RLock()
         self._session = False
         self.skipped_maps: list[str] = []      # the maps the last open_maps skipped (S57)
+        self._file_keys = True                 # S62: loaded maps told by file key; False after that call failed once
         self._blocked = False
         self._channel = None
         self._fns: dict[str, object] = {}
@@ -529,11 +530,48 @@ class Link:
             raise LinkError(_MAP_EDITOR)
         return sorted(maps)
 
+    def loaded_of(self, map_ids: Sequence[str]) -> set[str]:
+        """Which of map_ids are loaded in Smithbox's map view (S62): BatchGetObjects on the maps' file keys, a few
+        hundred a call. Smithbox answers a map's file key only while that map's container exists (`GetObjects` in
+        `SoapstoneService.cs` at 2.2.6), set once its MSB is read, whether the map holds entries or none; so a map
+        with nothing in it reads as loaded, which the entry search of 0.2.3 to 0.2.10 could not tell (WHY§50). If the
+        call is ever refused as a call (UNKNOWN, UNIMPLEMENTED, INVALID_ARGUMENT), the entry search takes over for
+        the rest of the session, with a warning."""
+        ids = list(dict.fromkeys(map_ids))
+        for m in ids:
+            if not isinstance(m, str) or not MAP_RX.fullmatch(m):
+                raise ValueError("not a map id")
+        if not ids:
+            return set()
+        _, common, pb = self._messages()
+        if self._file_keys:
+            out: set[str] = set()
+            try:
+                for chunk in _chunks(ids, OBJECT_BATCH):
+                    want = set(chunk)
+                    req = pb.BatchGetObjectsRequest(resource=self._map_resource(""), keys=[
+                        pb.PrimaryKey(file=MAP_FILE_TEMPLATE.format(m)) for m in chunk])
+                    resp = self._call("BatchGetObjects", req, lambda r: len(r.results))
+                    for obj in resp.results:
+                        f = _MAP_FILE_RX.fullmatch(obj.key.file)
+                        if f is not None and f.group(1) in want and not obj.key.str_id:
+                            out.add(f.group(1))
+                return out
+            except LinkCallError as e:
+                if e.code not in ("UNKNOWN", "UNIMPLEMENTED", "INVALID_ARGUMENT"):
+                    raise                          # the server gone or slow is not a reason to change the check
+                self._file_keys = False
+                _log.warn("asking Smithbox which maps are loaded by their file keys failed (%s); DataPiler asks by "
+                          "their entries instead, which cannot tell a map with nothing in it", own(e.code))
+        return {m for m in ids if self._has_entries(m)}
+
     def is_loaded(self, map_id: str) -> bool:
-        """Whether a map is loaded in Smithbox's map view: Smithbox lists the entries of loaded maps only, so an entry
-        search on the map, one result at most, finds one exactly when it is loaded (S44)."""
-        if not isinstance(map_id, str) or not MAP_RX.fullmatch(map_id):
-            raise ValueError("not a map id")
+        """Whether a map is loaded in Smithbox's map view, empty or not (loaded_of, S62)."""
+        return map_id in self.loaded_of([map_id])
+
+    def _has_entries(self, map_id: str) -> bool:
+        """The check of 0.2.3 to 0.2.10, now only a fallback: Smithbox lists the entries of loaded maps only, so an
+        entry search on the map, one result at most, finds one when it is loaded and holds anything (S44)."""
         _, common, pb = self._messages()
         req = pb.SearchObjectsRequest(resource=self._map_resource(map_id),
                                       result_type=pb.PrimaryKeyType(file=MAP_FILE_TEMPLATE,
@@ -549,9 +587,8 @@ class Link:
         return len(resp.results) > 0
 
     def loaded_maps(self) -> list[str]:
-        """The map ids loaded in Smithbox's map view, sorted: every map of the project, each asked whether it is
-        loaded (S44)."""
-        return [m for m in self.all_maps() if self.is_loaded(m)]
+        """The map ids loaded in Smithbox's map view, sorted: every map of the project, asked together (S44, S62)."""
+        return sorted(self.loaded_of(self.all_maps()))
 
     def map_ids(self) -> list[str] | None:
         """Every map id of the project (all_maps, S44); in 0.1 to 0.2.2 no allowed call was known to list them."""
@@ -575,7 +612,7 @@ class Link:
         known = set(self.all_maps())
         unknown = [m for m in wanted if m not in known]
         wanted = [m for m in wanted if m in known]
-        loaded = {m for m in wanted if self.is_loaded(m)}
+        loaded = self.loaded_of(wanted)
         todo = [m for m in wanted if m not in loaded]
         total = len(todo)
         # S52: say what happens, map by map, so a long load never looks stuck.
@@ -631,7 +668,8 @@ class Link:
                 _log.warn("map %s did not load in time - skipped for now; Smithbox's Warning Log (its top bar) may say "
                           "why", own(m))
                 if len(in_a_row) >= self.map_skips_in_a_row:
-                    late = [x for x in in_a_row if self.is_loaded(x)]
+                    now_loaded = self.loaded_of(in_a_row)
+                    late = [x for x in in_a_row if x in now_loaded]
                     if late:
                         # Slow, not stuck: they loaded after their limit, so the run goes on (S58).
                         for x in late:
@@ -645,7 +683,8 @@ class Link:
             if progress is not None:
                 progress(done, total)
         # S58: the skipped maps once more, at the end; a map that loaded late counts as loaded.
-        retry = [m for m in skipped if not self.is_loaded(m)]
+        now_loaded = self.loaded_of(skipped)
+        retry = [m for m in skipped if m not in now_loaded]
         for m in [x for x in skipped if x not in retry]:
             loaded.add(m)
         skipped = []
@@ -656,11 +695,11 @@ class Link:
                 skipped.append(m)
         self.skipped_maps = list(skipped)
         if skipped:
-            # S61: such a map either failed in Smithbox or loaded with nothing an entry search lists (an empty map,
-            # as m10_01_00_99 on the owner's PC: Smithbox's auto-save named it among the loaded maps).
-            _log.warn("%s of %s maps never showed as loaded, asked for twice, and are left out: %s - either Smithbox "
-                      "could not load them (its Warning Log says so) or they hold nothing to list", logbook.n(len(skipped)),
-                      logbook.n(total), own(", ".join(skipped)))
+            # S61, S62: since 0.2.11 an empty map reads as loaded, so such a map failed in Smithbox (or, with the
+            # entry-search fallback, held nothing to list).
+            _log.warn("%s of %s maps never showed as loaded, asked for twice, and are left out: %s - Smithbox's Warning "
+                      "Log (its top bar) may say why", logbook.n(len(skipped)), logbook.n(total),
+                      own(", ".join(skipped)))
         return sum(1 for m in wanted if m in loaded)
 
     def _open_map(self, pb, map_id: str) -> None:

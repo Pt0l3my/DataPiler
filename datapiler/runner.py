@@ -1541,13 +1541,18 @@ class Runner:
         tables = []
         declared: dict[str, list[str]] = {}
         coverage: dict[str, tuple[str | None, int, str] | None] = {}
+        map_coords = jobs.MAP_COORDS in (o.get("notes") or [])
         for t, cols, rows in chosen:
             if any(typ not in ("int", "number", "bool") for _, typ in cols):
                 raise _Fail("a column of local text cannot go into a share file")
             tables.append({"name": t, "columns": [{"name": c, "type": typ} for c, typ in cols],
                            "rows": [list(r) for r in rows]})
             declared[t] = [c for c, _ in cols]
-            coverage[t] = self._coverage(ctx, t, declared[t])
+            lin = ctx.job.lineage.get(t)
+            if map_coords and lin is not None and lin.kind == "raw" and jobs._map_rows(lin, self._source_params(ctx)):
+                coverage[t] = None                   # DP21 (S69): a map table's rows whole, for research
+            else:
+                coverage[t] = self._coverage(ctx, t, declared[t])
         data = self.guard.build(job_id=ctx.job.id, job_sha256=ctx.job.sha256, provenance=prov, tables=tables,
                                 notes=list(o.get("notes") or []))
         results = self.guard.check(data, declared=declared, coverage=coverage)
@@ -1556,6 +1561,10 @@ class Runner:
             self.guard.write(self.paths.share, o["name"], data, declared=declared, coverage=coverage)
         ctx.share = (i, o["name"], data, declared, coverage)
         return 1, 1
+
+    @staticmethod
+    def _source_params(ctx: _Ctx) -> dict[int, str]:
+        return {k: o["param"] for k, o in enumerate(ctx.job.ops) if o["op"] == "fetch_rows"}
 
     @staticmethod
     def _coverage(ctx: _Ctx, table: str, columns: list[str]) -> tuple[str | None, int, str] | None:

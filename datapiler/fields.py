@@ -16,11 +16,40 @@ FIELD_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 PARAMS: dict[str, dict[str, str]] = {
     "NpcParam": {"id": "int", "nameId": "int", "teamType": "int", "npcType": "int"},
     "TalkParam": {"id": "int", "msgId": "int"},
-    "WorldMapPlaceNameParam": {"id": "int"},     # more once verified (§10, P4)
-    "BonfireWarpParam": {"id": "int"},           # likewise
-    "WorldMapPointParam": {"id": "int"},         # likewise (S67: check_fields verifies before a field is added)
-    "WorldMapPieceParam": {"id": "int"},         # likewise
-    "WorldMapLegacyConvParam": {"id": "int"},    # likewise
+    "WorldMapPlaceNameParam": {
+        "id": "int", "disableParam_NT": "int", "worldMapPieceId": "int", "textId": "int", "areaNo": "int",
+        "gridXNo": "int", "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number"
+    },
+    "BonfireWarpParam": {
+        "id": "int", "disableParam_NT": "int", "eventflagId": "int", "bonfireEntityId": "int",
+        "bonfireSubCategorySortId": "int", "bonfireSubCategoryId": "int", "clearedEventFlagId": "int",
+        "iconId": "int", "forbiddenIconId": "int", "dispMinZoomStep": "int", "selectMinZoomStep": "int",
+        "dispMask00": "int", "dispMask01": "int", "dispMask02": "int", "areaNo": "int", "gridXNo": "int",
+        "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number", "textId1": "int",
+        "textEnableFlagId1": "int", "textDisableFlagId1": "int", "altIconId": "int"
+    },
+    "WorldMapPointParam": {
+        "id": "int", "disableParam_NT": "int", "eventFlagId": "int", "distViewEventFlagId": "int",
+        "clearedEventFlagId": "int", "iconId": "int", "altIconId": "int", "distViewIconId": "int",
+        "isAreaIcon": "int", "bgmPlaceType": "int", "angle": "number", "areaNo": "int", "gridXNo": "int",
+        "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number", "isOverrideDistViewMarkPos": "int",
+        "areaNo_forDistViewMark": "int", "gridXNo_forDistViewMark": "int", "gridZNo_forDistViewMark": "int",
+        "posX_forDistViewMark": "number", "posY_forDistViewMark": "number", "posZ_forDistViewMark": "number",
+        "distViewId": "int", "dispMinZoomStep": "int", "selectMinZoomStep": "int", "entryFEType": "int",
+        "dispMask00": "int", "dispMask01": "int", "dispMask02": "int", "textId1": "int", "textType1": "int"
+    },
+    "WorldMapPieceParam": {
+        "id": "int", "disableParam_NT": "int", "openEventFlagId": "int", "openTravelAreaLeft": "number",
+        "openTravelAreaRight": "number", "openTravelAreaTop": "number", "openTravelAreaBottom": "number",
+        "acquisitionEventFlagId": "int", "acquisitionEventScale": "number", "acquisitionEventCenterX": "number",
+        "acquisitionEventCenterY": "number", "acquisitionEventResScale": "number",
+        "acquisitionEventResOffsetX": "number", "acquisitionEventResOffsetY": "number"
+    },
+    "WorldMapLegacyConvParam": {
+        "id": "int", "disableParam_NT": "int", "srcAreaNo": "int", "srcGridXNo": "int", "srcGridZNo": "int",
+        "srcPosX": "number", "srcPosY": "number", "srcPosZ": "number", "dstAreaNo": "int", "dstGridXNo": "int",
+        "dstGridZNo": "int", "dstPosX": "number", "dstPosY": "number", "dstPosZ": "number", "isBasePoint": "int"
+    },
 }
 
 # The fields that hold ids of other tables' rows (a name number, a message id), each param's apart from its own row id.
@@ -30,12 +59,18 @@ PARAMS: dict[str, dict[str, str]] = {
 REFERENCES: dict[str, tuple[str, ...]] = {
     "NpcParam": ("nameId",),
     "TalkParam": ("msgId",),
-    "WorldMapPlaceNameParam": (),
-    "BonfireWarpParam": (),
-    "WorldMapPointParam": (),
-    "WorldMapPieceParam": (),
+    "WorldMapPlaceNameParam": ("worldMapPieceId", "textId"),
+    "BonfireWarpParam": ("eventflagId", "bonfireEntityId", "bonfireSubCategoryId", "clearedEventFlagId", "iconId", "forbiddenIconId", "textId1", "textEnableFlagId1", "textDisableFlagId1", "altIconId"),
+    "WorldMapPointParam": ("eventFlagId", "distViewEventFlagId", "clearedEventFlagId", "iconId", "altIconId", "distViewIconId", "distViewId", "textId1"),
+    "WorldMapPieceParam": ("openEventFlagId", "acquisitionEventFlagId"),
     "WorldMapLegacyConvParam": (),
 }
+
+# The game's map tables (S69, DP21): their fields above were verified on the owner's PC by check_fields (en-0015,
+# 2026-11-14: 91 of 91, each of the type Smithbox's definition gives). By DP21 a job may share their rows whole, for
+# research only, when its write_share carries the label `map_coords`; a share file holding them is never committed.
+MAP_PARAMS = ("BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam", "WorldMapPieceParam",
+              "WorldMapLegacyConvParam")
 
 # check_fields (S67): a field's type as the server names it, as a number of ours, so a share file holds numbers only.
 # 0: the server's answer has no such field; 99: a type not listed here.

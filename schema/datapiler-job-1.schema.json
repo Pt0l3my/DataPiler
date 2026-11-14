@@ -240,11 +240,77 @@
           "uniqueItems": true,
           "items": {
             "enum": [
+              "acquisitionEventCenterX",
+              "acquisitionEventCenterY",
+              "acquisitionEventFlagId",
+              "acquisitionEventResOffsetX",
+              "acquisitionEventResOffsetY",
+              "acquisitionEventResScale",
+              "acquisitionEventScale",
+              "altIconId",
+              "angle",
+              "areaNo",
+              "areaNo_forDistViewMark",
+              "bgmPlaceType",
+              "bonfireEntityId",
+              "bonfireSubCategoryId",
+              "bonfireSubCategorySortId",
+              "clearedEventFlagId",
+              "disableParam_NT",
+              "dispMask00",
+              "dispMask01",
+              "dispMask02",
+              "dispMinZoomStep",
+              "distViewEventFlagId",
+              "distViewIconId",
+              "distViewId",
+              "dstAreaNo",
+              "dstGridXNo",
+              "dstGridZNo",
+              "dstPosX",
+              "dstPosY",
+              "dstPosZ",
+              "entryFEType",
+              "eventFlagId",
+              "eventflagId",
+              "forbiddenIconId",
+              "gridXNo",
+              "gridXNo_forDistViewMark",
+              "gridZNo",
+              "gridZNo_forDistViewMark",
+              "iconId",
               "id",
+              "isAreaIcon",
+              "isBasePoint",
+              "isOverrideDistViewMarkPos",
               "msgId",
               "nameId",
               "npcType",
-              "teamType"
+              "openEventFlagId",
+              "openTravelAreaBottom",
+              "openTravelAreaLeft",
+              "openTravelAreaRight",
+              "openTravelAreaTop",
+              "posX",
+              "posX_forDistViewMark",
+              "posY",
+              "posY_forDistViewMark",
+              "posZ",
+              "posZ_forDistViewMark",
+              "selectMinZoomStep",
+              "srcAreaNo",
+              "srcGridXNo",
+              "srcGridZNo",
+              "srcPosX",
+              "srcPosY",
+              "srcPosZ",
+              "teamType",
+              "textDisableFlagId1",
+              "textEnableFlagId1",
+              "textId",
+              "textId1",
+              "textType1",
+              "worldMapPieceId"
             ]
           }
         },
@@ -344,7 +410,16 @@
               "fields": {
                 "items": {
                   "enum": [
-                    "id"
+                    "id",
+                    "disableParam_NT",
+                    "worldMapPieceId",
+                    "textId",
+                    "areaNo",
+                    "gridXNo",
+                    "gridZNo",
+                    "posX",
+                    "posY",
+                    "posZ"
                   ]
                 }
               }
@@ -367,7 +442,30 @@
               "fields": {
                 "items": {
                   "enum": [
-                    "id"
+                    "id",
+                    "disableParam_NT",
+                    "eventflagId",
+                    "bonfireEntityId",
+                    "bonfireSubCategorySortId",
+                    "bonfireSubCategoryId",
+                    "clearedEventFlagId",
+                    "iconId",
+                    "forbiddenIconId",
+                    "dispMinZoomStep",
+                    "selectMinZoomStep",
+                    "dispMask00",
+                    "dispMask01",
+                    "dispMask02",
+                    "areaNo",
+                    "gridXNo",
+                    "gridZNo",
+                    "posX",
+                    "posY",
+                    "posZ",
+                    "textId1",
+                    "textEnableFlagId1",
+                    "textDisableFlagId1",
+                    "altIconId"
                   ]
                 }
               }
@@ -390,7 +488,39 @@
               "fields": {
                 "items": {
                   "enum": [
-                    "id"
+                    "id",
+                    "disableParam_NT",
+                    "eventFlagId",
+                    "distViewEventFlagId",
+                    "clearedEventFlagId",
+                    "iconId",
+                    "altIconId",
+                    "distViewIconId",
+                    "isAreaIcon",
+                    "bgmPlaceType",
+                    "angle",
+                    "areaNo",
+                    "gridXNo",
+                    "gridZNo",
+                    "posX",
+                    "posY",
+                    "posZ",
+                    "isOverrideDistViewMarkPos",
+                    "areaNo_forDistViewMark",
+                    "gridXNo_forDistViewMark",
+                    "gridZNo_forDistViewMark",
+                    "posX_forDistViewMark",
+                    "posY_forDistViewMark",
+                    "posZ_forDistViewMark",
+                    "distViewId",
+                    "dispMinZoomStep",
+                    "selectMinZoomStep",
+                    "entryFEType",
+                    "dispMask00",
+                    "dispMask01",
+                    "dispMask02",
+                    "textId1",
+                    "textType1"
                   ]
                 }
               }
@@ -413,7 +543,20 @@
               "fields": {
                 "items": {
                   "enum": [
-                    "id"
+                    "id",
+                    "disableParam_NT",
+                    "openEventFlagId",
+                    "openTravelAreaLeft",
+                    "openTravelAreaRight",
+                    "openTravelAreaTop",
+                    "openTravelAreaBottom",
+                    "acquisitionEventFlagId",
+                    "acquisitionEventScale",
+                    "acquisitionEventCenterX",
+                    "acquisitionEventCenterY",
+                    "acquisitionEventResScale",
+                    "acquisitionEventResOffsetX",
+                    "acquisitionEventResOffsetY"
                   ]
                 }
               }
@@ -436,7 +579,21 @@
               "fields": {
                 "items": {
                   "enum": [
-                    "id"
+                    "id",
+                    "disableParam_NT",
+                    "srcAreaNo",
+                    "srcGridXNo",
+                    "srcGridZNo",
+                    "srcPosX",
+                    "srcPosY",
+                    "srcPosZ",
+                    "dstAreaNo",
+                    "dstGridXNo",
+                    "dstGridZNo",
+                    "dstPosX",
+                    "dstPosY",
+                    "dstPosZ",
+                    "isBasePoint"
                   ]
                 }
               }
@@ -762,7 +919,8 @@
               "named_only",
               "vanilla_rows",
               "loaded_maps_only",
-              "summary"
+              "summary",
+              "map_coords"
             ]
           }
         }

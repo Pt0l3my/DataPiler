@@ -13,6 +13,16 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.20 - 2026-11-14
+
+- The game's five map tables can be read in full (S69): `fetch_rows` reads the 91 fields of `BonfireWarpParam`,
+  `WorldMapPointParam`, `WorldMapPlaceNameParam`, `WorldMapPieceParam` and `WorldMapLegacyConvParam` that en-0015
+  verified on the owner's PC: areas, grid cells and positions, the pieces' rectangles and scales, the conversion's
+  source and destination, and their flags, icons and text ids.
+- By the owner's decision DP21, a job may share these tables' rows whole when its `write_share` carries the new label
+  `map_coords`: for research only, never committed. Every other table keeps DP8's rule, and the label lets nothing
+  else through.
+
 ## 0.2.19 - 2026-11-14
 
 - Fixed: a share file with a `check_fields` table was refused by the guard's check 3 when the game's text in the

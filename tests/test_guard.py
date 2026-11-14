@@ -340,8 +340,9 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(self.guard.check_labels(), [])
         self.plant_label()
         self.assertEqual(self.guard.check_labels(), [guard.LABELS.index("summary")])
+        added = len(guard.LABELS)
         with mock.patch.object(guard, "LABELS", guard.LABELS + ("loaded/maps",)):
-            self.assertEqual(self.guard.check_labels(), [guard.LABELS.index("summary"), 4])
+            self.assertEqual(self.guard.check_labels(), [guard.LABELS.index("summary"), added])
 
     def test_labels_are_rechecked_when_the_text_database_changes(self):
         with mock.patch.object(self.guard, "check_labels", wraps=self.guard.check_labels) as spy:

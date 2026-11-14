@@ -17,9 +17,9 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 - **2026-11-09.** DP16 (an Imported tab).
 - **2026-11-14.** DP17 (the name numbers no row uses, shared whole) and DP18 (check 3 compares with the names only;
   Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job). DP20
-  (map jobs on Smithbox's OpenGL build, a setting). DP21 put to the owner (the map tables' coordinates in share
-  files).
-- **Open.** DP21.
+  (map jobs on Smithbox's OpenGL build, a setting). DP21 (the map tables' coordinates in share files, for
+  research: decided the same day).
+- **Open.** None.
 
 ## DP1
 
@@ -340,7 +340,7 @@ Smithbox runs as its Vulkan build and says how to switch. The next map job is th
 
 ## DP21
 
-**The map tables' coordinates in share files** · *2026-11-14 · Open*
+**The map tables' coordinates in share files** · *2026-11-14 · Decided by the owner*
 
 **Question.** For EldenNet's map (GraceUI proposal 0002; EldenNet roadmap S7.9.c), the research needs where the game
 puts things: the resting places, the map's points and place names, the pieces it reveals, and the table that carries
@@ -364,4 +364,13 @@ here.
 **Recommendation.** (a): the numbers are coordinates, not text or anything personal; without them the map's design
 cannot be checked before EldenNet runs in game, which is a long way off; and the rule that matters, that no raw table of
 the game's data is committed, holds. (b) keeps DP8 whole at the price of waiting; (c) is a partial step.
+
+**Decision.** (a), in the owner's wider terms: game data may be used for research and development; the care is for what
+is shipped or published online. DataPiler 0.2.20 (S69) lets a share file carry the five map tables' rows whole under
+the label `map_coords`; such a file comes to EldenNet's research session and is never committed, and what EldenNet
+commits from it stays numbers it derives (a fitted conversion, counts, error figures), never the tables. DP8 stays as
+it was for every other table.
+
+**Owner's words.** "what is this about, using game data for research and development is fine, we are just careful what
+we ship online."
 

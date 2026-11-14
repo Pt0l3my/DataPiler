@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.20", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.21", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -504,7 +504,40 @@ class CheckFieldsTest(unittest.TestCase):
                                   ["ops[0].fields"]])
 
     def test_fetch_rows_still_reads_only_the_listed_fields(self):
-        o = {"op": "fetch_rows", "as": "pts", "param": "WorldMapPointParam", "fields": ["id", "posX"]}
+        o = {"op": "fetch_rows", "as": "pts", "param": "WorldMapPointParam", "fields": ["id", "textEnableFlagId1"]}
         self.assertEqual([r.where for r in refusals(job([o]))], ["ops[0].fields[1]"])
         self.assertTrue(check(job([dict(o, fields=["id"])])).uses_link)
+
+
+class MapCoordsTest(unittest.TestCase):
+    """DP21 (S69): a map table's rows may be shared whole with the label `map_coords`; nothing else is."""
+
+    PTS = {"op": "fetch_rows", "as": "pts", "param": "WorldMapPointParam", "fields": ["id", "areaNo", "posX", "posZ"]}
+
+    def share(self, table: str, notes: list) -> dict:
+        return {"op": "write_share", "name": "map-coords", "tables": [table],
+                "columns": {table: ["areaNo"]}, "notes": notes}
+
+    def test_with_the_label(self):
+        check(job([self.PTS, self.share("pts", ["map_coords"])]))
+        flt = {"op": "filter", "as": "pts2", "rows": "pts", "where": {"areaNo": {"eq": 60}}}
+        check(job([self.PTS, flt, self.share("pts2", ["map_coords", "vanilla_rows"])]))
+
+    def test_without_it_or_for_other_tables(self):
+        self.assertEqual([r.where for r in refusals(job([self.PTS, self.share("pts", [])]))], ["ops[1].tables[0]"])
+        npc = dict(NPC, as_="x")
+        self.assertEqual([r.where for r in refusals(job([NPC, {"op": "write_share", "name": "map-coords",
+                                                               "tables": ["npc"], "columns": {"npc": ["teamType"]},
+                                                               "notes": ["map_coords"]}]))], ["ops[1].tables[0]"])
+        cnt = {"op": "distinct", "as": "areas", "rows": "pts", "by": ["areaNo"]}
+        self.assertEqual([r.where for r in refusals(job([self.PTS, cnt, self.share("areas", ["map_coords"])]))],
+                         ["ops[2].tables[0]"])
+
+    def test_the_verified_fields(self):
+        from datapiler import fields
+        self.assertEqual(len(fields.PARAMS["WorldMapPointParam"]), 33)
+        self.assertEqual(fields.PARAMS["WorldMapPieceParam"]["openTravelAreaLeft"], "number")
+        self.assertIn("textId", fields.REFERENCES["WorldMapPlaceNameParam"])
+        self.assertEqual(set(fields.MAP_PARAMS), {"BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam",
+                                                  "WorldMapPieceParam", "WorldMapLegacyConvParam"})
 

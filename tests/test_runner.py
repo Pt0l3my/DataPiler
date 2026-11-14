@@ -65,6 +65,10 @@ class FakeLink:
             raise link.LinkBlocked("the game is running")
 
     def _table(self, param):
+        if param == "WorldMapPlaceNameParam":   # invented coordinates (S69)
+            return {9100000 + i: {"disableParam_NT": 0, "worldMapPieceId": i, "textId": -1, "areaNo": 60,
+                                  "gridXNo": 40 + i, "gridZNo": 36, "posX": 1.5 * i, "posY": 0.0, "posZ": -2.0}
+                    for i in range(4)}
         return {"NpcParam": self.npc, "TalkParam": self.talk}.get(param, {9000000: {}, 9000001: {}})
 
     def list_param_rows(self, param):
@@ -256,6 +260,21 @@ class JobRunTest(RunnerBase):
                          {"per_team": (None, 20, "NpcParam")})
         self.assertEqual(card["result"]["failed"], None)
         self.assertEqual(self.r.made_by()["roster-counts.json"], "en-0007-roster-counts")
+
+    def test_dp21_a_map_tables_rows_whole_with_its_label(self):
+        ops = [{"op": "fetch_rows", "as": "place", "param": "WorldMapPlaceNameParam",
+                "fields": ["id", "areaNo", "gridXNo", "gridZNo", "posX", "posY", "posZ", "worldMapPieceId"]},
+               {"op": "write_share", "name": "map-coords", "tables": ["place"],
+                "columns": {"place": ["id", "areaNo", "gridXNo", "gridZNo", "posX", "posY", "posZ", "worldMapPieceId"]},
+                "notes": ["map_coords", "vanilla_rows"]}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0069-coords", "title": "Coords (invented)",
+                          "ops": ops}).encode()
+        card = self.run_job(raw)
+        doc = json.loads((self.p.share / "map-coords.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(doc["tables"][0]["rows"]), 4)
+        self.assertEqual(doc["tables"][0]["rows"][1], [9100001, 60, 41, 36, 1.5, 0.0, -2.0, 1])
+        self.assertEqual(doc["notes"], ["map_coords", "vanilla_rows"])
+        self.assertEqual(card["state"], "done")
 
     def test_check_fields_gives_numbers_only_and_may_be_shared(self):
         raw = json.dumps({"format": "datapiler-job/1", "id": "test-0067-check", "title": "Fields (invented)", "ops": [

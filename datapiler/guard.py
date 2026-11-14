@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from .textdb import TextDB
 
 SHARE_FORMAT = "datapiler-share/1"
-LABELS: tuple[str, ...] = ("named_only", "vanilla_rows", "loaded_maps_only", "summary")   # ours; snake_case ASCII
+LABELS: tuple[str, ...] = ("named_only", "vanilla_rows", "loaded_maps_only", "summary", "map_coords")   # ours; snake_case ASCII
 ENUMS: dict[str, tuple[str, ...]] = {"source": ("server", "guided")}
 MAX_BYTES = 4 * 1024 * 1024
 MAX_VALUES = 200_000

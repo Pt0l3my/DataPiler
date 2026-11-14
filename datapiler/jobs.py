@@ -104,6 +104,7 @@ PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParam
 # The placements' columns that hold other tables' ids (fields.REFERENCES holds the params'): a count of raw placements
 # by one of them stays raw (DP8, S18; build plan §10, P15).
 PLACEMENT_REFERENCES = ("npcParamId", "talkId", "model")
+MAP_COORDS = "map_coords"      # DP21's label: a share file of the map tables' rows, for research (S69)
 DP8_RULE = ("a share file holds ids and numbers only for rows a job picked for a purpose (DP8): keep the named rows "
             "(a filter on named after join_names), pick an explicit list of ids (a filter with ids), or count them by "
             "columns that hold no ids")
@@ -285,6 +286,7 @@ class _Checker:
         self.job_id: str | None = None
         self.maps: set[str] = set()
         self.families: set[str] = set()
+        self.source_param: dict[int, str] = {}      # ops[i] -> the param its fetch_rows reads (DP21)
 
     def add(self, where: str, text: str, op: int | None = None) -> None:
         if len(self.refusals) >= _MAX_REFUSALS:
@@ -517,6 +519,8 @@ class _Checker:
                     cols = [("id", "int")] + [(f, fields.PARAMS[known][f]) for f in seen if f != "id"]
         if "ids" in o:
             self.ids(place + ".ids", o["ids"], i)
+        if known is not None:
+            self.source_param[i] = known
         if as_ is not None:
             self.tables[as_] = cols
             self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()))
@@ -801,9 +805,12 @@ class _Checker:
             elif self.share_at == i:
                 self.share_name = name
         tables = self.table_list(place + ".tables", o["tables"], i, MAX_SHARE_TABLES) if "tables" in o else None
+        map_coords = isinstance(o.get("notes"), list) and MAP_COORDS in o["notes"]
         for j, (t, _) in enumerate(tables or []):
             lin = self.lineage.get(t)
             if lin is not None and lin.kind == "raw":
+                if map_coords and _map_rows(lin, self.source_param):
+                    continue                             # DP21: a map table's rows, for research, never committed
                 self.add("%s.tables[%d]" % (place, j), "`%s` %s - %s" % (t, lin.how, DP8_RULE), i)
         if "columns" in o:
             self.columns_map(place + ".columns", o["columns"], tables, i, every=True, share=True)
@@ -829,6 +836,13 @@ class _Checker:
 def _source_lineage(op: str, i: int, refs: tuple[str, ...]) -> Lineage:
     return Lineage("raw", i, op, ID_COLUMN[op], PICK_COLUMNS[op], True, False,
                    "comes straight from %s (ops[%d])" % (op, i), tuple(refs))
+
+
+def _map_rows(lin: Lineage, source_param: Mapping[int, str]) -> bool:
+    """DP21 (S69): rows of one of the game's map tables, as fetch_rows read them, or a filter of them that keeps one
+    row per row read. Such a table may go into a share file that carries the label `map_coords`."""
+    return (lin.source_op == "fetch_rows" and lin.per_row and lin.source is not None
+            and source_param.get(lin.source) in fields.MAP_PARAMS)
 
 
 def _from(parent: Lineage) -> str:

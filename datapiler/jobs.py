@@ -67,7 +67,7 @@ INT_LIMIT = 2 ** 63
 TOP_KEYS: dict[str, bool] = {"format": True, "id": True, "title": True, "ops": True, "needs": False}
 ARGS: dict[str, dict[str, bool]] = {
     "fetch_rows": {"as": True, "param": True, "fields": True, "ids": False},
-    "load_maps": {"maps": True},
+    "load_maps": {"maps": True, "timeout": False},
     "read_placements": {"as": True, "maps": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
     "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False, "slots": False},
@@ -544,6 +544,8 @@ class _Checker:
         self.add(place, "must be a list of 1 to 65,535 row ids, or {\"from\": first, \"to\": last}", i)
 
     def op_load_maps(self, place: str, i: int, o: dict) -> None:
+        if "timeout" in o and not (_is_int(o["timeout"], 5, 900)):
+            self.add(place + ".timeout", "must be a whole number of seconds from 5 to 900", i)
         if "maps" in o:
             maps = self.map_list(place + ".maps", o["maps"], i, all_ok=LOAD_ALL_MAPS)
             if isinstance(maps, list):
@@ -1045,7 +1047,8 @@ def _line(o: dict) -> str:
             s += " - " + _plural(len(set(ids)), "row", "rows")
         return s
     if op == "load_maps":
-        return "loads %s in Smithbox - its view changes, not its data" % _maps_words(o["maps"])
+        s = "loads %s in Smithbox - its view changes, not its data" % _maps_words(o["maps"])
+        return s + (", %d s a map before skipping it" % o["timeout"] if o.get("timeout") is not None else "")
     if op == "read_placements":
         of = "the loaded maps" if o["maps"] == "all" else _maps_words(o["maps"])
         return "placed characters of %s: entity, row, dialogue and model ids" % of

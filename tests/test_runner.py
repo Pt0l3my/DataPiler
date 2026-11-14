@@ -110,7 +110,7 @@ class FakeLink:
         self._check()
         return map_id in self.loaded
 
-    def open_maps(self, map_ids, *, cancel=None, progress=None):
+    def open_maps(self, map_ids, *, cancel=None, progress=None, timeout=None, first_timeout=None):
         self._check()
         self.calls.append(("OpenResource", tuple(map_ids)))
         for k, m in enumerate(map_ids):

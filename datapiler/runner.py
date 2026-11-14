@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
 from . import catalogue, events, fields, fileio, jobs, logbook, paths as paths_mod
 from . import link as link_mod
+from . import smithbox as smithbox_mod
 from .guard import WORDS as GUARD_WORDS, GuardFailed
 from .logbook import Own, own
 
@@ -988,8 +989,10 @@ class Runner:
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
             # S52: the card shows maps loaded of maps to load, and the time so far, at every poll.
+            kw = {"timeout": float(o["timeout"])} if o.get("timeout") is not None else {}
+            kw.update(self._map_limits(ctx, i))
             n = self.link.open_maps(maps, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(
-                i, "running", d, t, round(time.monotonic() - t0, 1)))
+                i, "running", d, t, round(time.monotonic() - t0, 1)), **kw)
             return n, len(maps)
         if op == "unused_names":
             return self._unused_names(ctx, i, o)
@@ -1066,6 +1069,28 @@ class Runner:
                               logbook.n(time.monotonic() - t0))
         return len(rows), len(rows)
 
+    def _map_limits(self, ctx: _Ctx, i: int) -> dict:
+        """S59 (DP19): Smithbox's saved preferences, said in the log, set how long the first map may take: 10 s with
+        model rendering off, 300 s with it on (and a warning), none passed when they cannot be read."""
+        try:
+            prefs = smithbox_mod.map_prefs()
+        except Exception:
+            prefs = None
+        if not prefs or prefs.get("rendering") is None:
+            ctx.log.info("op %s load_maps: Smithbox's saved preferences could not be read - the first map may take "
+                         "as long as the job allows", i)
+            return {}
+        havok = "skipped" if prefs.get("skip_havok") else "loaded" if prefs.get("skip_havok") is False else "unknown"
+        if prefs["rendering"]:
+            ctx.log.warn("op %s load_maps: Smithbox's saved preferences have Enable Model Rendering on (Havok %s), so "
+                         "each map loads its models and textures, a minute or more for a big one: turn it off in "
+                         "Smithbox's Preferences, Viewport. The first map may take 300 s. (Smithbox saves its "
+                         "preferences when it closes, so a change made since may not show here.)", i, own(havok))
+            return {"first_timeout": 300.0}
+        ctx.log.info("op %s load_maps: Smithbox's saved preferences have model rendering off (Havok %s): 10 s a map "
+                     "before it is skipped for now", i, own(havok))
+        return {"first_timeout": 10.0}
+
     def _resolve_maps(self, maps: Sequence[str]) -> list[str]:
         """A job's map list with each family (`m10_*`, S45) replaced by the project's maps of that area, in order,
         each once. Ids the project does not have stay; open_maps and read_placements skip them."""
@@ -1112,6 +1137,7 @@ class Runner:
             known = set(self.link.all_maps())
             # S57: a map load_maps skipped (it would not load) is left out here too, with a log line.
             skip = set(getattr(self.link, "skipped_maps", None) or ())
+            skip = {m for m in skip if not self.link.is_loaded(m)} if skip and hasattr(self.link, "is_loaded") else skip
             if skip & set(maps):
                 ctx.log.info("op %s read_placements: %s maps that did not load are left out", i,
                              logbook.n(len(skip & set(maps))))

@@ -16,7 +16,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   seen by its process at all times).
 - **2026-11-09.** DP16 (an Imported tab).
 - **2026-11-14.** DP17 (the name numbers no row uses, shared whole) and DP18 (check 3 compares with the names only;
-  Copy for sharing leaves failing lines out).
+  Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job).
 - **Open.** None.
 
 ## DP1
@@ -290,4 +290,20 @@ Copy for sharing change only. **Recommendation:** (a).
 only texts it ever writes; Copy for sharing leaves a failing line out and says how many (settled S49).
 
 **Owner's words.** "Names only + skip lines (Recommended)".
+
+## DP19
+
+**Two of Smithbox's preferences, read before a map job** · *2026-11-14 · The owner's request*
+
+**Question.** None was put: the owner asked, after map jobs kept stalling, "would it be possible to double check if
+rendering is turned off for a map loader job, then make it 10 sec fail check?" DataPiler's research had ruled out ever
+reading Smithbox's `Configuration.json`, as it also holds folders of the owner's (`docs/design/smithbox-projects.md`).
+
+**Decision.** Before a map job DataPiler reads that file, read only, and keeps two values of it: Enable Model Rendering
+(`Viewport_Enable_Rendering`) and the skipping of Havok loading (`MapEditor_SkipHavokLoad`). Nothing else of it is kept,
+shown or logged. With rendering off the first map gets 10 s; with it on, 300 s and a warning to turn it off (settled
+S58, S59). As Smithbox saves its preferences when it closes, the log says they may lag a change made since.
+
+**Owner's words.** "would it be possible to double check if rendering is turned off for a map loader job, then make it
+10 sec fail check?"
 

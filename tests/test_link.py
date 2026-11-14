@@ -402,6 +402,19 @@ class AgainstTheFake(unittest.TestCase):
             self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05", "m99_00_00_06"])
         self.assertIn("3 maps in a row did not load", str(cm.exception))
 
+    def test_the_first_limit_holds_until_a_map_loads(self):
+        # S58: a short first limit skips a first map that will not load, quickly; later maps use the base.
+        self.link.switch(True)
+        self.fake.broken = {"m99_00_00_03"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        t0 = time.monotonic()
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04"], timeout=0.3, first_timeout=0.1)
+        self.assertEqual(n, 1)
+        # the first map's 0.1 s, then the end-of-run retry at the base (0.3 s, or three times the slowest load)
+        self.assertLess(time.monotonic() - t0, 3.0)
+        self.assertEqual(self.link.skipped_maps, ["m99_00_00_03"])
+
     def test_open_maps_gives_up_on_a_batch_that_never_loads(self):
         # S57: nothing loading at all ends in three skips in a row and an error that says what to look at.
         self.link.switch(True)

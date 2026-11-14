@@ -384,6 +384,12 @@
         },
         "maps": {
           "$ref": "#/$defs/map_list"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 900,
+          "description": "Seconds a map may take to load before it is skipped for now (default 10), stretched to three times the slowest load seen; skipped maps are asked for once more at the end."
         }
       }
     },

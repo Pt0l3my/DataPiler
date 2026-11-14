@@ -117,6 +117,12 @@ collision (unless its setting to skip Havok loading is on). DataPiler reads only
 jobs turn viewport rendering off and skip Havok loading in Smithbox's settings, or start `Smithbox.OpenGL.exe`, which
 by the same code never loads map models or textures.
 
+A map that has not loaded after 10 seconds is skipped for now and asked for again at the end of the run; the log names
+it. DataPiler cannot see why Smithbox did not load it, as Smithbox keeps its log in its own windows: look in its
+**Warning Log** (in its top bar). Before a map job DataPiler reads two of Smithbox's saved preferences, Enable Model
+Rendering and the skipping of Havok loading, and nothing else of that file; Smithbox saves them when it closes, so a
+change you just made may not show yet.
+
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any

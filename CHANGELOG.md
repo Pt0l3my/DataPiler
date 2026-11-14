@@ -11,6 +11,19 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.9 - 2026-11-14
+
+- A map not loaded in 10 s is skipped for now (S58), not after 5 minutes: the limit stretches to three times the slowest
+  load seen in the run, skipped maps are asked for once more at the end, a map that loads late is read all the same, and
+  three in a row stop the job only if none of them loaded late. A job may set its own limit (`load_maps`'s `timeout`,
+  5 to 900 s). Maps are asked for again every 2 s while they wait.
+- Before a map job, DataPiler reads two of Smithbox's saved preferences (DP19, S59): Enable Model Rendering and the
+  skipping of Havok loading. With rendering off the first map gets 10 s; with it on, 300 s and a warning to turn it
+  off. Nothing else of that file is kept or logged. Smithbox saves its preferences when it closes, so the log says
+  they may lag a change made since.
+- Smithbox keeps its log in its own windows only (no file, no server call), so the messages point to its Warning Log
+  for why a map did not load.
 ## 0.2.8 - 2026-11-14
 
 - The newest job really is first (S54): each card now carries the time it was added, which the page sorts by; 0.2.7

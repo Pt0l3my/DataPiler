@@ -37,7 +37,7 @@ Then check it:
   `PE32+ executable (GUI) x86-64 ...` and file 5.46 or later `PE32+ executable for MS Windows <version> (GUI),
   x86-64, ...`; `file -b DataPiler.exe | grep -Eq '^PE32\+ executable .*\(GUI\).*x86-64'` checks both, as the
   release workflow does.
-- `strings -a -el DataPiler.exe | grep 0.2.15.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
+- `strings -a -el DataPiler.exe | grep 0.2.16.0` finds its version, which is `VERSION` in `datapiler/__init__.py`.
 - `x86_64-w64-mingw32-objdump -p DataPiler.exe | grep "DLL Name"` lists only `KERNEL32.dll`, `msvcrt.dll`,
   `SHELL32.dll` and `USER32.dll`: no socket library.
 
@@ -80,8 +80,9 @@ The exe is unsigned, so Windows' SmartScreen may warn on its first start: More i
 
 ## The icon
 
-`launcher-src/app.ico` is DataPiler's own drawing (S65): a blood-red katana in a rising slash, its trail streaming
-off the whole blade, with blood drops flung from the tip's path, on a dark tile; no game art is used. It is drawn in three levels of detail, so nothing is too small to see at 16 px, and
+`launcher-src/app.ico` is DataPiler's own drawing (S65): a katana with a crimson blade, drawn to a katana's
+proportions, in a rising slash whose trail streams off the whole blade, with blood drops, on a dark tile; no game art
+is used. It is drawn in three levels of detail, so nothing is too small to see at 16 px, and
 holds eight sizes, 16 to 256 px. To make it again, in an empty folder:
 
 ```

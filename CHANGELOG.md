@@ -13,6 +13,13 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.16 - 2026-11-14
+
+- The icon redrawn to a katana's proportions (S65): a slender, evenly curved crimson blade about three times the
+  handle, with its point (kissaki), temper line and the line across the point; a gold collar, a round guard, and a
+  handle in dark cord over light diamonds. The trail streams off the whole blade in tapered strands, lighter than
+  before, and the drops sit in the open corner. Still our own drawing, readable from 16 to 256 px.
+
 ## 0.2.15 - 2026-11-14
 
 - The icon redrawn at the owner's request (S65): the slash is now a trail streaming off the whole blade, in tapered

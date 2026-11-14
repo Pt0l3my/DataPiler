@@ -68,6 +68,8 @@ def _parts(map_id: str) -> list[tuple[pb.PrimaryKey, dict[str, pb.PropertyValue]
             "ModelName": pb.PropertyValue(string_value=model),
             "Name": pb.PropertyValue(string_value=PLANTED[j]),
         }
+        if m == 14 and j == 2:
+            del props["TalkID"]          # as a part without dialogue: Smithbox leaves the property out (S60)
         out.append((key, props))
     piece = pb.PrimaryKey(file=MAP_FILE % map_id, namespace=common.KEY_NAMESPACE_MAP_PART, index=0,
                           str_id="Brannoc of the Pale Ford piece")

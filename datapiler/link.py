@@ -656,7 +656,10 @@ class Link:
                 skipped.append(m)
         self.skipped_maps = list(skipped)
         if skipped:
-            _log.warn("%s of %s maps did not load, asked for twice, and are left out: %s", logbook.n(len(skipped)),
+            # S61: such a map either failed in Smithbox or loaded with nothing an entry search lists (an empty map,
+            # as m10_01_00_99 on the owner's PC: Smithbox's auto-save named it among the loaded maps).
+            _log.warn("%s of %s maps never showed as loaded, asked for twice, and are left out: %s - either Smithbox "
+                      "could not load them (its Warning Log says so) or they hold nothing to list", logbook.n(len(skipped)),
                       logbook.n(total), own(", ".join(skipped)))
         return sum(1 for m in wanted if m in loaded)
 
@@ -726,6 +729,11 @@ class Link:
             if attr == "model":
                 m = MODEL_RX.fullmatch(v.string_value) if which == "string_value" else None
                 vals[attr] = int(m.group(1)) if m is not None else -1
+                continue
+            if v is None:
+                # S60: Smithbox leaves out a property the part does not have (AccessMapProperty gives null), as a
+                # placed character without dialogue has no TalkID; absent is -1, as an odd model is.
+                vals[attr] = -1
                 continue
             if which not in _INT_VALUES:
                 raise LinkDataError("the server sent a placed character's property %d that is not a number" % i)

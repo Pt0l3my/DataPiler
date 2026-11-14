@@ -12,6 +12,13 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.10 - 2026-11-14
+
+- A placed character's property that the part does not have is read as -1 (S60): Smithbox leaves it out of its answer,
+  as for a character without dialogue (no TalkID), and en-0007's first full read stopped on it as "not a number".
+- A map that never shows as loaded is described as such (S61): either Smithbox could not load it, or it loaded with
+  nothing to list, as m10_01_00_99 on the owner's PC, which Smithbox's auto-save named among its loaded maps.
 ## 0.2.9 - 2026-11-14
 
 - A map not loaded in 10 s is skipped for now (S58), not after 5 minutes: the limit stretches to three times the slowest

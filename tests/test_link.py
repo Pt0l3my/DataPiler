@@ -425,6 +425,16 @@ class AgainstTheFake(unittest.TestCase):
             self.link.open_maps(["m99_00_00_05", "m99_00_00_06", "m99_00_00_07"])
         self.assertIn("Map Editor tab in front", str(cm.exception))
 
+    def test_a_placement_without_a_talk_id(self):
+        # S60: a property the part does not have is left out by Smithbox; DataPiler reads it as -1, not a failure.
+        self.link.switch(True)
+        self.link.map_poll = 0.01
+        self.assertEqual(self.link.open_maps(["m99_00_00_14"]), 1)
+        got = self.link.placements("m99_00_00_14")
+        self.assertEqual(len(got), 3)
+        self.assertEqual([p.talk_id for p in got][-1], -1)
+        self.assertTrue(all(p.talk_id > 0 for p in got[:-1]))
+
     def test_placements_as_numbers(self):
         self.link.switch(True)
         got = self.link.placements("m99_00_00_01")

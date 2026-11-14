@@ -15,8 +15,9 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page). DP15 (Smithbox
   seen by its process at all times).
 - **2026-11-09.** DP16 (an Imported tab).
-- **Open.** DP17 (sharing the name numbers no row uses beyond half the set) and DP18 (check 3's scope, and Copy for
-  sharing leaving failing lines out), both 2026-11-14.
+- **2026-11-14.** DP17 (the name numbers no row uses, shared whole) and DP18 (check 3 compares with the names only;
+  Copy for sharing leaves failing lines out).
+- **Open.** None.
 
 ## DP1
 
@@ -256,7 +257,7 @@ containers tab."
 
 ## DP17
 
-**Sharing the name numbers no row uses, beyond half the set** · *2026-11-14 · Open*
+**Sharing the name numbers no row uses, beyond half the set** · *2026-11-14 · Decided by the owner, as recommended*
 
 **Question.** Job en-0006 found 269 of the 483 character-name entries named by no NpcParam row, 56% of the set. Bosses
 whose rows carry name 0 take their bar names from among them (EldenNet WHY§33, WHY§36), so the list is what EldenNet's
@@ -267,9 +268,14 @@ held to the half, as it numbers names, not rows of a game table; (b) split it by
 which sidesteps the rule rather than settling it; (c) keep the rule: a counts-only job first, to see where the unused
 numbers cluster, then share only the cluster the bosses fall in, one or two more rounds. **Recommendation:** (a).
 
+**Decision.** (a). A table made by `unused_names`, and what is counted from it, holds numbers only and is not held to
+check 6's half (settled S48). Every other check stands, and no text of the set is ever shared.
+
+**Owner's words.** "Exception (Recommended)".
+
 ## DP18
 
-**Check 3's scope, and Copy for sharing** · *2026-11-14 · Open*
+**Check 3's scope, and Copy for sharing** · *2026-11-14 · Decided by the owner, as recommended*
 
 **Question.** Check 3 compares every shared string and shared log line with every text imported, and treats a string of
 four or more characters contained in a text, or containing one, as game text. Since the whole English item container
@@ -279,4 +285,9 @@ list of files). **Options:** (a) compare with the texts of the name sets DataPil
 names), the only texts it ever writes anywhere, and have Copy for sharing leave a failing line out, saying how many,
 instead of refusing the copy; (b) keep check 3 as it is and avoid common words in job tables and log lines; (c) (a)'s
 Copy for sharing change only. **Recommendation:** (a).
+
+**Decision.** (a). Check 3 compares with the texts of the name sets DataPiler uses (character and place names), the
+only texts it ever writes; Copy for sharing leaves a failing line out and says how many (settled S49).
+
+**Owner's words.** "Names only + skip lines (Recommended)".
 

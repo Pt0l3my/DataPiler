@@ -48,6 +48,10 @@ class GuardTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.share = root / "share"
         self.share.mkdir()
+        self.sets = mock.patch.dict(textdb.TEXT_SETS, {
+            "character_names": (("item", 9001), ("item_dlc01", 9001), ("item_dlc02", 9001)),
+            "place_names": (("item", 9002), ("item_dlc01", 9002), ("item_dlc02", 9002))})
+        self.sets.start()          # DP18: check 3 compares with the name sets' texts, so the invented ones sit there
         self.db = textdb.TextDB(root / "work" / "textdb.sqlite")
         self.db.import_export({"Name": "item", "FmgWrappers": [{"Name": "Invented", "ID": 9001, "Fmg": {
             "Entries": [{"ID": 9000000 + i, "Text": t} for i, t in enumerate(TEXTS)]}}]},
@@ -64,6 +68,7 @@ class GuardTest(unittest.TestCase):
         self.unsub()
         self.guard.close()
         self.db.close()
+        self.sets.stop()
         self.tmp.cleanup()
 
     # ---- helpers

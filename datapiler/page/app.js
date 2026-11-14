@@ -559,8 +559,11 @@ function copyForSharing() {
   const levels = Object.keys(LV).filter((k) => LV[k] >= LV[TERM.level]);
   const sources = TERM.srcs.size ? [...TERM.srcs] : SOURCES.slice();
   api("/api/log/share", { after: vis[0].seq - 1, upto: vis[vis.length - 1].seq, levels: levels, sources: sources }).then((r) => {
-    if (r.ok) copyText(r.text, "The lines, checked for sharing,");
-    else note("Not copied: line " + r.refused.line + " fails check " + r.refused.check + (r.refused.check === 3 ? " (a text the text database holds)" : " (a path, a name or an address)") + ".");
+    if (!r.ok) { note("Not copied."); return; }
+    const lo = r.left_out || {}, n3 = lo["3"] || 0, n4 = lo["4"] || 0;
+    if (!r.text) { note("Not copied: every line fails a check (" + (n3 ? n3 + " a name the text database holds" : "") + (n3 && n4 ? ", " : "") + (n4 ? n4 + " a path, a name or an address" : "") + ")."); return; }
+    copyText(r.text, "The lines, checked for sharing,");
+    if (n3 || n4) note("Left out: " + (n3 ? n3 + (n3 === 1 ? " line" : " lines") + " holding a name the text database holds" : "") + (n3 && n4 ? "; " : "") + (n4 ? n4 + (n4 === 1 ? " line" : " lines") + " holding a path, a name or an address" : "") + ".");
   }).catch((e) => note(e.message));
 }
 
@@ -616,6 +619,9 @@ function saveSettings() {
 
 // ---- polling and the heartbeat: three failures in a row show "DataPiler has stopped"
 function gone() { GONE = true; $("gone").classList.add("on"); }
+// Quit closes the tab too (S50). A browser closes a tab its script did not open only while the tab has a single page
+// in its history, as the one the launcher opens does; where it refuses, the tab says DataPiler has stopped.
+function closeTab() { setTimeout(() => { try { window.close(); } catch (e) { /* the browser refused */ } }, 400); }
 function poll() {
   if (GONE || HOLD) return Promise.resolve();
   return api("/api/state").then((s) => {
@@ -636,7 +642,7 @@ $("tabs").addEventListener("click", (e) => { const b = e.target.closest("button[
 $("quit").addEventListener("click", () => {
   if (!window.confirm("Quit DataPiler? Its page and its window close.")) return;
   const quit = (cancel) => api("/api/quit", { cancel_running: cancel }).then((r) => {
-    if (r.ok) { gone(); return; }
+    if (r.ok) { gone(); closeTab(); return; }
     if (r.ask && window.confirm(r.ask.text)) quit(true);
   }).catch((e) => note(e.message));
   quit(false);

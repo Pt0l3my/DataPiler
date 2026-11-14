@@ -96,7 +96,7 @@ class TextDBTest(unittest.TestCase):
         """A table name ([a-z0-9_]) or a job id ([a-z0-9-]) cannot hold a space nor an accent, so a text written with
         `_` or `-` between its words, or without its accents, is the text still (invented texts)."""
         self.db.import_export(export("item-invented.json"), container="item", language="engus", sha256="a" * 64)
-        self.db.import_export({"Name": "item_dlc01", "FmgWrappers": [{"Name": "W", "ID": 1, "Fmg": {"Entries": [
+        self.db.import_export({"Name": "item_dlc01", "FmgWrappers": [{"Name": "W", "ID": 9001, "Fmg": {"Entries": [
             {"ID": 1, "Text": "White Mask Varr\u00e9"}, {"ID": 2, "Text": "Ser Ostrel-Vane"}]}}]},
             container="item_dlc01", language="engus", sha256="f" * 64)
         for s in ("the_hollow_of_ashgrove", "quillon_marrowgate", "quillon-marrowgate", "white_mask_varre",
@@ -114,7 +114,7 @@ class TextDBTest(unittest.TestCase):
         self.assertEqual(textdb.normalise("ser_ostrel--vane"), "ser ostrel vane")
 
     def test_short_texts_match_only_when_equal(self):
-        data = {"Name": "item", "FmgWrappers": [{"Name": "W", "ID": 1, "Fmg": {"Entries": [
+        data = {"Name": "item", "FmgWrappers": [{"Name": "W", "ID": 9001, "Fmg": {"Entries": [
             {"ID": 1, "Text": "Orb"}, {"ID": 2, "Text": "Vellmoor"}]}}]}
         self.db.import_export(data, container="item", language="engus", sha256="e" * 64)
         self.assertTrue(self.db.text_hit("orb"))
@@ -145,3 +145,22 @@ class TextDBTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckScopeTest(unittest.TestCase):
+    """DP18 (settled S49): check 3 compares with the name sets' texts only, not every text imported."""
+
+    def test_only_the_name_sets(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(textdb.TEXT_SETS, SETS):
+            db = textdb.TextDB(Path(tmp) / "textdb.sqlite")
+            try:
+                db.import_export({"Name": "item", "FmgWrappers": [
+                    {"Name": "N", "ID": 9001, "Fmg": {"Entries": [{"ID": 1, "Text": "Quillon Marrowgate"}]}},
+                    {"Name": "D", "ID": 7777, "Fmg": {"Entries": [{"ID": 1, "Text": "An unused relic, its files lost"}]}}]},
+                    container="item", language="engus", sha256="9" * 64)
+                self.assertTrue(db.text_hit("quillon_marrowgate"))
+                self.assertFalse(db.text_hit("unused"))           # a description's word is not a name
+                self.assertFalse(db.find_in("install check: 11 files differ"))
+            finally:
+                db.close()
+

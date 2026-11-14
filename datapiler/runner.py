@@ -1272,6 +1272,10 @@ class Runner:
             return (None, 0, UNKNOWN_SOURCE)
         if src.table == PLACEMENTS:
             return (None, sum(ctx.placed.values()), PLACEMENTS)
+        if src.table in jobs.TEXTS:
+            # DP17 (settled S48): what unused_names makes holds name numbers and layers only, never a text, and is not
+            # held to check 6's half.
+            return None
         of = src.of if src.of is not None else 0
         if src.unique and lin.id_col is not None and lin.id_col in columns:
             return (lin.id_col, of, src.table)

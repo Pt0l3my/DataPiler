@@ -6,6 +6,17 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+## 0.2.4 - 2026-11-14
+
+- DP17 (S48): what `unused_names` makes, numbers and layers only, is not held to check 6's half, so job en-0006's 269
+  of 483 name numbers can be shared whole.
+- DP18 (S49): check 3 compares with the texts of the name sets DataPiler uses (character and place names), not every
+  text imported: with the whole item container imported, ordinary words (a table named `unused`, a log line listing
+  files) collided with item descriptions. Copy for sharing leaves a failing line out and says how many, instead of
+  refusing the whole copy.
+- Quit (S50): the window closes at once after a normal stop, and the page asks the browser to close its tab, which it
+  does where the tab holds a single page, as the one the launcher opens does.
 ## 0.2.3 - 2026-11-14
 
 - `unused_names` (S47): the entries of a text set that no row of a table names, with their layers and, locally,

@@ -380,6 +380,9 @@ class FailureTest(RunnerBase):
         self.assertEqual(self.share_files(), [])
 
     def test_a_guard_failure(self):
+        self.sets.stop()             # DP18: check 3 sees the name sets' texts only, so the planted one is in a set
+        self.sets = mock.patch.dict(textdb.TEXT_SETS, dict(SETS, place_names=(("item", 9002), ("item_dlc02", 9005))))
+        self.sets.start()
         self.db.import_export({"Name": "item_dlc02", "FmgWrappers": [{"Name": "Invented", "ID": 9005, "Fmg": {
             "Entries": [{"ID": 9000200, "Text": "per_team"}]}}]}, container="item_dlc02", language="engus",
             sha256="1" * 64)
@@ -847,14 +850,14 @@ class BossesTest(RunnerBase):
         text = json.dumps(data)
         self.assertNotIn("Invented", text)                    # names stay local
 
-    def test_unused_names_over_half_the_set_is_refused(self):
+    def test_unused_names_over_half_the_set_is_shared_whole(self):
         doc = {"format": jobs.FORMAT, "id": "en-0098-unused", "title": "Unused names", "ops": [
             {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"], "ids": [9000003]},
             {"op": "unused_names", "as": "unused", "rows": "npc", "key": "nameId", "text": "character_names"},
             {"op": "write_share", "name": "unused", "tables": ["unused"], "columns": {"unused": ["nameId"]}}]}
-        card = self.run_job(json.dumps(doc).encode(), state="failed")
-        self.assertIn("guard", card["result"]["failed"]["why"])
-        self.assertNotIn("unused.json", self.share_files())
+        self.run_job(json.dumps(doc).encode())      # DP17: numbers only, not held to check 6's half
+        with open(os.path.join(self.p.share, "unused.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["tables"][0]["rows"], [[9000000], [9000001], [9000004]])
 
     def test_boss_slots_from_map_families(self):
         self.link.every_map = ["m99_00_00_00", "m99_00_00_01", "m99_00_00_02", "m98_00_00_00"]

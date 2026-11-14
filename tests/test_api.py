@@ -608,7 +608,11 @@ class ApiTest(ApiBase):
         log.info("a line with a planted text: %s", own(PLANTED))
         _, last = logbook.lines_after(0, limit=0)
         _, r, _ = self.post("/api/log/share", {"after": start, "upto": last, "levels": ["INFO"], "sources": ["job"]})
-        self.assertEqual(r, {"ok": False, "refused": {"check": 3, "line": last}})
+        # DP18: the failing line is left out and counted, the rest copied
+        self.assertTrue(r["ok"])
+        self.assertIn("an ordinary line: 12 rows", r["text"])
+        self.assertNotIn("planted", r["text"])
+        self.assertEqual(r["left_out"], {"3": 1, "4": 0})
         _, r, _ = self.post("/api/log/share", {"after": start, "upto": last, "levels": ["INFO"], "sources": ["app"]})
         self.assertTrue(r["ok"])
         crafted = [{"seq": 41, "t": "2026-11-08 08:00:00.000", "level": "INFO", "src": "link",
@@ -617,9 +621,9 @@ class ApiTest(ApiBase):
                     "msg": "by zorblax"}]
         with mock.patch.object(logbook, "lines_after", lambda seq, limit=1000: ([x for x in crafted if x["seq"] > seq], 42)):
             _, r, _ = self.post("/api/log/share", {"after": 0, "upto": 42, "levels": ["INFO"], "sources": ["link"]})
-            self.assertEqual(r, {"ok": False, "refused": {"check": 4, "line": 41}})
+            self.assertEqual(r, {"ok": True, "text": "", "left_out": {"3": 0, "4": 2}})
             _, r, _ = self.post("/api/log/share", {"after": 41, "upto": 42, "levels": ["INFO"], "sources": ["link"]})
-        self.assertEqual(r, {"ok": False, "refused": {"check": 4, "line": 42}})
+        self.assertEqual(r, {"ok": True, "text": "", "left_out": {"3": 0, "4": 1}})
 
     def test_owner_rules_for_a_line(self):
         words = ["zorblax", "QUENTIN-RIG"]

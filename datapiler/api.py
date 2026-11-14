@@ -768,14 +768,18 @@ class Api:
         b = winapi.backend()
         words = [w for w in (b.user_name(), b.pc_name()) if w]
         out = []
+        left = {"3": 0, "4": 0}
         for ln in picked:
             text = line_text(ln)
+            # DP18 (settled S49): a failing line is left out, never copied, and counted; the rest is copied.
             if self.textdb.find_in(text):
-                return {"ok": False, "refused": {"check": 3, "line": ln["seq"]}}
+                left["3"] += 1
+                continue
             if owner_hit(text, words):
-                return {"ok": False, "refused": {"check": 4, "line": ln["seq"]}}
+                left["4"] += 1
+                continue
             out.append(text)
-        return {"ok": True, "text": "\n".join(out) + ("\n" if out else "")}
+        return {"ok": True, "text": "\n".join(out) + ("\n" if out else ""), "left_out": left}
 
 
 def _only(body: dict, allowed: tuple[str, ...]) -> None:

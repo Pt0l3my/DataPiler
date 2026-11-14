@@ -164,11 +164,12 @@ class Script(unittest.TestCase):
     def test_the_exit_code_branches(self):
         for line in ("if ($Code -eq 0) {", "} elseif ($Code -eq 3) {", "} else {"):
             self.assertIn(line, self.code)
-        self.assertIn("'DataPiler has stopped - this window closes in 5 s'", self.code)
+        self.assertIn("'DataPiler has stopped' Green", self.code)            # S50: closes at once
+        self.assertNotIn("this window closes in 5 s'", self.code)
         self.assertIn("'DataPiler is running already - its page opens'", self.code)
         self.assertIn("('DataPiler stopped with code {0}' -f $Code)", self.code)
         self.assertIn("'Press Enter to close.'", self.code)
-        self.assertEqual(self.code.count("[System.Threading.Thread]::Sleep(5000)"), 3)
+        self.assertEqual(self.code.count("[System.Threading.Thread]::Sleep(5000)"), 2)   # S50: no wait after a normal stop
         self.assertTrue(self.code.rstrip().endswith("exit $Code"))
 
     def test_one_window_at_a_time(self):

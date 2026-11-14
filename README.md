@@ -32,8 +32,9 @@ and what changed in [CHANGELOG.md](CHANGELOG.md).
   - Starting it again while DataPiler runs, or while its window is still starting, just opens the running page once
     it is up; no second window opens.
 - **Stop:** press **Quit** on the page. Closing the window, or Ctrl+C in it, stops DataPiler the same way. After a
-  normal stop the window closes by itself; after a crash it stays open with the exit code, and
-  `datapiler-start.log` beside the exe says why when the page never came up.
+  normal stop the window closes at once, and the page closes its tab where the browser allows it (it does for the tab
+  the exe opened); after a crash the window stays open with the exit code, and `datapiler-start.log` beside the exe
+  says why when the page never came up.
 - **Windows' warning:** the exe is unsigned, so SmartScreen may warn on its first start: choose More info, then Run
   anyway. Its source is in `launcher-src/`, [BUILD.md](BUILD.md) says how to build it yourself, and each release's
   exe is built by a GitHub workflow from that source, with its sha256 beside it.

@@ -298,19 +298,27 @@ class TextDB:
             out.setdefault(i, t)
         return out
 
+    def _check_texts(self) -> list[str]:
+        """The texts check 3 compares with (DP18, settled S49): those of the name sets DataPiler uses (TEXT_SETS), the
+        only texts it ever writes anywhere; not every text imported, whose ordinary words collide with our own."""
+        pairs = sorted({(c, int(w)) for set_pairs in TEXT_SETS.values() for c, w in set_pairs})
+        if not pairs:
+            return []
+        where = " OR ".join("(container = ? AND wrapper_id = ?)" for _ in pairs)
+        args = [x for pair in pairs for x in pair]
+        return [t for (t,) in self._conn().execute("SELECT DISTINCT text FROM entries WHERE " + where, args).fetchall()]
+
     def _idx(self) -> _Index:
         with self._lock:
             if self._index is None:
-                texts = [t for (t,) in self._conn().execute("SELECT DISTINCT text FROM entries").fetchall()]
-                self._index = _Index(texts)
+                self._index = _Index(self._check_texts())
             return self._index
 
     def _nidx(self) -> _Index:
         """The texts normalised (`normalise`), built when first needed after each import."""
         with self._lock:
             if self._nindex is None:
-                texts = [t for (t,) in self._conn().execute("SELECT DISTINCT text FROM entries").fetchall()]
-                self._nindex = _Index([n for n in (normalise(t) for t in texts) if n])
+                self._nindex = _Index([n for n in (normalise(t) for t in self._check_texts()) if n])
             return self._nindex
 
     def text_hit(self, s: str) -> bool:

@@ -1,9 +1,8 @@
-"""DataPiler's icon (S65): an original katana with a blood-red blade in a rising slash, its trail streaming off the
-whole blade, with blood drops. Drawn to a katana's proportions: a slender, evenly curved blade about three times the
-handle, a point (kissaki) whose edge sweeps up to meet the back, a temper line along the edge, a collar (habaki), a
-round guard (tsuba), and a handle wrapped in dark cord over light diamonds. Three levels of detail, so nothing is too
-small to see at 16 px. Our own drawing; no game art is used. Writes datapiler-large.svg, -medium.svg and -small.svg
-in the current folder."""
+"""DataPiler's icon (S65): an original katana with a crimson blade in a rising slash, and behind it a trail of
+blood-red flame streaming off the whole blade: layered tongues, dark at their edges and bright at their cores, that
+sweep back along the swing and curl at their tips. The sword is drawn to a katana's proportions. Three levels of
+detail, so nothing is too small to see at 16 px. Our own drawing; no game art is used. Writes datapiler-large.svg,
+-medium.svg and -small.svg in the current folder."""
 import math
 
 K = (36.0, 222.0)          # the end of the handle (kashira), where the swing turns
@@ -67,16 +66,35 @@ def blade_outline(bw):
     return edge, back, center, yokote
 
 
-def drop(cx, cy, r, rot, hl=True):
-    """A teardrop whose tail points along rot (degrees; 0 = up)."""
-    p = (f"M 0 {-2.3*r:.1f} C {0.55*r:.1f} {-1.2*r:.1f}, {r:.1f} {-0.35*r:.1f}, {r:.1f} {0.15*r:.1f} "
-         f"A {r:.1f} {r:.1f} 0 1 1 {-r:.1f} {0.15*r:.1f} C {-r:.1f} {-0.35*r:.1f}, {-0.55*r:.1f} {-1.2*r:.1f}, 0 {-2.3*r:.1f} Z")
-    out = (f'<g transform="translate({cx:.1f} {cy:.1f}) rotate({rot})"><path d="{p}" fill="url(#drop)" '
-           f'stroke="#3a0008" stroke-width="{max(1.5, r*0.12):.1f}"/>')
-    if hl:
-        out += (f'<ellipse cx="{-0.38*r:.1f}" cy="0" rx="{0.22*r:.1f}" ry="{0.34*r:.1f}" fill="#ffffff" opacity="0.55" '
-                f'transform="rotate(25)"/>')
-    return out + "</g>"
+def tongue(base, theta0, bend, length, width, hook, flen=1.0, fw=1.0):
+    """One tongue of flame rooted at `base` on the blade's back edge: it leaves at angle theta0 (degrees, screen y
+    down), bends by `bend` degrees on its way (negative: upward), tapers from `width` to a point, and its last part
+    hooks a further `hook` degrees. flen and fw shorten and narrow it, for the inner layers of the same tongue."""
+    n = 36
+    pts = []
+    x, y = base
+    step = length * flen / n
+    centre = [(x, y)]
+    ang = theta0
+    for i in range(1, n + 1):
+        q = i / n
+        ang = theta0 + bend * q ** 1.3 + (hook * ((q - 0.7) / 0.3) ** 2 if q > 0.7 else 0.0)
+        ux, uy = unit(ang)
+        x, y = x + ux * step, y + uy * step
+        centre.append((x, y))
+    left, right = [], []
+    for i, (cx, cy) in enumerate(centre):
+        q = i / n
+        if i < n:
+            dx, dy = centre[i + 1][0] - cx, centre[i + 1][1] - cy
+        else:
+            dx, dy = cx - centre[i - 1][0], cy - centre[i - 1][1]
+        ln = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / ln, dx / ln
+        w = width * fw * (1 - q) ** 1.15 * (1 + 0.25 * math.sin(math.pi * q))
+        left.append((cx + nx * w / 2, cy + ny * w / 2))
+        right.append((cx - nx * w / 2, cy - ny * w / 2))
+    return poly(left + right[::-1])
 
 
 def svg(level):
@@ -87,46 +105,54 @@ def svg(level):
   <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2e1117"/><stop offset="1" stop-color="#0b0406"/></linearGradient>
   <radialGradient id="drop" cx="0.4" cy="0.55" r="0.75"><stop offset="0" stop-color="#ff3a4e"/><stop offset="1" stop-color="#a8001a"/></radialGradient>
   <clipPath id="inTile"><rect x="10" y="10" width="236" height="236" rx="50"/></clipPath>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="9"/></filter>
+  <filter id="soft" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.2"/></filter>
+  <filter id="fire1" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.018 0.055" numOctaves="2" seed="7" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="26" xChannelSelector="R" yChannelSelector="G"/></filter>
+  <filter id="fire2" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.022 0.07" numOctaves="2" seed="21" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="18" xChannelSelector="R" yChannelSelector="G"/></filter>
+  <filter id="fire3" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.03 0.09" numOctaves="2" seed="42" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="11" xChannelSelector="R" yChannelSelector="G"/></filter>
 </defs>''',
              '<rect x="8" y="8" width="240" height="240" rx="52" fill="url(#tile)" stroke="#7a2232" stroke-width="5"/>']
     edge, back, center, yokote = blade_outline(bw)
-    # the trail: the blade's own shape at earlier moments of the swing, faint far back and close behind it deeper,
-    # so it streams off the whole blade and keeps the blade's curve
-    trail = ['<g clip-path="url(#inTile)">']
-    n = 16 if L else (10 if M else 6)
-    for k in range(n):
-        f = k / n                                        # 0 where the trail begins, near 1 just behind the blade
-        da = (A0 - A1) * (1 - f)
-        ghost = [rot_pt(p, da) for p in edge] + [rot_pt(p, da) for p in back[::-1]]
-        # a ghost blade, widened backwards (towards where it came from) so the ghosts overlap into one band
-        sweep = [rot_pt(p, da + (A0 - A1) / n * 1.15) for p in back]
-        band = [rot_pt(p, da) for p in edge] + sweep[::-1]
-        col = "#%02x%02x%02x" % tuple(round(a + (b - a) * f) for a, b in zip((96, 0, 18), (214, 24, 50)))
-        op = (0.02 + 0.11 * f * f) if L else ((0.03 + 0.13 * f * f) if M else (0.05 + 0.16 * f * f))
-        trail.append(f'<path d="{poly(band)}" fill="{col}" opacity="{op:.3f}"/>')
-    # strands: lines of blood left by points along the edge, tapering away from the blade
-    if not S:
-        picks = (0.985, 0.9, 0.78, 0.66, 0.54, 0.42, 0.3) if L else (0.96, 0.72, 0.48)
-        for j, s in enumerate(picks):
-            i = round(s * (len(edge) - 1))
-            p = edge[i]
-            r = math.hypot(p[0] - K[0], p[1] - K[1])
-            a_end = math.degrees(math.atan2(p[1] - K[1], p[0] - K[0]))
-            a_start = a_end + (A0 - A1) * (1.0 - 0.09 * j) * (1.0 if j % 2 == 0 else 0.8)
-            w = (7.0 if L else 10.0) * (1 - 0.08 * j)
-            out_, in_ = [], []
-            for m in range(25):
-                q = m / 24
-                a = a_start + (a_end - a_start) * q
-                half = w * 0.5 * q ** 0.85
-                wave = (2.5 if L else 3.0) * math.sin(j * 1.7 + q * 7.0) * (1 - q)
-                ux, uy = unit(a)
-                out_.append((K[0] + (r + wave + half) * ux, K[1] + (r + wave + half) * uy))
-                in_.append((K[0] + (r + wave - half) * ux, K[1] + (r + wave - half) * uy))
-            trail.append(f'<path d="{poly(out_ + in_[::-1])}" fill="{"#ff4a5c" if j % 2 == 0 else "#d81a36"}" '
-                         f'opacity="{0.95 - 0.06 * j:.2f}"/>')
-    trail.append("</g>")
-    parts += trail
+    # the flame trail: one body of blood-red fire along the blade's back, breaking into tongues that stream back
+    # along the swing and rise, longest towards the point where the blade moves fastest, hooked at their tips; each
+    # a dark outer flame, a red body and a bright core; a soft glow beneath
+    if L:
+        # (where on the blade, leaving angle, bend, length, width, hook)
+        tongues = ((0.16, 78, -70, 52, 34, -45), (0.29, 74, -84, 74, 40, 50), (0.42, 70, -96, 92, 44, -55),
+                   (0.55, 64, -104, 104, 46, 60), (0.67, 56, -108, 108, 46, -60), (0.78, 46, -104, 100, 42, 55),
+                   (0.88, 34, -96, 84, 36, -50), (0.96, 22, -84, 62, 28, 45), (0.48, 86, -70, 70, 28, 65),
+                   (0.73, 76, -86, 82, 26, -60))
+    elif M:
+        tongues = ((0.22, 76, -80, 66, 46, -45), (0.45, 68, -98, 96, 54, 55), (0.68, 56, -106, 108, 54, -60),
+                   (0.90, 34, -94, 82, 44, 55))
+    else:
+        tongues = ((0.34, 72, -88, 84, 66, 0), (0.72, 50, -100, 104, 66, 0))
+    layers = ((("#5a000f", 1.0, 1.0, 1.0), ("#bf0d2b", 0.82, 0.66, 1.0), ("#ff2f46", 0.6, 0.36, 1.0),
+               ("#ff9aa6", 0.38, 0.12, 0.8)) if L else
+              (("#5e0010", 1.0, 1.0, 1.0), ("#cf1230", 0.8, 0.62, 1.0), ("#ff3a50", 0.55, 0.3, 1.0)) if M else
+              (("#6a0012", 1.0, 1.0, 1.0), ("#e3183a", 0.75, 0.55, 1.0)))
+    def root(sk):
+        i = round(sk * (len(back) - 1))
+        x, y = back[min(i, len(back) - 1)]
+        cx, cy = center[min(i, len(center) - 1)][:2]
+        return x + (cx - x) * 0.4, y + (cy - y) * 0.4       # just inside the back, so the blade covers the root
+    fl = ['<g clip-path="url(#inTile)">']
+    glow = "".join(f'<path d="{tongue(root(sk), t0_, bd, ln, wd, hk)}" fill="#ff1838"/>'
+                   for sk, t0_, bd, ln, wd, hk in tongues)
+    fl.append(f'<g filter="url(#glow)" opacity="{0.55 if L else 0.4}">' + glow + "</g>")
+    # each layer as one shape, its edges broken by its own noise (large and medium sizes), so the flames flicker;
+    # the noise runs along the flow (turned with it), so the tongues stay long
+    fires = ("fire1", "fire2", "fire3", "fire3")
+    for k, (col, flen, fw, op) in enumerate(layers):
+        shapes = "".join(f'<path d="{tongue(root(sk), t0_, bd, ln, wd, hk, flen, fw)}"/>'
+                         for sk, t0_, bd, ln, wd, hk in tongues)
+        if S:
+            fl.append(f'<g fill="{col}" opacity="{op}">{shapes}</g>')
+        else:
+            fl.append(f'<g transform="rotate(-25 150 120)"><g filter="url(#{fires[k]})"><g transform="rotate(25 150 120)" '
+                      f'fill="{col}" opacity="{op}">{shapes}</g></g></g>')
+    fl.append("</g>")
+    parts += fl
     # the handle: dark cord over light diamonds, a collar (fuchi) at the guard and a cap (kashira) at the end
     hm = along(HANDLE / 2)
     parts.append(f'<g transform="translate({hm[0]:.1f} {hm[1]:.1f}) rotate({A1})">')
@@ -181,33 +207,6 @@ def svg(level):
     else:
         parts.append(f'<path d="{poly(edge[:nb] + [(x + px * w * 0.12, y + py * w * 0.12) for x, y, px, py, w, s in center[:nb]][::-1])}" '
                      f'fill="#ff5c6c"/>')
-    if S:
-        # at 16 to 24 px the trail is one strand, wide enough to see
-        i = round(0.93 * (len(edge) - 1))
-        p = edge[i]
-        r = math.hypot(p[0] - K[0], p[1] - K[1])
-        a_end = math.degrees(math.atan2(p[1] - K[1], p[0] - K[0]))
-        out_, in_ = [], []
-        for m in range(25):
-            q = m / 24
-            a = a_end + (A0 - A1) * (1 - q)
-            half = 7.0 * q ** 1.2
-            ux_, uy_ = unit(a)
-            out_.append((K[0] + (r + half) * ux_, K[1] + (r + half) * uy_))
-            in_.append((K[0] + (r - half) * ux_, K[1] + (r - half) * uy_))
-        parts.insert(3, f'<path clip-path="url(#inTile)" d="{poly(out_ + in_[::-1])}" fill="#ff4a5c" opacity="0.95"/>')
-    # blood drops flung forwards off the edge, into the open corner; tails back towards the blade
-    ux, uy = unit(A1)
-    nx, ny = uy, -ux
-    def fling(d, off, size, hl=True):
-        x, y = along(d)
-        return drop(x + nx * off, y + ny * off, size, A1 + 180, hl)     # tail back towards the blade
-    if L:
-        parts += [fling(196, 40, 11), fling(148, 46, 9), fling(104, 40, 7)]
-    elif M:
-        parts += [fling(186, 42, 15), fling(124, 46, 11)]
-    else:
-        parts.append(fling(158, 48, 19, hl=False))
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">'
             + "".join(parts) + "</svg>")
 

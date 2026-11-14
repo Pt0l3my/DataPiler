@@ -358,6 +358,26 @@ class AgainstTheFake(unittest.TestCase):
         self.assertEqual(self.link.placements("m99_00_00_04"), [])
         self.assertEqual(len(self.link.placements("m99_00_00_06")), 3)
 
+    def test_each_map_it_loads_is_handed_on_at_once(self):
+        # S63: the runner reads and keeps each map as soon as it loads; maps loaded before are not handed on.
+        self.link.switch(True)
+        self.link.map_poll = 0.01
+        seen = []
+        n = self.link.open_maps(["m99_00_00_00", "m99_00_00_03", "m99_00_00_04"], on_loaded=seen.append)
+        self.assertEqual(n, 3)
+        self.assertEqual(seen, ["m99_00_00_03", "m99_00_00_04"])
+        self.assertIsNone(self.link.capped)
+
+    def test_it_stops_asking_once_smithbox_holds_the_cap(self):
+        # S63: two maps are loaded at the start; with a cap of three, one more is asked for, then it stops.
+        self.link.switch(True)
+        self.link.map_poll = 0.01
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05"], session_cap=3)
+        self.assertEqual(n, 1)
+        self.assertEqual(self.link.capped, (3, 2))
+        self.assertEqual([r.resource.name for r in self.fake.requests("OpenResource")], ["m99_00_00_03"])
+        self.assertEqual(self.link.skipped_maps, [])
+
     def test_a_refused_file_key_check_falls_back_to_entries(self):
         self.link.switch(True)
         self.fake.fail_file_keys = True

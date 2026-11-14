@@ -330,6 +330,8 @@ class Link:
         self._lock = threading.RLock()
         self._session = False
         self.skipped_maps: list[str] = []      # the maps the last open_maps skipped (S57)
+        self.capped: tuple[int, int] | None = None   # S63: (maps Smithbox held, maps not asked for) when the last
+                                                     # open_maps stopped at its session cap, else None
         self._file_keys = True                 # S62: loaded maps told by file key; False after that call failed once
         self._blocked = False
         self._channel = None
@@ -596,12 +598,16 @@ class Link:
 
     def open_maps(self, map_ids: Sequence[str], *, cancel: threading.Event | None = None,
                   progress: Callable[[int, int], None] | None = None, timeout: float | None = None,
-                  first_timeout: float | None = None) -> int:
+                  first_timeout: float | None = None, on_loaded: Callable[[str], None] | None = None,
+                  session_cap: int | None = None) -> int:
         """OpenResource for map resources only, one map at a time, asked again until it reads as loaded (is_loaded,
         S53); returns how many of map_ids are loaded. Map ids the project does not have are skipped,
         with a log line of their count; maps loaded already are not opened again. Progress is reported map by map, and
         while waiting at every poll; a log line says each batch and, every map_heartbeat seconds, how far it is (S52).
-        LinkError when Smithbox loads no map for map_wait seconds. Asking the owner above ten is the runner's (S8)."""
+        LinkError when Smithbox loads no map for map_wait seconds. Asking the owner above ten is the runner's (S8).
+        S63: on_loaded(map) is called as soon as a map it asked for reads as loaded (late ones too), so the runner can
+        read and keep it at once; with session_cap, it stops asking once Smithbox holds that many maps in all, sets
+        `capped`, and leaves the end-of-run retry to the next session."""
         wanted: list[str] = []
         for m in map_ids:
             if not isinstance(m, str) or not MAP_RX.fullmatch(m):
@@ -613,6 +619,8 @@ class Link:
         unknown = [m for m in wanted if m not in known]
         wanted = [m for m in wanted if m in known]
         loaded = self.loaded_of(wanted)
+        self.capped = None
+        held = len(self.loaded_of(sorted(known))) if session_cap is not None else 0
         todo = [m for m in wanted if m not in loaded]
         total = len(todo)
         # S52: say what happens, map by map, so a long load never looks stuck.
@@ -628,6 +636,13 @@ class Link:
         slowest = 0.0
         skipped: list[str] = []
         in_a_row: list[str] = []
+
+        def got(m: str) -> None:
+            nonlocal held
+            loaded.add(m)
+            held += 1
+            if on_loaded is not None:
+                on_loaded(m)
 
         def load(m: str, label: str) -> bool:
             """Ask for one map until it reads as loaded, or the limit passes: base, stretched to three times the
@@ -659,8 +674,14 @@ class Link:
             return True
 
         for k, m in enumerate(todo):
+            if session_cap is not None and held >= session_cap:
+                self.capped = (held, total - k)
+                self.skipped_maps = list(skipped)
+                _log.info("Smithbox holds %s maps, as many as DataPiler asks it to hold at once; %s maps are left for "
+                          "after a restart of Smithbox", logbook.n(held), logbook.n(total - k))
+                return sum(1 for x in wanted if x in loaded)
             if load(m, "%d of %d" % (k + 1, total)):
-                loaded.add(m)
+                got(m)
                 in_a_row = []
             else:
                 skipped.append(m)
@@ -673,7 +694,7 @@ class Link:
                     if late:
                         # Slow, not stuck: they loaded after their limit, so the run goes on (S58).
                         for x in late:
-                            loaded.add(x)
+                            got(x)
                             skipped.remove(x)
                         in_a_row = []
                     else:
@@ -686,11 +707,11 @@ class Link:
         now_loaded = self.loaded_of(skipped)
         retry = [m for m in skipped if m not in now_loaded]
         for m in [x for x in skipped if x not in retry]:
-            loaded.add(m)
+            got(m)
         skipped = []
         for j, m in enumerate(retry):
             if load(m, "again, %d of %d skipped" % (j + 1, len(retry))):
-                loaded.add(m)
+                got(m)
             else:
                 skipped.append(m)
         self.skipped_maps = list(skipped)

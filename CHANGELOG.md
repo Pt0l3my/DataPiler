@@ -13,6 +13,15 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.12 - 2026-11-14
+
+- Map jobs keep what they read as they go (S63). Each map's placed characters are read as soon as the map loads and
+  saved to disk in the job's folder at once, numbers only. If Smithbox, the graphics driver or DataPiler stops
+  partway, **Start again** goes on from there: the maps already read are not loaded or read again. What is kept is
+  dropped when the job finishes, is removed, or the game or Smithbox changes.
+- A map job pauses once Smithbox holds 300 maps (S63), before Smithbox's Vulkan build runs short of graphics memory;
+  the card says how many maps are read and kept. Close Smithbox, start it again, and press **Start again**.
+
 ## 0.2.11 - 2026-11-14
 
 - A map that loads with nothing in it now counts as loaded (S62). DataPiler asks Smithbox which maps are loaded by the

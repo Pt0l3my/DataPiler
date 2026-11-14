@@ -123,6 +123,11 @@ it. DataPiler cannot see why Smithbox did not load it, as Smithbox keeps its log
 Rendering and the skipping of Havok loading, and nothing else of that file; Smithbox saves them when it closes, so a
 change you just made may not show yet.
 
+A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
+stops partway, **Start again** goes on where it stopped. A job pauses once Smithbox holds 300 maps, because
+Smithbox's Vulkan build keeps graphics memory for every map it has loaded and has brought a graphics driver down with
+about 700: close Smithbox, start it again, and press **Start again**.
+
 A map that loads with nothing in it, as some tiles of the open world do, counts as loaded. For long map jobs, turn
 Smithbox's auto-save off first: every five minutes it saves each loaded map into your Smithbox project folder (your
 game folder is never touched), and with hundreds of maps loaded that adds up. Restart Smithbox after a big map job to

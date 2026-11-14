@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 MAP_QUESTION = 10                   # S8: ask before loading more than ten maps
 STATE_FORMAT = "datapiler-jobstate/1"
 LOCAL_FORMAT = "datapiler-local/1"
+MAPS_FILE = "maps.jsonl"            # S63: a job's placements read so far, map by map, in its own folder
+MAPS_FORMAT = "datapiler-mapprogress/1"
+MAPS_PER_SESSION = 300              # S63: the most maps a job asks Smithbox to hold at once; then it pauses
+MAPS_KEY = ("game_version", "regulation_sha256", "smithbox_build")
 WAIT_POLL = 0.5
 
 LINK_WAITS = {
@@ -144,6 +148,8 @@ class _Ctx:
     sources: dict = field(default_factory=dict)      # op index -> _Source: the game table it read (check 6)
     placed: dict = field(default_factory=dict)       # map -> the placements read on it, each map once (check 6)
     names: dict = field(default_factory=dict)        # text set -> provenance.names's record (P3)
+    progress: "_MapProgress | None" = None           # S63: where the maps read so far are kept
+    kept: dict = field(default_factory=dict)         # S63: map -> its placement rows, read in this run or before
     local: list = field(default_factory=list)
     share: tuple | None = None
     fetched: int = 0
@@ -162,6 +168,69 @@ class _Source:
 
 
 PLACEMENTS = "placements"           # check 6's name for the placements' game table
+
+
+class _MapProgress:
+    """S63: the placements a job has read, kept map by map in its folder as they are read, so that a job stopped by a
+    crash of Smithbox, of the GPU's driver or of DataPiler goes on where it stopped. One JSON line per map, appended
+    and flushed to disk at once: a header naming the job's sha256 and the game, Smithbox and regulation it was read
+    from, then {"map": id, "rows": [[map, entityId, npcParamId, talkId, model], ...]}. Numbers only, never shared;
+    a header that does not match drops the file, and a line cut short by a crash ends what is read. Removed when the
+    job is done or removed."""
+
+    def __init__(self, path: Path, key: dict):
+        self.path = path
+        self.header = dict({"format": MAPS_FORMAT}, **key)
+
+    def load(self) -> dict[str, list[tuple]]:
+        out: dict[str, list[tuple]] = {}
+        try:
+            with open(self.path, "rb") as f:
+                lines = f.read().split(b"\n")
+        except FileNotFoundError:
+            return out
+        except OSError:
+            return out
+        try:
+            if json.loads(lines[0].decode("utf-8")) != self.header:
+                self.clear()
+                return out
+        except (ValueError, UnicodeDecodeError):
+            self.clear()
+            return out
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            try:
+                doc = json.loads(line.decode("utf-8"))
+                m = doc["map"]
+                if not isinstance(m, str) or not link_mod.MAP_RX.fullmatch(m):
+                    break
+                rows = [tuple(r) for r in doc["rows"]]
+                if not all(len(r) == len(jobs.PLACEMENT_COLUMNS) and all(_type_ok("int", v) for v in r)
+                           and r[0] == link_mod.map_key(m) for r in rows):
+                    break
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                break                                  # a line cut short by a crash: what came before stands
+            out[m] = rows
+        return out
+
+    def add(self, map_id: str, rows: list[tuple]) -> None:
+        new = not self.path.exists()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "ab") as f:
+            if new:
+                f.write(json.dumps(self.header, ensure_ascii=True).encode("ascii") + b"\n")
+            f.write(json.dumps({"map": map_id, "rows": [list(r) for r in rows]}, ensure_ascii=True).encode("ascii")
+                    + b"\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def clear(self) -> None:
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
 UNKNOWN_SOURCE = "unknown"          # a table whose source's rows were not counted: measured against 0
 
 
@@ -287,7 +356,7 @@ class Runner:
 
     def _drop_folder(self, card_id: str) -> None:
         folder = self._folder(card_id)
-        for name in ("job.json", "state.json"):
+        for name in ("job.json", "state.json", MAPS_FILE):
             try:
                 os.unlink(folder / name)
             except FileNotFoundError:
@@ -813,7 +882,10 @@ class Runner:
         ctx = _Ctx(job=job, builtin=False, row=None, cancel=cancel, log=jl, on_op=on_op, on_wait=on_wait)
         try:
             jl.info("started: %s operations", logbook.n(len(job.ops)))
+            self._open_progress(ctx, job_id)
             outcome, fail = self._execute(ctx)
+            if outcome == "done" and ctx.progress is not None:
+                ctx.progress.clear()
             secs = time.monotonic() - started
             with self._lock:
                 card.wait = None
@@ -988,12 +1060,28 @@ class Runner:
         if op == "load_maps":
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
+            # S63: a map whose placements this run or an earlier one read and kept is not loaded again.
+            kept = [m for m in maps if m in ctx.kept]
+            todo = [m for m in maps if m not in ctx.kept]
+            if kept:
+                ctx.log.info("op %s load_maps: %s of %s maps were read before and are kept; they are not loaded again",
+                             i, logbook.n(len(kept)), logbook.n(len(maps)))
             # S52: the card shows maps loaded of maps to load, and the time so far, at every poll.
             kw = {"timeout": float(o["timeout"])} if o.get("timeout") is not None else {}
             kw.update(self._map_limits(ctx, i))
-            n = self.link.open_maps(maps, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(
+            if ctx.progress is not None:
+                reads = self._maps_read_later(ctx, i)
+                kw["on_loaded"] = lambda m: self._read_now(ctx, m) if m in reads else None
+                kw["session_cap"] = MAPS_PER_SESSION
+            n = self.link.open_maps(todo, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(
                 i, "running", d, t, round(time.monotonic() - t0, 1)), **kw)
-            return n, len(maps)
+            capped = getattr(self.link, "capped", None) if ctx.progress is not None else None
+            if capped:
+                done = sum(1 for m in maps if m in ctx.kept)
+                raise _Fail("paused, to spare Smithbox and the graphics driver: Smithbox holds %d maps, the most a job "
+                            "asks it to hold at once. %d of %d maps are read and kept. Close Smithbox, start it again, "
+                            "then press Start again here: the job goes on from there" % (capped[0], done, len(maps)))
+            return n + len(kept), len(maps)
         if op == "unused_names":
             return self._unused_names(ctx, i, o)
         if op == "read_placements":
@@ -1152,16 +1240,21 @@ class Runner:
         per_map: dict[str, int] = {}
         t0 = time.monotonic()
         ctx.on_op(i, "running", 0, len(maps), None)
+        kept = sum(1 for m in maps if m in ctx.kept)
+        if kept and o["maps"] != "all":
+            ctx.log.info("op %s read_placements: %s of %s maps come from what was read and kept", i, logbook.n(kept),
+                         logbook.n(len(maps)))
         for k, m in enumerate(maps):
             if ctx.cancel.is_set():
                 raise _Cancelled()
-            n = 0
-            for p in self.link.placements(m):
-                row = (p.map, p.entity_id, p.npc_param_id, p.talk_id, p.model)
-                if not all(_type_ok("int", v) for v in row):
-                    raise _Fail("the server sent a placement that is not numbers only")
-                rows.append(row)
-                n += 1
+            got = ctx.kept.get(m) if o["maps"] != "all" else None
+            if got is None:
+                got = self._placements_of(m)
+                if ctx.progress is not None and o["maps"] != "all":
+                    ctx.kept[m] = got
+                    ctx.progress.add(m, got)
+            rows.extend(got)
+            n = len(got)
             per_map[m] = min(n, per_map.get(m, n))
             ctx.on_op(i, "running", k + 1, len(maps), round(time.monotonic() - t0, 1))
         ctx.tables[o["as"]] = (list(jobs.PLACEMENT_COLUMNS), rows)
@@ -1173,6 +1266,45 @@ class Runner:
             ctx.fetched += len(rows)
             ctx.unit = "placements"
         return len(maps), len(maps)
+
+    def _placements_of(self, map_id: str) -> list[tuple]:
+        """The placed characters of one loaded map, as rows of numbers (PLACEMENT_COLUMNS)."""
+        out: list[tuple] = []
+        for p in self.link.placements(map_id):
+            row = (p.map, p.entity_id, p.npc_param_id, p.talk_id, p.model)
+            if not all(_type_ok("int", v) for v in row):
+                raise _Fail("the server sent a placement that is not numbers only")
+            out.append(row)
+        return out
+
+    def _open_progress(self, ctx: _Ctx, card_id: str) -> None:
+        """S63: a job that reads placements of named maps keeps them as it reads them; what an earlier run of the
+        same job, on the same game and Smithbox, kept is taken up."""
+        if not any(o["op"] == "read_placements" and o["maps"] != "all" for o in ctx.job.ops):
+            return
+        prov = self.provenance() or {}
+        key = {"job_sha256": ctx.job.sha256, **{k: prov.get(k) for k in MAPS_KEY}}
+        ctx.progress = _MapProgress(self._folder(card_id) / MAPS_FILE, key)
+        ctx.kept = ctx.progress.load()
+        if ctx.kept:
+            ctx.log.info("%s maps read by an earlier run of this job are kept and not read again",
+                         logbook.n(len(ctx.kept)))
+
+    def _maps_read_later(self, ctx: _Ctx, i: int) -> set[str]:
+        """The maps a read_placements after op i names, so load_maps can read each as soon as it loads (S63)."""
+        out: set[str] = set()
+        for o in ctx.job.ops[i + 1:]:
+            if o["op"] == "read_placements" and o["maps"] != "all":
+                out.update(self._resolve_maps(o["maps"]))
+        return out
+
+    def _read_now(self, ctx: _Ctx, map_id: str) -> None:
+        """S63: read a map's placements as soon as it loads, and keep them on disk at once."""
+        if map_id in ctx.kept or ctx.progress is None:
+            return
+        rows = self._placements_of(map_id)
+        ctx.kept[map_id] = rows
+        ctx.progress.add(map_id, rows)
 
     def _join_names(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         from . import textdb as textdb_mod

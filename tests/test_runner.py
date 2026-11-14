@@ -54,6 +54,9 @@ class FakeLink:
         self.drop_at: int | None = None          # the link goes off after this many rows, once
         self.started = threading.Event()
         self.proceed: threading.Event | None = None
+        self.crash_on_read: int | None = None    # S63: the Nth placements read finds Smithbox gone (UNAVAILABLE)
+        self.reads = 0
+        self.capped = None
 
     def _check(self):
         if self.state == "off":
@@ -110,18 +113,29 @@ class FakeLink:
         self._check()
         return map_id in self.loaded
 
-    def open_maps(self, map_ids, *, cancel=None, progress=None, timeout=None, first_timeout=None):
+    def open_maps(self, map_ids, *, cancel=None, progress=None, timeout=None, first_timeout=None, on_loaded=None,
+                  session_cap=None):
         self._check()
         self.calls.append(("OpenResource", tuple(map_ids)))
+        self.capped = None
         for k, m in enumerate(map_ids):
             if m not in self.loaded:
+                if session_cap is not None and len(self.loaded) >= session_cap:
+                    self.capped = (len(self.loaded), len(map_ids) - k)
+                    return k
                 self.loaded.append(m)
+                if on_loaded is not None:
+                    on_loaded(m)
             if progress is not None:
                 progress(k + 1, len(map_ids))
         return len(map_ids)
 
     def placements(self, map_id):
         self._check()
+        self.reads += 1
+        if self.crash_on_read is not None and self.reads >= self.crash_on_read:
+            self.loaded = []                              # Smithbox is gone, and its loaded maps with it
+            raise link.LinkCallError("BatchGetObjects", "UNAVAILABLE")
         if map_id not in self.loaded:
             raise link.LinkError("the map %s is not loaded in Smithbox" % map_id)
         self.calls.append(("BatchGetObjects", map_id))
@@ -879,6 +893,95 @@ class BossesTest(RunnerBase):
             rows = json.load(f)["tables"][0]["rows"]
         self.assertEqual(sorted(r[1] for r in rows), [9000800] * 3)
         self.assertEqual({r[2] for r in rows}, {9000003})
+
+
+class ProgressTest(RunnerBase):
+    """0.2.12 (S63): the maps a job has read are kept as it reads them, so a crash costs only the map in hand, and a
+    job pauses when Smithbox holds MAPS_PER_SESSION maps."""
+
+    MAPS = ["m99_00_00_%02d" % i for i in range(5)]
+
+    def doc(self) -> bytes:
+        return json.dumps({"format": jobs.FORMAT, "id": "en-0096-progress", "title": "Kept maps", "ops": [
+            {"op": "load_maps", "maps": self.MAPS},
+            {"op": "read_placements", "as": "placed", "maps": self.MAPS},
+            {"op": "count", "as": "per_map", "rows": "placed", "by": ["map"]},
+            {"op": "write_share", "name": "per-map", "tables": ["per_map"], "columns": {"per_map": ["map", "count"]}}]}
+        ).encode()
+
+    def progress_file(self, card_id: str) -> Path:
+        return Path(self.p.jobs) / card_id / runner.MAPS_FILE
+
+    def again(self, card_id: str, state: str = "done") -> dict:
+        self.assertEqual(self.r.act(card_id, "start"), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card_id)["state"] == state), self.card(card_id))
+        return self.card(card_id)
+
+    def per_map(self) -> list:
+        with open(os.path.join(self.p.share, "per-map.json"), encoding="utf-8") as f:
+            return json.load(f)["tables"][0]["rows"]
+
+    def test_a_crash_keeps_the_maps_read_and_start_again_goes_on(self):
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 3
+        card = self.run_job(self.doc(), state="failed")
+        self.assertIn("UNAVAILABLE", card["result"]["failed"]["why"])
+        kept = runner._MapProgress(self.progress_file(card["id"]), {}).path.read_text("ascii").splitlines()
+        self.assertEqual(len(kept), 3)                       # the header and the two maps read before the crash
+        self.link.crash_on_read = None
+        self.link.calls = []
+        card = self.again(card["id"])
+        self.assertEqual([c for c in self.link.calls if c[0] == "OpenResource"],
+                         [("OpenResource", tuple(self.MAPS[2:]))])
+        self.assertEqual(sorted(c[1] for c in self.link.calls if c[0] == "BatchGetObjects"), self.MAPS[2:])
+        self.assertEqual([r[1] for r in self.per_map()], [3] * 5)
+        self.assertFalse(self.progress_file(card["id"]).exists())   # done: nothing left to resume
+
+    def test_a_job_pauses_when_smithbox_holds_enough_maps(self):
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        with mock.patch.object(runner, "MAPS_PER_SESSION", 2):
+            card = self.run_job(self.doc(), state="failed")
+            why = card["result"]["failed"]["why"]
+            self.assertIn("paused", why)
+            self.assertIn("2 of 5 maps are read and kept", why)
+            self.link.loaded = []                             # the owner restarts Smithbox
+            card = self.again(card["id"], state="failed")
+            self.assertIn("4 of 5 maps are read and kept", card["result"]["failed"]["why"])
+            self.link.loaded = []
+            self.again(card["id"])
+        self.assertEqual([r[1] for r in self.per_map()], [3] * 5)
+
+    def test_a_kept_file_of_another_job_or_game_is_dropped(self):
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 2
+        card = self.run_job(self.doc(), state="failed")
+        f = self.progress_file(card["id"])
+        lines = f.read_text("ascii").splitlines()
+        header = json.loads(lines[0])
+        header["game_version"] = "0.0.0.1-changed"
+        f.write_text("\n".join([json.dumps(header)] + lines[1:]) + "\n", "ascii")
+        self.link.crash_on_read = None
+        self.link.loaded = []
+        self.link.calls = []
+        self.again(card["id"])
+        self.assertEqual([c for c in self.link.calls if c[0] == "OpenResource"], [("OpenResource", tuple(self.MAPS))])
+
+    def test_a_line_cut_short_ends_what_is_kept(self):
+        f = Path(self.tmp.name) / "maps.jsonl"
+        progress = runner._MapProgress(f, {"job_sha256": "a" * 64})
+        progress.add("m99_00_00_01", [(link.map_key("m99_00_00_01"), 9001000, 9000000, 9000000, 9990)])
+        progress.add("m99_00_00_02", [])
+        with open(f, "ab") as out:
+            out.write(b'{"map": "m99_00_00_03", "rows": [[99')
+        self.assertEqual(sorted(progress.load()), ["m99_00_00_01", "m99_00_00_02"])
+        with open(f, "ab") as out:
+            out.write(b'\n{"map": "m99_00_00_04", "rows": [[1, 2, 3, 4, 5]]}\n')   # rows of another map: refused
+        self.assertEqual(sorted(progress.load()), ["m99_00_00_01", "m99_00_00_02"])
+        self.assertEqual(runner._MapProgress(f, {"job_sha256": "b" * 64}).load(), {})
+        self.assertFalse(f.exists())
 
 
 class CardsTest(RunnerBase):

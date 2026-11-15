@@ -13,6 +13,13 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.34 - 2026-11-15
+
+- Changed: the levels' sizes, measured on the game's own overviews (en-0029, S85): level 1 is 0.74857 of level 0 and
+  level 2 0.19875, on every sheet, both from the top left (they were taken as 3/4 and 2,089 / 10,496). Checks of level
+  0 against level 1 no longer drift towards the right and the bottom. Overviews were never affected: each level is drawn
+  on its own grid.
+
 ## 0.2.33 - 2026-11-15
 
 - New: the image steps (tile checks and overviews) use the PC (DP29 (b), S83): worker processes on its cores (every

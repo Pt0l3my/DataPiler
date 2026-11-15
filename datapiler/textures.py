@@ -603,11 +603,12 @@ THUMB = 64                   # a tile's grey thumbnail, pixels a side
 UNMEASURED = -9999           # a score that could not be measured: no next level, a tile too small, or nothing in it
 MATCH_MIN = 700              # per mille: a variant that matches the next level less than this is another image's
 FLAT = 2.0                   # grey levels: a thumbnail part flatter than this holds nothing to compare
-# S82 (WHY§73): the levels the game draws today, on every sheet: level 1 three quarters of level 0 and level 2 2,089 /
-# 10,496 of it, each at the top left of the frame of whole tiles that holds it (31 and 9 tiles a side of level 0's 41).
+# S82 (WHY§73), S85 (WHY§76): the levels the game draws today, on every sheet: level 1 0.74857 of level 0 and level 2
+# 0.19875 of it (fitted on the game's own overviews to a third of a pixel; first taken as 3/4 and 2,089 / 10,496), each at
+# the top left of the frame of whole tiles that holds it (31 and 9 tiles a side of level 0's 41).
 # Levels 3 and 4 are an older layout the game no longer draws (no masks; their ground sits 1,024 map units right of
 # today's): they keep their own scales and are never the reference.
-LEVEL_SCALES = (1.0, 0.75, 2089 / 10496)
+LEVEL_SCALES = (1.0, 0.74857, 0.19875)    # S85: measured on the game's own overviews (WHY§76), every sheet
 LEGACY_SCALES = {3: 0.125, 4: 0.0625}
 CELLS = 32                   # cells a side, at most, that a variant and the reference are compared on
 REF_MIN_SIDE = 6             # the reference level: the coarsest with at least this many tiles a side

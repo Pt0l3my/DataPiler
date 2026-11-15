@@ -151,7 +151,7 @@ class GeneralTest(Base):
         if foreign_at is not None:
             self.put(level, foreign_at[0], foreign_at[1], 2, tile(other, 0, 0))
         span = side * S / k                                                 # level-3 pixels the level covers
-        assert abs(span - S) < 1e-6, span
+        assert abs(span - S) < 1.0, span                                    # S85: level 1 is not exactly 3/4
         self.put(3, 0, 0, 0, tile(world, 0, 0, step=step * k))
         self.put(3, 0, 0, 1, tile(world, 0, 0, step=step * k))
 
@@ -194,7 +194,7 @@ class GeneralTest(Base):
         for x in range(9):                              # level 0: 9 x 9 tiles, 576 pixels a side
             for y in range(9):
                 self.put(0, x, y, 0, tile(world, x * S * step, (8 - y) * S * step, step=step))
-        k = 0.75                                        # level 1: the map is 432 pixels, its frame 7 tiles (448)
+        k = textures.level_scale(1)                     # level 1: the map is 431 pixels, its frame 7 tiles (448)
         for x in range(7):
             for y in range(7):
                 top_l0 = (6 - y) * S / k                # the tile's top, in level-0 pixels from the top
@@ -209,7 +209,8 @@ class GeneralTest(Base):
         self.assertTrue(scores and all(v > 900 for v in scores), scores)
         judge = textures.Judge(ts, 1)
         judge.size = S
-        self.assertEqual((judge.lift(1), judge.lift(0)), (16.0, 0.0))
+        self.assertAlmostEqual(judge.lift(1), 7 * S - 9 * S * k)
+        self.assertEqual(judge.lift(0), 0.0)
 
     def test_s82_a_tile_of_the_older_layout_scores_where_its_ground_lies_today(self):
         self.fine_level(0, 8)
@@ -227,9 +228,10 @@ class GeneralTest(Base):
         self.assertLess(genuine[11], 900)
 
     def test_s82_one_geometry_for_every_sheet(self):
-        q = 2089 / 10496
+        q = 0.19875                                     # S85: measured on the game's overviews (WHY§76)
         for sheet in (0, 1, 10, 11):
-            self.assertEqual([textures.level_scale(lv, sheet) for lv in range(6)], [1.0, 0.75, q, 0.125, 0.0625, 0.03125])
+            self.assertEqual([textures.level_scale(lv, sheet) for lv in range(6)],
+                             [1.0, 0.74857, q, 0.125, 0.0625, 0.03125])
             self.assertEqual(textures.level_top(sheet), frozenset({1, 2}))
         self.assertEqual([textures.legacy(lv) for lv in range(5)], [False, False, False, True, True])
         self.assertEqual(textures.tile_set(self.root, 10).sheet, 10)

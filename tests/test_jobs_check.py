@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.22", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.23", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -539,5 +539,27 @@ class MapCoordsTest(unittest.TestCase):
         self.assertEqual(fields.PARAMS["WorldMapPieceParam"]["openTravelAreaLeft"], "number")
         self.assertIn("textId", fields.REFERENCES["WorldMapPlaceNameParam"])
         self.assertEqual(set(fields.MAP_PARAMS), {"BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam",
-                                                  "WorldMapPieceParam", "WorldMapLegacyConvParam"})
+                                                  "WorldMapPieceParam", "WorldMapLegacyConvParam", "MapNameTexParam",
+                                                  "MapNameTexParam_m61", "MapPieceTexParam", "MapPieceTexParam_m61",
+                                                  "MapGridCreateHeightLimitInfo"})
+
+
+class SameJobCheckTest(unittest.TestCase):
+    """DP24 (S72): fetch_rows may name a field DataPiler does not list yet when an earlier check_fields of the same
+    job names it for the same param."""
+
+    def test_after_a_check_of_the_same_param(self):
+        chk = {"op": "check_fields", "as": "fc", "param": "MapNameTexParam", "fields": ["srcR", "mapNameId"]}
+        rd = {"op": "fetch_rows", "as": "tex", "param": "MapNameTexParam", "fields": ["id", "srcR", "mapNameId"]}
+        j = check(job([chk, rd]))
+        self.assertIn("mapNameId", j.lineage["tex"].refs)      # an unlisted field counts as one holding ids
+        self.assertEqual(jobs.columns_of(j)["tex"], [("id", "int"), ("srcR", "number"), ("mapNameId", "number")])
+
+    def test_refused_without_one_or_for_another_param_or_after(self):
+        chk = {"op": "check_fields", "as": "fc", "param": "MapPieceTexParam", "fields": ["srcR"]}
+        rd = {"op": "fetch_rows", "as": "tex", "param": "MapNameTexParam", "fields": ["id", "srcR"]}
+        self.assertEqual([r.where for r in refusals(job([rd]))], ["ops[0].fields[1]"])
+        self.assertEqual([r.where for r in refusals(job([chk, rd]))], ["ops[1].fields[1]"])
+        chk2 = dict(chk, param="MapNameTexParam")
+        self.assertEqual([r.where for r in refusals(job([rd, chk2]))], ["ops[0].fields[1]"])
 

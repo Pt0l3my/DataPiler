@@ -45,7 +45,8 @@ class FakeLink:
         self.state = "on"
         self.calls: list[tuple] = []
         self.npc = {9000000 + i: {"nameId": (9000000, 9000001, 9000004, -1)[i % 4], "teamType": (0, 6)[i % 2],
-                                  "npcType": i % 3} for i in range(20)}
+                                  "npcType": i % 3, "hitHeight": 1.5 + i / 10, "isGhost": bool(i % 2)}
+                    for i in range(20)}
         self.talk = {9000000 + i: {"msgId": 9500000 + i if i % 2 == 0 else -1} for i in range(10)}
         self.loaded = ["m99_00_00_00", "m99_00_00_01"]
         self.every_map: list[str] | None = None   # every map of the project, when a test sets it
@@ -276,6 +277,30 @@ class JobRunTest(RunnerBase):
         self.assertEqual(doc["tables"][0]["rows"][1], [9100001, 60, 41, 36, 1.5, 0.0, -2.0, 1])
         self.assertEqual(doc["notes"], ["map_coords", "vanilla_rows"])
         self.assertEqual(card["state"], "done")
+
+    def test_dp24_a_field_checked_in_the_same_job_is_read_with_the_servers_type(self):
+        ops = [{"op": "check_fields", "as": "fc", "param": "NpcParam", "fields": ["hitHeight", "isGhost"]},
+               {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "hitHeight", "isGhost"],
+                "ids": [9000000, 9000001]},
+               {"op": "filter", "as": "picked", "rows": "npc", "ids": [9000000, 9000001]},
+               {"op": "write_share", "name": "checked-read", "tables": ["picked"],
+                "columns": {"picked": ["id", "hitHeight", "isGhost"]}}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0072-checked", "title": "Checked (invented)",
+                          "ops": ops}).encode()
+        self.run_job(raw)
+        doc = json.loads((self.p.share / "checked-read.json").read_text(encoding="utf-8"))
+        self.assertEqual([c["type"] for c in doc["tables"][0]["columns"]], ["int", "number", "bool"])
+        self.assertEqual(doc["tables"][0]["rows"], [[9000000, 1.5, False], [9000001, 1.6, True]])
+
+    def test_dp24_a_field_the_check_did_not_find_stops_the_job(self):
+        ops = [{"op": "check_fields", "as": "fc", "param": "NpcParam", "fields": ["noSuchField"]},
+               {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "noSuchField"]}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0072-absent", "title": "Absent (invented)",
+                          "ops": ops}).encode()
+        card = self.run_job(raw, state="failed")
+        self.assertEqual(card["result"]["failed"]["op"], 1)
+        self.assertIn("not in the server's answer", card["result"]["failed"]["why"])
+        self.assertFalse(any(c[0] == "GetParamRows" for c in self.link.calls))
 
     def test_check_fields_gives_numbers_only_and_may_be_shared(self):
         raw = json.dumps({"format": "datapiler-job/1", "id": "test-0067-check", "title": "Fields (invented)", "ops": [

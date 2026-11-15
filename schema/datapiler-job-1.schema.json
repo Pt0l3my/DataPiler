@@ -207,7 +207,7 @@
     },
     "op_fetch_rows": {
       "type": "object",
-      "description": "A param's rows through Smithbox's server (the vanilla bank), only the fields named, numbers only. Makes a table of the rows' id and fields.",
+      "description": "A param's rows through Smithbox's server (the vanilla bank), only the fields named, numbers only. Makes a table of the rows' id and fields. A field DataPiler does not list yet may be named when an earlier check_fields of the same job names it for the same param (DP24); it is read only if that check found it.",
       "additionalProperties": false,
       "required": [
         "op",
@@ -230,7 +230,12 @@
             "BonfireWarpParam",
             "WorldMapPointParam",
             "WorldMapPieceParam",
-            "WorldMapLegacyConvParam"
+            "WorldMapLegacyConvParam",
+            "MapNameTexParam",
+            "MapNameTexParam_m61",
+            "MapPieceTexParam",
+            "MapPieceTexParam_m61",
+            "MapGridCreateHeightLimitInfo"
           ]
         },
         "fields": {
@@ -239,79 +244,8 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": {
-            "enum": [
-              "acquisitionEventCenterX",
-              "acquisitionEventCenterY",
-              "acquisitionEventFlagId",
-              "acquisitionEventResOffsetX",
-              "acquisitionEventResOffsetY",
-              "acquisitionEventResScale",
-              "acquisitionEventScale",
-              "altIconId",
-              "angle",
-              "areaNo",
-              "areaNo_forDistViewMark",
-              "bgmPlaceType",
-              "bonfireEntityId",
-              "bonfireSubCategoryId",
-              "bonfireSubCategorySortId",
-              "clearedEventFlagId",
-              "disableParam_NT",
-              "dispMask00",
-              "dispMask01",
-              "dispMask02",
-              "dispMinZoomStep",
-              "distViewEventFlagId",
-              "distViewIconId",
-              "distViewId",
-              "dstAreaNo",
-              "dstGridXNo",
-              "dstGridZNo",
-              "dstPosX",
-              "dstPosY",
-              "dstPosZ",
-              "entryFEType",
-              "eventFlagId",
-              "eventflagId",
-              "forbiddenIconId",
-              "gridXNo",
-              "gridXNo_forDistViewMark",
-              "gridZNo",
-              "gridZNo_forDistViewMark",
-              "iconId",
-              "id",
-              "isAreaIcon",
-              "isBasePoint",
-              "isOverrideDistViewMarkPos",
-              "msgId",
-              "nameId",
-              "npcType",
-              "openEventFlagId",
-              "openTravelAreaBottom",
-              "openTravelAreaLeft",
-              "openTravelAreaRight",
-              "openTravelAreaTop",
-              "posX",
-              "posX_forDistViewMark",
-              "posY",
-              "posY_forDistViewMark",
-              "posZ",
-              "posZ_forDistViewMark",
-              "selectMinZoomStep",
-              "srcAreaNo",
-              "srcGridXNo",
-              "srcGridZNo",
-              "srcPosX",
-              "srcPosY",
-              "srcPosZ",
-              "teamType",
-              "textDisableFlagId1",
-              "textEnableFlagId1",
-              "textId",
-              "textId1",
-              "textType1",
-              "worldMapPieceId"
-            ]
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
           }
         },
         "ids": {
@@ -359,11 +293,19 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "nameId",
-                    "teamType",
-                    "npcType"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "nameId",
+                        "teamType",
+                        "npcType"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -385,9 +327,17 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "msgId"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "msgId"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -409,17 +359,25 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "disableParam_NT",
-                    "worldMapPieceId",
-                    "textId",
-                    "areaNo",
-                    "gridXNo",
-                    "gridZNo",
-                    "posX",
-                    "posY",
-                    "posZ"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "worldMapPieceId",
+                        "textId",
+                        "areaNo",
+                        "gridXNo",
+                        "gridZNo",
+                        "posX",
+                        "posY",
+                        "posZ"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -441,31 +399,39 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "disableParam_NT",
-                    "eventflagId",
-                    "bonfireEntityId",
-                    "bonfireSubCategorySortId",
-                    "bonfireSubCategoryId",
-                    "clearedEventFlagId",
-                    "iconId",
-                    "forbiddenIconId",
-                    "dispMinZoomStep",
-                    "selectMinZoomStep",
-                    "dispMask00",
-                    "dispMask01",
-                    "dispMask02",
-                    "areaNo",
-                    "gridXNo",
-                    "gridZNo",
-                    "posX",
-                    "posY",
-                    "posZ",
-                    "textId1",
-                    "textEnableFlagId1",
-                    "textDisableFlagId1",
-                    "altIconId"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "eventflagId",
+                        "bonfireEntityId",
+                        "bonfireSubCategorySortId",
+                        "bonfireSubCategoryId",
+                        "clearedEventFlagId",
+                        "iconId",
+                        "forbiddenIconId",
+                        "dispMinZoomStep",
+                        "selectMinZoomStep",
+                        "dispMask00",
+                        "dispMask01",
+                        "dispMask02",
+                        "areaNo",
+                        "gridXNo",
+                        "gridZNo",
+                        "posX",
+                        "posY",
+                        "posZ",
+                        "textId1",
+                        "textEnableFlagId1",
+                        "textDisableFlagId1",
+                        "altIconId"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -487,40 +453,48 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "disableParam_NT",
-                    "eventFlagId",
-                    "distViewEventFlagId",
-                    "clearedEventFlagId",
-                    "iconId",
-                    "altIconId",
-                    "distViewIconId",
-                    "isAreaIcon",
-                    "bgmPlaceType",
-                    "angle",
-                    "areaNo",
-                    "gridXNo",
-                    "gridZNo",
-                    "posX",
-                    "posY",
-                    "posZ",
-                    "isOverrideDistViewMarkPos",
-                    "areaNo_forDistViewMark",
-                    "gridXNo_forDistViewMark",
-                    "gridZNo_forDistViewMark",
-                    "posX_forDistViewMark",
-                    "posY_forDistViewMark",
-                    "posZ_forDistViewMark",
-                    "distViewId",
-                    "dispMinZoomStep",
-                    "selectMinZoomStep",
-                    "entryFEType",
-                    "dispMask00",
-                    "dispMask01",
-                    "dispMask02",
-                    "textId1",
-                    "textType1"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "eventFlagId",
+                        "distViewEventFlagId",
+                        "clearedEventFlagId",
+                        "iconId",
+                        "altIconId",
+                        "distViewIconId",
+                        "isAreaIcon",
+                        "bgmPlaceType",
+                        "angle",
+                        "areaNo",
+                        "gridXNo",
+                        "gridZNo",
+                        "posX",
+                        "posY",
+                        "posZ",
+                        "isOverrideDistViewMarkPos",
+                        "areaNo_forDistViewMark",
+                        "gridXNo_forDistViewMark",
+                        "gridZNo_forDistViewMark",
+                        "posX_forDistViewMark",
+                        "posY_forDistViewMark",
+                        "posZ_forDistViewMark",
+                        "distViewId",
+                        "dispMinZoomStep",
+                        "selectMinZoomStep",
+                        "entryFEType",
+                        "dispMask00",
+                        "dispMask01",
+                        "dispMask02",
+                        "textId1",
+                        "textType1"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -542,21 +516,29 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "disableParam_NT",
-                    "openEventFlagId",
-                    "openTravelAreaLeft",
-                    "openTravelAreaRight",
-                    "openTravelAreaTop",
-                    "openTravelAreaBottom",
-                    "acquisitionEventFlagId",
-                    "acquisitionEventScale",
-                    "acquisitionEventCenterX",
-                    "acquisitionEventCenterY",
-                    "acquisitionEventResScale",
-                    "acquisitionEventResOffsetX",
-                    "acquisitionEventResOffsetY"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "openEventFlagId",
+                        "openTravelAreaLeft",
+                        "openTravelAreaRight",
+                        "openTravelAreaTop",
+                        "openTravelAreaBottom",
+                        "acquisitionEventFlagId",
+                        "acquisitionEventScale",
+                        "acquisitionEventCenterX",
+                        "acquisitionEventCenterY",
+                        "acquisitionEventResScale",
+                        "acquisitionEventResOffsetX",
+                        "acquisitionEventResOffsetY"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -578,22 +560,185 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "disableParam_NT",
-                    "srcAreaNo",
-                    "srcGridXNo",
-                    "srcGridZNo",
-                    "srcPosX",
-                    "srcPosY",
-                    "srcPosZ",
-                    "dstAreaNo",
-                    "dstGridXNo",
-                    "dstGridZNo",
-                    "dstPosX",
-                    "dstPosY",
-                    "dstPosZ",
-                    "isBasePoint"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "srcAreaNo",
+                        "srcGridXNo",
+                        "srcGridZNo",
+                        "srcPosX",
+                        "srcPosY",
+                        "srcPosZ",
+                        "dstAreaNo",
+                        "dstGridXNo",
+                        "dstGridZNo",
+                        "dstPosX",
+                        "dstPosY",
+                        "dstPosZ",
+                        "isBasePoint"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapNameTexParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapNameTexParam_m61"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapPieceTexParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapPieceTexParam_m61"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapGridCreateHeightLimitInfo"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -627,7 +772,12 @@
             "BonfireWarpParam",
             "WorldMapPointParam",
             "WorldMapPieceParam",
-            "WorldMapLegacyConvParam"
+            "WorldMapLegacyConvParam",
+            "MapNameTexParam",
+            "MapNameTexParam_m61",
+            "MapPieceTexParam",
+            "MapPieceTexParam_m61",
+            "MapGridCreateHeightLimitInfo"
           ]
         },
         "fields": {

@@ -163,6 +163,7 @@ class _Ctx:
     vkey: dict | None = None                          # its version key, None when it is not complete
     prior: dict | None = None                         # the last completed run's record, when it was on another version
     reads: dict = field(default_factory=dict)         # op index -> what fetch_rows or read_placements read, to keep
+    checked: dict = field(default_factory=dict)       # DP24: param -> {field: type} that check_fields found
 
 
 @dataclass(frozen=True)
@@ -1602,6 +1603,7 @@ class Runner:
         ctx.on_op(i, "running", 0, len(names), None)
         types = self.link.field_types(o["param"])
         rows = [[j, f in types, fields.type_code(types.get(f))] for j, f in enumerate(names)]
+        ctx.checked.setdefault(o["param"], {}).update({f: types[f] for f in names if f in types})
         ctx.tables[o["as"]] = ([c for c in jobs.CHECK_COLUMNS], rows)
         found = sum(1 for r in rows if r[1])
         ctx.log.info("op %s check_fields: %s of %s fields named are in the server's answer", i, logbook.n(found),
@@ -1610,7 +1612,21 @@ class Runner:
 
     def _fetch_rows(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         param = o["param"]
-        cols = [("id", "int")] + [(f, fields.PARAMS[param][f]) for f in o["fields"] if f != "id"]
+        cols = [("id", "int")]
+        for j, f in enumerate(o["fields"]):
+            if f == "id":
+                continue
+            listed_type = fields.PARAMS[param].get(f)
+            if listed_type is None:
+                # DP24 (S72): read only once this job's check_fields found it, with the type the server named.
+                found = ctx.checked.get(param, {})
+                if f not in found:
+                    raise _Fail("field %d of this read is not in the server's answer (its check_fields found no such "
+                                "field), so nothing is read" % j)
+                listed_type = fields.checked_type(found[f])
+                if listed_type is None:
+                    raise _Fail("field %d of this read is text or of a type DataPiler does not read" % j)
+            cols.append((f, listed_type))
         old = self._kept_param(ctx, o, cols)
         if old is not None:
             # DP23 (S71): the regulation and Smithbox's build are those of the last run's version, so the param's rows

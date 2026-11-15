@@ -287,6 +287,7 @@ class _Checker:
         self.maps: set[str] = set()
         self.families: set[str] = set()
         self.source_param: dict[int, str] = {}      # ops[i] -> the param its fetch_rows reads (DP21)
+        self.checked: dict[str, set[str]] = {}       # param -> the fields an earlier check_fields names (DP24)
 
     def add(self, where: str, text: str, op: int | None = None) -> None:
         if len(self.refusals) >= _MAX_REFUSALS:
@@ -506,7 +507,8 @@ class _Checker:
                 for j, f in enumerate(fl):
                     p = "%s.fields[%d]" % (place, j)
                     if not isinstance(f, str) or not FIELD_RX.fullmatch(f) or \
-                            (known is not None and f not in fields.PARAMS[known]):
+                            (known is not None and f not in fields.PARAMS[known]
+                             and f not in self.checked.get(known, ())):
                         self.add(p, _named(f, "is not a field DataPiler reads (ids and numbers only)",
                                            "not a field DataPiler reads (ids and numbers only)"), i)
                         ok = False
@@ -516,14 +518,18 @@ class _Checker:
                     else:
                         seen.append(f)
                 if ok and known is not None:
-                    cols = [("id", "int")] + [(f, fields.PARAMS[known][f]) for f in seen if f != "id"]
+                    # DP24 (S72): a field an earlier check_fields names takes its type at run time; "number" here.
+                    cols = [("id", "int")] + [(f, fields.PARAMS[known].get(f, "number")) for f in seen if f != "id"]
         if "ids" in o:
             self.ids(place + ".ids", o["ids"], i)
         if known is not None:
             self.source_param[i] = known
+        unlisted = tuple(f for f in (fl if isinstance(fl, list) else [])
+                         if isinstance(f, str) and known is not None and f not in fields.PARAMS[known])
         if as_ is not None:
             self.tables[as_] = cols
-            self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()))
+            # A field not yet listed might hold ids: a count by it stays raw (DP8), as by a listed reference.
+            self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()) + unlisted)
 
     def op_check_fields(self, place: str, i: int, o: dict) -> None:
         # S67: which of the fields named the server's answer has, and their types; never a value. Any field name may
@@ -547,6 +553,8 @@ class _Checker:
                         self.add(p, "`%s` is named twice" % f, i)
                     else:
                         seen.add(f)
+                if isinstance(param, str) and param in fields.PARAMS:
+                    self.checked.setdefault(param, set()).update(seen)
         if as_ is not None:
             self.tables[as_] = list(CHECK_COLUMNS)
             # Holds no row of the game's tables, no id and no value: what a field is, never what it holds.
@@ -1157,7 +1165,8 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
     for o in job.ops:
         op = o["op"]
         if op == "fetch_rows":
-            tables[o["as"]] = [("id", "int")] + [(f, fields.PARAMS[o["param"]][f]) for f in o["fields"] if f != "id"]
+            tables[o["as"]] = [("id", "int")] + [(f, fields.PARAMS[o["param"]].get(f, "number"))
+                                                 for f in o["fields"] if f != "id"]
         elif op == "check_fields":
             tables[o["as"]] = list(CHECK_COLUMNS)
         elif op == "read_placements":

@@ -18,11 +18,12 @@ FIXTURES = os.path.join(ROOT, "tests", "fixtures", "job-files")
 
 # Bad fixtures the schema refuses too; the others break rules a schema cannot state, which only jobs.check finds.
 SCHEMA_CATCHES = {"bad-not-object.json", "bad-too-deep.json", "bad-wrong-format.json", "bad-unknown-key.json",
-                  "bad-unknown-op.json", "bad-unknown-argument.json", "bad-field-not-read.json",
+                  "bad-unknown-op.json", "bad-unknown-argument.json",
                   "bad-unquoted-value.json", "bad-path-name.json", "bad-extract-prefix.json", "bad-load-all.json",
                   "bad-missing-title.json"}
 CHECK_ONLY = {"bad-duplicate-key.json", "bad-as-twice.json", "bad-later-table.json", "bad-two-write-share.json",
-              "bad-text-local-share.json", "bad-needs-newer.json", "bad-where-type.json", "bad-raw-share.json"}
+              "bad-text-local-share.json", "bad-needs-newer.json", "bad-where-type.json", "bad-raw-share.json",
+              "bad-field-not-read.json"}   # DP24: the schema takes any field name; the checker wants a check first
 NOT_JSON = {"bad-not-json.json"}
 
 KNOWN = {"$schema", "$id", "$ref", "$defs", "title", "description", "type", "const", "enum", "pattern", "minLength",
@@ -205,8 +206,8 @@ class SchemaTest(unittest.TestCase):
     def test_the_closed_lists(self):
         fetch = self.schema["$defs"]["op_fetch_rows"]
         self.assertEqual(fetch["properties"]["param"]["enum"], list(fields.PARAMS))
-        per_param = {x["if"]["properties"]["param"]["const"]: x["then"]["properties"]["fields"]["items"]["enum"]
-                     for x in fetch["allOf"]}
+        per_param = {x["if"]["properties"]["param"]["const"]:
+                     x["then"]["properties"]["fields"]["items"]["anyOf"][0]["enum"] for x in fetch["allOf"]}
         self.assertEqual(per_param, {p: list(f) for p, f in fields.PARAMS.items()})
         share = self.schema["$defs"]["op_write_share"]
         self.assertEqual(share["properties"]["notes"]["items"]["enum"], list(guard.LABELS))
@@ -252,7 +253,7 @@ class SchemaTest(unittest.TestCase):
             {"op": "count", "as": "c", "rows": "t", "where": {"msgId": {"ge": 0}}},
             {"op": "write_share", "name": "small", "tables": ["c"], "columns": {"c": ["count"]}}]}
         self.assertTrue(self.v.valid(doc, self.schema))
-        for mutate in (lambda d: d["ops"][0].update(fields=["nameId"]),
+        for mutate in (lambda d: d["ops"][0].update(fields=["name Id"]),
                        lambda d: d["ops"][1].update(where={"msgId": {"ge": "0"}}),
                        lambda d: d.update(title="two\nlines"),
                        lambda d: d.update(title="x" * 121),

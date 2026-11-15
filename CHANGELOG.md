@@ -13,6 +13,16 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.22 - 2026-11-15
+
+- A job may read a field DataPiler does not list yet, when an earlier `check_fields` in the same job names it for the
+  same table (DP24, S72). The field is read only if that check found it, with the type the server named (whole
+  numbers, numbers or flags; never text); a missing field stops the job before anything is read. A field read this way
+  counts as one that may hold ids, so a count by it never reaches a share file.
+- Five more of the game's map tables can be read and shared under `map_coords` (DP21): the two colour keys of the
+  areas and of the save names, each with the expansion's twin (`MapNameTexParam`, `MapPieceTexParam` and their
+  `_m61`), and `MapGridCreateHeightLimitInfo`.
+
 ## 0.2.21 - 2026-11-14
 
 - Nothing collected is lost (DP22, S70). A new **Deleted** tab is the bin, `workspace/bin/`: removing a job, a share

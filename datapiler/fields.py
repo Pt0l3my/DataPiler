@@ -50,6 +50,11 @@ PARAMS: dict[str, dict[str, str]] = {
         "srcPosX": "number", "srcPosY": "number", "srcPosZ": "number", "dstAreaNo": "int", "dstGridXNo": "int",
         "dstGridZNo": "int", "dstPosX": "number", "dstPosY": "number", "dstPosZ": "number", "isBasePoint": "int"
     },
+    "MapNameTexParam": {"id": "int"},                   # fields read after a same-job check (S72, DP24)
+    "MapNameTexParam_m61": {"id": "int"},               # fields read after a same-job check (S72, DP24)
+    "MapPieceTexParam": {"id": "int"},                  # fields read after a same-job check (S72, DP24)
+    "MapPieceTexParam_m61": {"id": "int"},              # fields read after a same-job check (S72, DP24)
+    "MapGridCreateHeightLimitInfo": {"id": "int"},      # fields read after a same-job check (S72, DP24)
 }
 
 # The fields that hold ids of other tables' rows (a name number, a message id), each param's apart from its own row id.
@@ -64,13 +69,35 @@ REFERENCES: dict[str, tuple[str, ...]] = {
     "WorldMapPointParam": ("eventFlagId", "distViewEventFlagId", "clearedEventFlagId", "iconId", "altIconId", "distViewIconId", "distViewId", "textId1"),
     "WorldMapPieceParam": ("openEventFlagId", "acquisitionEventFlagId"),
     "WorldMapLegacyConvParam": (),
+    "MapNameTexParam": (),
+    "MapNameTexParam_m61": (),
+    "MapPieceTexParam": (),
+    "MapPieceTexParam_m61": (),
+    "MapGridCreateHeightLimitInfo": (),
 }
 
 # The game's map tables (S69, DP21): their fields above were verified on the owner's PC by check_fields (en-0015,
 # 2026-11-14: 91 of 91, each of the type Smithbox's definition gives). By DP21 a job may share their rows whole, for
 # research only, when its write_share carries the label `map_coords`; a share file holding them is never committed.
 MAP_PARAMS = ("BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam", "WorldMapPieceParam",
-              "WorldMapLegacyConvParam")
+              "WorldMapLegacyConvParam", "MapNameTexParam", "MapNameTexParam_m61", "MapPieceTexParam",
+              "MapPieceTexParam_m61", "MapGridCreateHeightLimitInfo")
+
+# S72 (DP24): the column type a field read after a check_fields of the same job gets, from the type the server named.
+# A text type is never read.
+_INT_DEF = frozenset(("s8", "u8", "s16", "u16", "s32", "u32"))
+_NUM_DEF = frozenset(("f32", "angle32", "f64"))
+
+
+def checked_type(def_type: str | None) -> str | None:
+    """"int", "number" or "bool" for a field check_fields found, by the server's type; None for absent or text."""
+    if def_type in _INT_DEF:
+        return "int"
+    if def_type in _NUM_DEF:
+        return "number"
+    if def_type == "b32":
+        return "bool"
+    return None
 
 # check_fields (S67): a field's type as the server names it, as a number of ours, so a share file holds numbers only.
 # 0: the server's answer has no such field; 99: a type not listed here.

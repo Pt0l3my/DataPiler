@@ -21,6 +21,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   research: decided the same day).
 - **2026-11-14.** DP22 (nothing collected is lost: a Deleted bin, confirmations) and DP23 (game updates: every
   version's data kept, re-read and compare), both decided the same day, as recommended.
+- **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended.
 - **Open.** None.
 
 ## DP1
@@ -376,6 +377,11 @@ it was for every other table.
 **Owner's words.** "what is this about, using game data for research and development is fine, we are just careful what
 we ship online."
 
+**Later changes.**
+- *2026-11-15.* The same rule covers five more map tables in 0.2.22 (S72): the areas' and save names' colour keys
+  (`MapNameTexParam`, `MapPieceTexParam` and their expansion twins) and `MapGridCreateHeightLimitInfo`, read for the
+  map's areas and its fit, on the owner's principle above.
+
 ## DP22
 
 **Nothing collected is lost: confirmations and a Deleted bin** · *2026-11-14 · Decided by the owner, as recommended*
@@ -428,4 +434,17 @@ merged data and writes a change report. Every version's data stays in the worksp
 
 **Owner's words.** The request above; then "Yes, re-read and compare (Recommended)" and "Keep every version
 (Recommended)".
+
+## DP24
+
+**Fields checked and read in the same job** · *2026-11-15 · Decided by the owner, as recommended*
+
+**Question.** By build plan §10, P4, a field is read only once an earlier job's `check_fields` has shown it on the
+owner's PC, which costs a release and a job for every new table. en-0015 found Smithbox's definitions matching the
+server in all 91 fields. Recommended: a job may read a field DataPiler does not list yet when an earlier
+`check_fields` in the same job names it; the field is read only if that check found it, and the job stops otherwise.
+
+**Decision.** As recommended (0.2.22, S72). A field read this way is never text, and counts as one that may hold ids.
+
+**Owner's words.** "yes, build 0.2.22 with same-job field checks".
 

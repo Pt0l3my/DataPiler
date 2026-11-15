@@ -31,7 +31,9 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request; its drop box
   rebuilt in 0.2.37, and DP30's jobs finished in the session left unfolded, both at the owner's word. DP33 (the
   server link's chip says whether the link is established), the owner's request, built in 0.2.38. DP34 (an About
-  block on each job card, and its columns folded under Details), the owner's request, built in 0.2.39.
+  block on each job card, and its columns folded under Details), the owner's request, built in 0.2.39. DP35
+  (DataPiler as the workbench and the replay harness, reading the game through EldenNet's devkit), decided as
+  recommended.
 - **Open.** None.
 
 ## DP1
@@ -513,6 +515,10 @@ regulation. Off Windows, or without the library in the game folder, a KRAK file 
 
 **Owner's words.** "Yes, under those rules (Recommended)" and "Both, in one version".
 
+*Later (2026-11-15):* amended by DP35. DataPiler will read the game's archives through EldenNet's devkit (EldenNet
+O74), only while the game runs, with the keys taken from the player's own game when used and never stored. Until the
+devkit covers a file, it is opened as here.
+
 ## DP29
 
 **Using the PC's hardware: cores, memory, the graphics card** · *2026-11-15 · Decided by the owner: (b)*
@@ -654,3 +660,29 @@ page is open; DP30's fold of whole cards, and Fold all and Unfold all, leave it 
 - Later (2026-11-15), before 0.2.39 shipped, so that a finished card is short as the owner asked (S96): once no step
   is running and none has failed, the steps' lines are under Details too, while a running or failed step's lines stay
   in view; the Workspace line gives a count ("Workspace: 40 folders, local, never shared"), its list under Details.
+
+## DP35
+
+**DataPiler becomes the workbench and the replay harness, reading the game through EldenNet's devkit** · *2026-11-15 ·
+Decided by the owner, as recommended*
+
+**Question.** With EldenNet's devkit (EldenNet O74), should DataPiler become the PC side of the setup? **(a) All of
+it** (recommended): it reads the game through the devkit in place of Smithbox's unpacking (amending DP28), keeps a
+local index of the game's data for quick queries, imports EldenNet's play recordings once v0.1 exists (EldenNet O73),
+and, once Min's engine is adopted, replays recordings through EldenNet's engine outside the game, calling the model
+services the owner sets up. **(b)** The workbench now, the replay later. **(c)** No: DataPiler stays as it is, and the
+workbench and the replay harness are a tool of their own.
+
+**Decision.** (a), built in steps (EldenNet's roadmap S7.11):
+- DataPiler reads the game through the devkit, under the devkit's rule: only while the game of the same install is
+  running, and nothing of the game leaves the PC. Neither holds a key: the devkit takes it from the player's own game
+  when used, and never stores it. DP28's route (files Smithbox unpacked) stays until the devkit covers them.
+- A local index of the game's data on the PC, for queries. Shares hold numbers only and pass the guard (request 0001),
+  as today.
+- Imports of EldenNet's recordings (numbers only) from v0.1 on. DataPiler never reads the game's memory itself
+  (EldenNet O73).
+- The replay harness once Min's engine is adopted. It is the first network beyond Smithbox's local server (the
+  owner's model services), so that rule is amended then, with checks of its own.
+
+**Owner's words.** "A workbench on the PC + A replay harness: we could merge and build these into datapiler" and "Yes,
+all of it (Recommended)".

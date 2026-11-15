@@ -27,6 +27,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   opened on the PC with the game's own Oodle library), the owner's request and choice.
   DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
   choice of (b). DP30 (a finished job's files packed into 7z to upload; finished jobs folded), the owner's request.
+  DP31 (the server link switched on by itself after launch, a setting), the owner's request, for the next version.
 - **Open.** None.
 
 ## DP1
@@ -559,5 +560,23 @@ it passes the guard now) and every file of its workspace folder into a 7z archiv
 cut into parts of at most 29.9 MB when it is larger (S87). The archive holds the files under the job's id and nothing
 about the PC. The workspace's files stay research material (DP21): the button only makes the archive on the PC, and
 sharing it stays the owner's own act.
+
+**Owner's words.** As above.
+
+## DP31
+
+**The server link switched on by itself after launch, a setting** · *2026-11-15 · The owner's request, for the next
+version*
+
+**The owner's request.** "also for next datapiler version (don't build just for this) a setting to establish smithbox
+server link automatically after launch (if smithbox server is detected)."
+
+**Decision.** As asked, in the next version that has other changes too. A Settings switch, off at first: with it on,
+once DataPiler has started and sees Smithbox running with its server on, it switches the link on by itself. Every rule
+of DP4 still holds: read calls only, the link libraries present, the game closed (the link waits while the game runs
+and stops if it starts), and the project folder in Settings never the game's folder or inside it. DataPiler cannot see
+which project Smithbox has open, so it asks the owner once a session to confirm it (build plan §10, P1). Turning the
+switch on gives that confirmation for every session: the switch says so, and the log notes each time the link is
+switched on by the setting.
 
 **Owner's words.** As above.

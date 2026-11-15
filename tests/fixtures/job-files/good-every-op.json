@@ -57,6 +57,10 @@
       ]
     },
     {
+      "op": "read_map_tiles",
+      "as": "tiles"
+    },
+    {
       "op": "join_names",
       "as": "npc_named",
       "rows": "npc",

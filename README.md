@@ -177,6 +177,14 @@ Smithbox's build (DP23). Each job run that completes keeps what it read, for tha
 - Like the rest of the workspace, the `versions` folder holds the game's data and stays on your PC; nothing of the
   reads or reports reaches a share file.
 
+## Exported map tiles
+
+For EldenNet's map research, the game's map tiles can be exported from Smithbox and summarised by DataPiler. Use the
+normal Smithbox build, as its Texture Viewer is off in the OpenGL build. In the Texture Viewer, set the output folder
+in Tools > Data Export first, to a folder inside DataPiler's folder, with PNG as the file type. Then right-click the
+map tiles' container on the Map Tiles tab and export all its textures. A job with `read_map_tiles` then finds the
+files in any subfolder and records, for each tile, what its name says and its size: numbers only, never the image.
+
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any

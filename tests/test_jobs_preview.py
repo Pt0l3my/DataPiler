@@ -31,7 +31,9 @@ class PreviewTest(unittest.TestCase):
                       "NpcParam: whether its rows have 2 fields named, and their types - no values",
                       "TalkParam rows: id, msgId - 3 rows",
                       "loads 2 maps in Smithbox - its view changes, not its data",
-                      "placed characters of 2 maps: entity, row, dialogue and model ids"],
+                      "placed characters of 2 maps: entity, row, dialogue and model ids",
+                      "the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, "
+                      "row, code and size - no image is opened beyond its size"],
             "computes": ["join npc with the character names - local",
                          "the entries of the character names that no row of npc names by nameId - local",
                          "keeps the rows of npc_named where teamType >= 6 and teamType <= 30 and npcType in 3 values "

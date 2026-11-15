@@ -13,6 +13,15 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.23 - 2026-11-15
+
+- A new job operation, `read_map_tiles` (DP25, S73): it finds the map tiles you exported from Smithbox's Texture
+  Viewer anywhere inside DataPiler's folder, in any subfolder, and gives one row per tile: the sheet, level, column,
+  row and eight-digit code from the file's name, the width and height from the file's header, and how many copies were
+  found. It never opens an image beyond its size, and no path reaches a table or the log. DataPiler's environment,
+  logs, update downloads and Deleted bin are left out. The table may go into a share file.
+- The inbox no longer lists exported images as refused files: it leaves them to `read_map_tiles`.
+
 ## 0.2.22 - 2026-11-15
 
 - A job may read a field DataPiler does not list yet, when an earlier `check_fields` in the same job names it for the

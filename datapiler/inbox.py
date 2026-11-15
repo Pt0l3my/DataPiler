@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Callable, Collection
 
-from . import events, fileio, logbook, paths as paths_mod
+from . import events, fileio, logbook, paths as paths_mod, textures
 from .logbook import own
 from .textdb import TextDB
 
@@ -174,6 +174,8 @@ class Inbox:
                 left = self._left.get(name)
                 if left is not None and left[0] == stat:
                     continue                                   # refused already, unchanged since
+                if name.lower().endswith(textures.IMAGE_EXTS):
+                    continue                                   # S73: exported textures, read by read_map_tiles
                 if not name.lower().endswith(".json"):
                     self._left[name] = (stat, "not a .json file - DataPiler takes Smithbox's text exports only")
                     continue

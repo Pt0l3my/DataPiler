@@ -16,7 +16,7 @@ from unittest import mock
 
 from dataclasses import replace
 
-from datapiler import catalogue, events, guard, jobs, link, logbook, paths, runner, textdb
+from datapiler import catalogue, events, guard, jobs, link, logbook, paths, runner, textdb, textures
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -301,6 +301,25 @@ class JobRunTest(RunnerBase):
         self.assertEqual(card["result"]["failed"]["op"], 1)
         self.assertIn("not in the server's answer", card["result"]["failed"]["why"])
         self.assertFalse(any(c[0] == "GetParamRows" for c in self.link.calls))
+
+    def test_s73_map_tiles_anywhere_in_the_folder_go_to_a_share_file(self):
+        import struct as _st
+        d = self.p.root / "exports" / "71_maptile"
+        d.mkdir(parents=True, exist_ok=True)
+        head = b"\x89PNG\r\n\x1a\n" + _st.pack(">I", 13) + b"IHDR" + _st.pack(">II", 256, 256)
+        for x in range(3):
+            (d / ("MENU_MapTile_M00_L0_%02d_00_00000000.png" % x)).write_bytes(head)
+        ops = [{"op": "read_map_tiles", "as": "t_tiles"},
+               {"op": "count", "as": "t_levels", "rows": "t_tiles", "by": ["sheet", "level"]},
+               {"op": "write_share", "name": "map-tiles", "tables": ["t_tiles", "t_levels"],
+                "columns": {"t_tiles": [c for c, _ in textures.COLUMNS], "t_levels": ["sheet", "level", "count"]}}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0073-tiles", "title": "Tiles (invented)",
+                          "ops": ops}).encode()
+        self.run_job(raw)
+        doc = json.loads((self.p.share / "map-tiles.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["tables"][0]["rows"], [[0, 0, x, 0, 0, 256, 256, 1] for x in range(3)])
+        self.assertEqual(doc["tables"][1]["rows"], [[0, 0, 3]])
+        self.assertNotIn("exports", json.dumps(doc))
 
     def test_check_fields_gives_numbers_only_and_may_be_shared(self):
         raw = json.dumps({"format": "datapiler-job/1", "id": "test-0067-check", "title": "Fields (invented)", "ops": [

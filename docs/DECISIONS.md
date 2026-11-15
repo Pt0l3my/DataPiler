@@ -21,7 +21,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   research: decided the same day).
 - **2026-11-14.** DP22 (nothing collected is lost: a Deleted bin, confirmations) and DP23 (game updates: every
   version's data kept, re-read and compare), both decided the same day, as recommended.
-- **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended.
+- **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended. DP25 (exported textures
+  read anywhere in DataPiler's folder), the owner's request.
 - **Open.** None.
 
 ## DP1
@@ -447,4 +448,16 @@ server in all 91 fields. Recommended: a job may read a field DataPiler does not 
 **Decision.** As recommended (0.2.22, S72). A field read this way is never text, and counts as one that may hold ids.
 
 **Owner's words.** "yes, build 0.2.22 with same-job field checks".
+
+## DP25
+
+**Exported textures read anywhere in DataPiler's folder** · *2026-11-15 · The owner's request*
+
+**The owner's request.** After exporting the game's map tiles from Smithbox's Texture Viewer (whose container export
+needs the output folder set first): "yes let's build datapiler version that can read export dataset anywhere inside
+Datapiler directory (any subfolder/path)".
+
+**Decision.** 0.2.23's `read_map_tiles` (S73) finds exported map tiles in any folder inside DataPiler's own folder and
+gives numbers only: what each tile's name says and its size. No image is decoded; images stay where the owner put them,
+on the PC.
 

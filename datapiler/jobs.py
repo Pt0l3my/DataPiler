@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Collection, Mapping
 
-from . import VERSION, fields, fileio, guard, paths
+from . import VERSION, fields, fileio, guard, paths, textures
 from .link import MAP_RX
 
 # A family of maps by area, as `m10_*`: every map of the project whose id starts `m10_` (S45).
@@ -33,7 +33,7 @@ FORMAT = "datapiler-job/1"
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
-OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "join_names", "unused_names", "filter", "count", "distinct",
+OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "join_names", "unused_names", "filter", "count", "distinct",
        "write_local", "write_share")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
@@ -70,6 +70,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "check_fields": {"as": True, "param": True, "fields": True},
     "load_maps": {"maps": True, "timeout": False},
     "read_placements": {"as": True, "maps": True},
+    "read_map_tiles": {"as": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
     "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False, "slots": False},
     "unused_names": {"as": True, "rows": True, "key": True, "text": True},
@@ -79,7 +80,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
-READS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
+READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles")
 # What check_fields makes (S67): one row per field the job names, by its place in the list - whether the server's
 # answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
 CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
@@ -603,6 +604,14 @@ class _Checker:
             self.tables[as_] = list(PLACEMENT_COLUMNS)
             self.lineage[as_] = _source_lineage("read_placements", i, PLACEMENT_REFERENCES)
 
+    def op_read_map_tiles(self, place: str, i: int, o: dict) -> None:
+        # S73 (DP25): the map tiles exported from Smithbox, anywhere in DataPiler's folder: numbers from their names
+        # and their sizes from their headers. No game table's rows and no image: what files are, never what they hold.
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        if as_ is not None:
+            self.tables[as_] = list(textures.COLUMNS)
+            self.lineage[as_] = Lineage("aggregate", None, "read_map_tiles", None, (), False, False, "")
+
     def op_join_names(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
         r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
@@ -913,6 +922,7 @@ _CHECKS = {
     "check_fields": _Checker.op_check_fields,
     "load_maps": _Checker.op_load_maps,
     "read_placements": _Checker.op_read_placements,
+    "read_map_tiles": _Checker.op_read_map_tiles,
     "join_names": _Checker.op_join_names,
     "unused_names": _Checker.op_unused_names,
     "filter": _Checker.op_filter,
@@ -1109,6 +1119,9 @@ def _line(o: dict) -> str:
     if op == "read_placements":
         of = "the loaded maps" if o["maps"] == "all" else _maps_words(o["maps"])
         return "placed characters of %s: entity, row, dialogue and model ids" % of
+    if op == "read_map_tiles":
+        return ("the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, row, code "
+                "and size - no image is opened beyond its size")
     if op == "unused_names":
         return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
@@ -1171,6 +1184,8 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
             tables[o["as"]] = list(CHECK_COLUMNS)
         elif op == "read_placements":
             tables[o["as"]] = list(PLACEMENT_COLUMNS)
+        elif op == "read_map_tiles":
+            tables[o["as"]] = list(textures.COLUMNS)
         elif op == "join_names":
             tables[o["as"]] = tables[o["rows"]] + list(JOIN_COLUMNS)
         elif op == "unused_names":

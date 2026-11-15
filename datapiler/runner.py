@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, deleted, events, fields, fileio, jobs, logbook, paths as paths_mod, versions
+from . import catalogue, deleted, events, fields, fileio, jobs, logbook, paths as paths_mod, textures, versions
 from . import link as link_mod
 from . import smithbox as smithbox_mod
 from .guard import WORDS as GUARD_WORDS, GuardFailed
@@ -60,7 +60,7 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "check_fields": "fields", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
+UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
@@ -1530,6 +1530,8 @@ class Runner:
             return self._fetch_rows(ctx, i, o)
         if op == "check_fields":
             return self._check_fields(ctx, i, o)
+        if op == "read_map_tiles":
+            return self._read_map_tiles(ctx, i, o)
         if op == "load_maps":
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
@@ -1595,6 +1597,29 @@ class Runner:
             self._before_write(ctx)
             return self._write_share(ctx, i, o)
         raise _Fail("an operation DataPiler does not have")
+
+    def _read_map_tiles(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S73 (DP25): the map tiles exported from Smithbox, anywhere in DataPiler's folder (the Deleted bin, the
+        environment, logs and update downloads left out). Numbers only; no path reaches a table or a log line."""
+        ctx.on_op(i, "running", 0, None, None)
+        try:
+            rows, n = textures.find_tiles(self.paths.root, skip=(self.paths.bin, self.paths.root / "update"),
+                                          cancel=ctx.cancel, progress=lambda d: ctx.on_op(i, "running", d, None, None))
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        ctx.tables[o["as"]] = (list(textures.COLUMNS), [tuple(r) for r in rows])
+        ctx.log.info("op %s read_map_tiles: %s map tile files found (%s distinct) among %s files in DataPiler's folder",
+                     i, logbook.n(n["found"]), logbook.n(len(rows)), logbook.n(n["looked"]))
+        if n["unread"]:
+            ctx.log.info("op %s read_map_tiles: the size of %s of them is not read (not a PNG, DDS or BMP header)", i,
+                         logbook.n(n["unread"]))
+        if n["stopped"]:
+            ctx.log.warn("op %s read_map_tiles: stopped after %s files; the folder holds more", i,
+                         logbook.n(textures.MAX_FILES))
+        if not rows:
+            ctx.log.warn("op %s read_map_tiles: no exported map tile was found - export them from Smithbox's Texture "
+                         "Viewer into a folder inside DataPiler's folder", i)
+        return len(rows), n["found"]
 
     def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S67: one row per field the job names: its place in the job's list, whether the server's answer for the
@@ -1999,8 +2024,8 @@ class Runner:
         lin = ctx.job.lineage.get(table)
         if lin is not None and not lin.per_row and list(columns) == ["count"]:
             return None
-        if lin is not None and lin.source_op == "check_fields":
-            return None                          # S67: what fields are, never rows of a game table
+        if lin is not None and lin.source_op in ("check_fields", "read_map_tiles"):
+            return None                          # S67, S73: what fields or files are, never rows of a game table
         src = ctx.sources.get(lin.source) if lin is not None and lin.source is not None else None
         if lin is None or src is None:
             return (None, 0, UNKNOWN_SOURCE)

@@ -50,6 +50,9 @@
             "$ref": "#/$defs/op_read_placements"
           },
           {
+            "$ref": "#/$defs/op_read_map_tiles"
+          },
+          {
             "$ref": "#/$defs/op_join_names"
           },
           {
@@ -840,6 +843,23 @@
               "const": "all"
             }
           ]
+        }
+      }
+    },
+    "op_read_map_tiles": {
+      "type": "object",
+      "description": "The map tiles exported from Smithbox's Texture Viewer, found anywhere in DataPiler's folder (its environment, logs, update downloads and Deleted bin left out): one row per distinct tile and size, with sheet, level, x, y and code from the file's name, width and height from its header, and copies. No image is decoded. The table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as"
+      ],
+      "properties": {
+        "op": {
+          "const": "read_map_tiles"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
         }
       }
     },

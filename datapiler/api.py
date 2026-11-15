@@ -256,8 +256,12 @@ class Api:
             block = extract_block(extract.get("rows") or [])
         state = getattr(self.link, "state", "off") if self.link is not None else "off"
         self.live.session.link = state in ("on", "blocked")
+        from . import hardware
+        hw = hardware.scan()
+        work = hardware.plan(hw, self.live.settings.work_cores, self.live.settings.work_memory_mb)
         return {
             "version": VERSION,
+            "hardware": {"pc": hw.public(), "work": work.public()},      # DP29 (S83): shown on Status, on the PC
             "pills": self.status.pills(),
             "block": block,
             "status": status,

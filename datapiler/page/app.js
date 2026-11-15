@@ -209,7 +209,22 @@ const CARD_TITLES = {
   game: ["The game", "Read from its folder and its exe's version resource - nothing in it is changed"],
   project: ["The project", "Smithbox's project folder: never the game's folder, never inside it"],
   link: ["Server link", "Read calls only, from a fixed list; off at every start; closed at once if the game starts"],
+  pc: ["This PC", "What the image steps (tile checks and overviews) may use: worker processes on the processor's cores and memory for decoded tiles, set in Settings. Read on this PC, shown here only; the graphics card is shown, never used"],
 };
+function fmtBytes(n) {
+  if (n == null) return "not read";
+  return n >= 1073741824 ? (n / 1073741824).toFixed(1) + " GB" : Math.round(n / 1048576) + " MB";
+}
+function pcCard(h) {
+  const out = [], pc = (h && h.pc) || {}, w = (h && h.work) || {};
+  const line = (ok, text, sub) => { const r = el("div", "check"); add(r, mark(ok), el("span", null, text)); if (sub) add(r, el("span", "sub", sub)); out.push(r); };
+  line(true, "Processor: " + fmtN(pc.logical || 0) + " logical cores" + (pc.physical ? ", " + fmtN(pc.physical) + " physical" : ""), pc.cpu || null);
+  line(true, "Memory: " + fmtBytes(pc.memory) + " in all, " + fmtBytes(pc.free) + " free");
+  line(null, "Graphics: " + ((pc.graphics && pc.graphics.length) ? pc.graphics.join(", ") : "not read on this system"), "shown only: copying small tiles to it costs about what it saves");
+  line(true, "Image steps use " + fmtN(w.workers || 1) + (w.workers === 1 ? " worker process" : " worker processes") + " and up to " + fmtBytes(w.memory) + " for decoded tiles",
+       (w.auto_workers ? "cores: automatic (every core but one)" : "cores: set in Settings") + " · " + (w.auto_memory ? "memory: automatic (a quarter of the free memory)" : "memory: set in Settings"));
+  return out;
+}
 function checkRow(c) {
   const row = el("div", "check");
   const textSpan = phText(c.text);
@@ -265,12 +280,13 @@ function linkCard(l, session) {
   return out;
 }
 function paintStatus(s) {
-  const key = JSON.stringify(s.status);
+  const key = JSON.stringify([s.status, s.hardware]);
   if (key === CARDS_KEY) return;
   CARDS_KEY = key;
   const g = clear($("cards"));
   ["smithbox", "game", "project"].forEach((k) => add(g, cardFor(k, (s.status[k] || []).map(checkRow))));
   add(g, cardFor("link", linkCard(s.status.link || {}, s.session)));
+  if (s.hardware) add(g, cardFor("pc", pcCard(s.hardware)));
 }
 // The link asks once a session whether Smithbox has the project set in Settings open (it cannot see that yet).
 function linkSwitch(on, confirmProject) {
@@ -386,7 +402,9 @@ function jobPill(j) {
   if (j.state === "checked") return el("span", "pill ok", "✓ checked");
   if (j.state === "done") return el("span", "pill ok", "✓ done");
   if (j.state === "failed") return el("span", "pill err", "✗ failed");
+  if (j.pausing && (j.state === "running" || j.state === "waiting")) return el("span", "pill warn", "pausing");
   if (j.state === "running" || j.state === "queued" || j.state === "waiting") return el("span", "pill warn", j.state);
+  if (j.state === "paused") return el("span", "pill warn", "paused");
   return el("span", "pill mute", j.state);
 }
 function listCol(title, items) {
@@ -425,7 +443,7 @@ function jobAct(j, what, confirm, word) {
   // DP22: Remove asks in the page's pop-up (DELETE typed in when the job holds saved progress); the job goes to the bin.
   // A run that would move saved map progress to the bin (Start again; Resume job or Update data with progress of
   // another version) asks for DELETE in the same pop-up: the API says when.
-  (what === "cancel" ? api("/api/jobs/act", body) : confirmed("/api/jobs/act", body)).then((r) => {
+  (what === "cancel" || what === "pause" ? api("/api/jobs/act", body) : confirmed("/api/jobs/act", body)).then((r) => {
     if (r.ok) { if (what === "remove") note("Moved to the Deleted bin: " + j.id + ".", true); poll(); return; }
     if (r.cancelled) return;
     if (r.ask && !r.ask.word) { if (window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps, r.confirmed || word); return; }
@@ -488,7 +506,7 @@ function setFolded(key, on) {
 // S54: where the job is, as a step of its ops and a share of the whole, for every state that has ops.
 function jobProgress(j) {
   const ops = j.ops || [];
-  if (!ops.length || ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped"].indexOf(j.state) < 0) return null;
+  if (!ops.length || ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped", "paused"].indexOf(j.state) < 0) return null;
   const n = ops.length;
   const done = ops.filter((o) => o.state === "done").length;
   const cur = ops.find((o) => o.state === "running" || o.state === "failed") || null;
@@ -554,7 +572,7 @@ function jobCard(j) {
     add(c, r);
   }
   if (j.wait) add(c, el("div", "wait", "Waits: " + j.wait));
-  if (j.ops && j.ops.length && ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped"].indexOf(j.state) >= 0) {
+  if (j.ops && j.ops.length && ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped", "paused"].indexOf(j.state) >= 0) {
     const ol = el("div", "oplines");
     j.ops.forEach((o) => add(ol, opLine(o)));
     add(c, ol);
@@ -585,6 +603,11 @@ function jobCard(j) {
       add(res, el("div", "bad", t));
     }
     if (keptOf(j)) add(res, el("div", "kept", keptNote(keptOf(j))));
+    // S84: where a paused job goes on from
+    if (j.state === "paused" && j.result.paused) {
+      const pz = j.result.paused;
+      add(res, el("div", "kept", "Paused after step " + pz.at + " of " + pz.of + " finished. Resume job goes on with step " + (pz.at + 1) + "; what the steps before it made is kept, also if DataPiler is closed meanwhile."));
+    }
     // DP23: what changed since the last version, and where the change report is kept
     const ch = j.result.changes;
     if (ch) {
@@ -598,23 +621,41 @@ function jobCard(j) {
   }
   if (j.update) add(c, el("div", "update", j.update.text + ". Update data reads the data again and compares it with the last run's."));
   const act = el("div", "actions");
-  const canStart = ["checked", "cancelled", "stopped", "failed", "done"].indexOf(j.state) >= 0;
+  const canStart = ["checked", "cancelled", "stopped", "failed", "done", "paused"].indexOf(j.state) >= 0;
   const canCancel = ["queued", "waiting", "running"].indexOf(j.state) >= 0;
   const kept = keptOf(j);
+  const paused = j.state === "paused";
   if (canStart && j.update) { const b = el("button", kept ? null : "pri", "Update data"); b.addEventListener("click", () => jobAct(j, "update")); add(act, b); }
-  if (canStart && kept) { const b = el("button", "pri", "Resume job"); b.addEventListener("click", () => jobAct(j, "resume")); add(act, b); }
+  if (canStart && (kept || paused)) { const b = el("button", "pri", "Resume job"); b.addEventListener("click", () => jobAct(j, "resume")); add(act, b); }
   if (canStart) {
-    const b = el("button", kept || j.update ? null : "pri", j.state === "checked" ? "Start" : "Start again");
+    const b = el("button", kept || paused || j.update ? null : "pri", j.state === "checked" ? "Start" : "Start again");
     b.addEventListener("click", () => {
       // S66: starting again from the beginning is asked first. With saved progress, which it moves to the Deleted
       // bin, the API asks instead, in the page's pop-up with DELETE typed in (the owner's rule of 2026-11-14).
-      if (j.state !== "checked" && !kept && !window.confirm("Start this job again from the beginning?")) return;
+      if (j.state !== "checked" && !kept && !paused && !window.confirm("Start this job again from the beginning?")) return;
       jobAct(j, "start");
     });
     add(act, b);
   }
   if (j.versions >= 2) { const b = el("button", null, "Compare versions…"); b.addEventListener("click", () => openCompare(j)); add(act, b); }
-  if (canCancel) { const b = el("button", null, "Cancel"); b.addEventListener("click", () => jobAct(j, "cancel")); add(act, b); }
+  // S84: Pause lets the step running now finish, then stops; Resume job goes on from the next step
+  if (canCancel && j.state !== "queued") {
+    const b = el("button", null, j.pausing ? "Pausing…" : "Pause");
+    b.title = "Let the step running now finish, then stop, keeping everything done so far; Resume job goes on later";
+    if (j.pausing) b.disabled = true;
+    b.addEventListener("click", () => jobAct(j, "pause"));
+    add(act, b);
+  }
+  if (canCancel) {
+    const b = el("button", null, j.state === "queued" ? "Take off the queue" : "Stop");
+    b.addEventListener("click", () => {
+      // the owner's request of 2026-11-15: Stop asks first, in case it was pressed by mistake
+      const q = j.state === "queued" ? "Take this job off the queue? It has not started." :
+        "Stop this job now? The step running now is cut short, and what it has read in that step is lost (maps already read are kept). Pause instead lets the step finish and keeps everything, to go on later.";
+      if (window.confirm(q)) jobAct(j, "cancel");
+    });
+    add(act, b);
+  }
   if (!canCancel) { const b = el("button", null, "Remove"); b.addEventListener("click", () => jobAct(j, "remove")); add(act, b); }
   add(c, act);
   return c;
@@ -876,15 +917,16 @@ function copyForSharing() {
 }
 
 // ---- Settings
-const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "expansion", "port", "log_max_mb", "log_keep"];
-const NUMS = { port: true, log_max_mb: true, log_keep: true };
+const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "expansion", "port", "log_max_mb", "log_keep", "work_cores", "work_memory_mb"];
+const NUMS = { port: true, log_max_mb: true, log_keep: true, work_cores: true, work_memory_mb: true };
+const BLANK_ZERO = { port: true, work_cores: true, work_memory_mb: true };   // blank: any free port, or automatic
 // The five folder fields: drawn read-only as their masks while Mask paths on this page is on, and left out of Save.
 const PATH_FIELDS = { smithbox_dir: true, game_dir: true, project_dir: true, workspace_dir: true, share_dir: true };
 function masked() { return !!(SETTINGS && SETTINGS.settings && SETTINGS.settings.mask_paths); }
 function loadSettings() {
   return api("/api/settings").then((r) => {
     SETTINGS = r;
-    FIELDS.forEach((k) => { const v = r.settings[k]; $("s_" + k).value = k === "port" && !v ? "" : String(v == null ? "" : v); $("s_" + k).classList.remove("bad"); });
+    FIELDS.forEach((k) => { const v = r.settings[k]; $("s_" + k).value = BLANK_ZERO[k] && !v ? "" : String(v == null ? "" : v); $("s_" + k).classList.remove("bad"); });
     $("sServer").textContent = r.server || "";
     paintSession(r.session);
     $("sErr").textContent = "";
@@ -905,7 +947,7 @@ function saveSettings() {
     const raw = $("s_" + k).value.trim();
     $("s_" + k).classList.remove("bad");
     if (NUMS[k]) {
-      if (k === "port" && raw === "") { out[k] = 0; return; }
+      if (BLANK_ZERO[k] && raw === "") { out[k] = 0; return; }
       if (!/^\d{1,6}$/.test(raw)) { bad = bad || k; return; }
       out[k] = Number(raw);
     } else out[k] = raw;
@@ -961,7 +1003,10 @@ $("quit").addEventListener("click", () => {
   quit(false);
 });
 $("run").addEventListener("click", () => runRows([...PICK], $("loadMaps").checked, null));
-$("cancel").addEventListener("click", () => api("/api/extract/cancel", {}).then(poll).catch((e) => note(e.message)));
+$("cancel").addEventListener("click", () => {
+  if (!window.confirm("Stop the Extract run now? It stops between calls; what the row running now has read is lost.")) return;
+  api("/api/extract/cancel", {}).then(poll).catch((e) => note(e.message));
+});
 $("pick").addEventListener("click", (e) => { e.stopPropagation(); $("file").click(); });
 $("jobs").addEventListener("dragover", (e) => {
   if (!DRAG) return;

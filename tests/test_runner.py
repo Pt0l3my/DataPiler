@@ -18,7 +18,7 @@ from dataclasses import replace
 
 from _packs import FakeOodle, bnd4_bytes, dcx_bytes, menu_like
 
-from datapiler import catalogue, events, gamefiles, guard, jobs, link, logbook, paths, runner, textdb, textures
+from datapiler import catalogue, deleted, events, gamefiles, guard, jobs, link, logbook, paths, runner, textdb, textures
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -463,6 +463,97 @@ class JobRunTest(RunnerBase):
         for t, d in self.events:
             for v in d.values():
                 self.assertTrue(v is None or isinstance(v, (bool, int, float, logbook.Own)), (t, d))
+
+
+class PauseTest(RunnerBase):
+    """S84: Pause lets the step running now finish, keeps the job's context in the workspace, and Resume goes on from
+    the next step: on the same run, after a restart, never on another game version or job file."""
+
+    def paused_file(self, jid: str) -> Path:
+        return self.p.workspace / "paused" / ("%s.json" % jid)
+
+    def pause_after_the_first_step(self) -> dict:
+        self.link.proceed = threading.Event()
+        card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
+        self.r.act(card["id"], "start")
+        self.assertTrue(self.link.started.wait(5))
+        self.assertEqual(self.r.act(card["id"], "pause"), {"ok": True})
+        self.assertTrue(self.card(card["id"])["pausing"])
+        self.link.proceed.set()                                  # the step running finishes; nothing is cut short
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "paused"), self.card(card["id"]))
+        return self.card(card["id"])
+
+    def test_s84_pause_finishes_the_step_and_resume_goes_on_from_the_next(self):
+        card = self.pause_after_the_first_step()
+        self.assertEqual(card["result"]["paused"], {"at": 1, "of": 5})
+        self.assertFalse(card["pausing"])
+        self.assertEqual([o["state"] for o in card["ops"]], ["done"] + ["waiting"] * 4)
+        self.assertTrue(self.paused_file(card["id"]).is_file())
+        self.assertEqual(self.share_files(), [])
+        npc = len([c for c in self.link.calls if c[:2] == ("GetParamRows", "NpcParam")])
+        self.assertEqual(self.r.act(card["id"], "resume"), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"), self.card(card["id"]))
+        self.assertEqual(len([c for c in self.link.calls if c[:2] == ("GetParamRows", "NpcParam")]), npc)  # not again
+        self.assertFalse(self.paused_file(card["id"]).exists())                      # used up
+        paused_share = (self.p.share / "roster-counts.json").read_bytes()
+        self.r.act(card["id"], "start")                                              # the same job, straight through
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"))
+        self.assertEqual((self.p.share / "roster-counts.json").read_bytes(), paused_share)
+
+    def test_s84_a_pause_point_outlives_a_restart(self):
+        card = self.pause_after_the_first_step()
+        r2 = self.new_runner()
+        r2.load_folder()
+        again = self.card(card["id"], r2)
+        self.assertEqual((again["state"], again["result"]["paused"]), ("paused", {"at": 1, "of": 5}))
+        self.assertEqual(r2.act(card["id"], "resume"), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"], r2)["state"] == "done"), self.card(card["id"], r2))
+        self.assertIn("roster-counts.json", self.share_files())
+
+    def test_s84_never_on_another_game_version(self):
+        card = self.pause_after_the_first_step()
+        self.provenance = lambda: dict(PROVENANCE, game_version="1.99.1.0")
+        r = self.r.act(card["id"], "resume")
+        self.assertFalse(r["ok"])
+        self.assertIn("changed since it paused", r["error"])
+        self.assertEqual(self.r.start_word(card["id"], "start"), "DELETE")
+        self.assertEqual(self.r.removal_word(card["id"]), "DELETE")
+        self.assertEqual(self.r.act(card["id"], "start"), {"ok": True})              # Start again: to the bin
+        self.assertFalse(self.paused_file(card["id"]).exists())
+        self.assertTrue(any(i["kind"] == "paused" for i in deleted.items(self.p)))
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"))
+
+    def test_s84_a_waiting_job_pauses_where_it_waits(self):
+        self.link.state = "off"
+        card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
+        self.r.act(card["id"], "start")
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "waiting"))
+        self.assertEqual(self.r.act(card["id"], "pause"), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "paused"), self.card(card["id"]))
+        self.assertEqual(self.card(card["id"])["result"]["paused"], {"at": 0, "of": 5})
+        self.assertEqual(self.link.calls, [])
+
+    def test_s84_only_a_running_job_pauses(self):
+        card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
+        r = self.r.act(card["id"], "pause")
+        self.assertFalse(r["ok"])
+        with self.assertRaises(ValueError):
+            self.r.act(card["id"], "nap")
+
+    def test_s84_remove_takes_the_pause_point_to_the_bin(self):
+        card = self.pause_after_the_first_step()
+        self.assertEqual(self.r.act(card["id"], "remove"), {"ok": True})
+        self.assertFalse(self.paused_file(card["id"]).exists())
+        kinds = sorted(i["kind"] for i in deleted.items(self.p))
+        self.assertEqual(kinds, ["job", "paused"])
+
+    def test_s84_a_pause_point_comes_back_from_the_bin(self):
+        card = self.pause_after_the_first_step()
+        self.r.act(card["id"], "start")                                              # Start again: to the bin
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"))
+        item = next(i for i in deleted.items(self.p) if i["kind"] == "paused")
+        deleted.restore(self.p, item["id"], runner=self.r)
+        self.assertTrue(self.paused_file(card["id"]).is_file())
 
 
 class WaitTest(RunnerBase):

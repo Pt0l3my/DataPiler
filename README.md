@@ -123,6 +123,11 @@ it. DataPiler cannot see why Smithbox did not load it, as Smithbox keeps its log
 Rendering and the skipping of Havok loading, and nothing else of that file; Smithbox saves them when it closes, so a
 change you just made may not show yet.
 
+**Pause** on a running job lets the step it is on finish (a map step stops at its next map), then stops and keeps
+everything the job has done in the workspace; **Resume job** goes on from the next step, also after DataPiler was
+closed, as long as the job file, the game and Smithbox are the same. **Stop** cuts the step short instead, and asks
+first.
+
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
 you to type `DELETE`, then moves the saved progress to the Deleted bin (below) and starts from the beginning. A whole map job runs
@@ -192,6 +197,14 @@ left out as another image's; `"labels": true` writes each tile's position and co
 image. The container also holds tiles of an older layout. Once a job has unpacked the game's own mask files (an
 `unpack_game_file` job of `71_maptile.mtmskbnd.dcx`, see below), an overview draws each level exactly as the game
 does, from the masks, and leaves the older layout's tiles out; `check_map_tiles` marks them with `in_mask`.
+
+## Using the PC
+
+The image steps (map tile checks and overviews) use the processor's cores, one worker process each, and keep decoded
+tiles in memory; on Windows the PNG tiles are decoded by Windows' own decoder, checked at each start against
+DataPiler's own. By default they use every core but one and a quarter of the free memory; **Cores for image steps**
+and **Memory for image steps** in Settings change that. The Status page's **This PC** card shows what the PC has and
+what the image steps use. The graphics card is shown, not used: for many small tiles it would not be faster.
 
 ## Game files unpacked by Smithbox
 

@@ -43,8 +43,8 @@ ITEM_FILE = "item.json"
 STORE = "files"
 WORD = "DELETE"         # typed in to remove collected data, and to erase from the bin
 MOVE = "move"           # the confirmation of a pop-up without a text box (a job)
-KINDS = {"job": "Job", "progress": "Saved map progress", "share": "Share file", "local": "Workspace file",
-         "export": "Text export file", "text": "Imported text"}
+KINDS = {"job": "Job", "progress": "Saved map progress", "paused": "A paused job's finished steps",
+         "share": "Share file", "local": "Workspace file", "export": "Text export file", "text": "Imported text"}
 AREAS = {"jobs": "Jobs", "share": "Share folder", "workspace": "Workspace", "textdb": "Text database"}
 PART_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")         # one part of a place: api.SAFE_NAME_RX
 SHARE_RX = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\.json")          # a share file's name: api.FILE_RX
@@ -425,10 +425,11 @@ def restore(p: "Paths", iid: object, *, runner=None, textdb: "TextDB | None" = N
     meta = item(p, iid)
     kind = meta["kind"]
     place = meta["from"]["place"]
-    if kind in ("job", "progress"):
+    if kind in ("job", "progress", "paused"):
         if runner is None:
             raise BinError("jobs cannot be restored now")
-        (runner.restore_job if kind == "job" else runner.restore_progress)(meta["id"], meta)
+        {"job": runner.restore_job, "progress": runner.restore_progress,
+         "paused": runner.restore_paused}[kind](meta["id"], meta)
     elif kind == "share":
         if not SHARE_RX.fullmatch(place):
             raise BinError(NO_ITEM)

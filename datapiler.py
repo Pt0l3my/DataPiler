@@ -127,7 +127,8 @@ class RealParts:
         # the current Paths at each write: Settings can move the workspace and the share folder
         return runner_mod.Runner(lambda: live.paths, link, textdb, guard, status.provenance, status.game_running,
                                  lambda: live.settings.language, map_opengl=lambda: live.settings.map_opengl,
-                                 game_dir=lambda: live.settings.game_dir)
+                                 game_dir=lambda: live.settings.game_dir,
+                                 work=lambda: (live.settings.work_cores, live.settings.work_memory_mb))
 
     def inbox(self, live: Live, textdb):
         from datapiler import catalogue, inbox as inbox_mod

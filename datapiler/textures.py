@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import sys
 import struct
 import threading
 import zlib
@@ -282,7 +283,16 @@ def lay_over(canvas: bytearray, over: bytes | bytearray, base: bytes | bytearray
 
 def png_decode(data: bytes) -> tuple[int, int, bytearray]:
     """(width, height, RGBA bytes) of a non-interlaced 8-bit PNG: grey, grey with alpha, RGB, RGBA or a palette (with
-    tRNS). ValueError for anything else."""
+    tRNS). ValueError for anything else. S83: with Windows' own decoder where it passed its self-test, else DataPiler's
+    own; the pixels are the same."""
+    return _decode(data, native=True)
+
+
+def _python_decode(data: bytes) -> tuple[int, int, bytearray]:
+    return _decode(data, native=False)
+
+
+def _decode(data: bytes, *, native: bool) -> tuple[int, int, bytearray]:
     if not data.startswith(_PNG):
         raise ValueError("not a PNG")
     pos = 8
@@ -310,6 +320,13 @@ def png_decode(data: bytes) -> tuple[int, int, bytearray]:
         raise ValueError("a PNG DataPiler does not read (only 8 bits a channel, not interlaced)")
     if w <= 0 or h <= 0 or w * h > MAX_SIDE * MAX_SIDE:
         raise ValueError("a PNG of an unexpected size")
+    if ctype == 3 and not palette:
+        raise ValueError("a palette PNG without its palette")
+    nat = _native_decoder() if native else None
+    if nat is not None:
+        got = nat.decode(_without_colour(data), w, h)        # S83: Windows' own decoder, checked at its start
+        if got is not None:
+            return w, h, got
     bpp = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
     raw = zlib.decompress(b"".join(idat))
     stride = w * bpp
@@ -362,6 +379,200 @@ def png_decode(data: bytes) -> tuple[int, int, bytearray]:
             out[k * 4:k * 4 + 3] = palette[j:j + 3] if j + 3 <= len(palette) else b"\x00\x00\x00"
             out[k * 4 + 3] = trns[idx] if idx < len(trns) else 255
     return w, h, out
+
+
+# ------------------------------------------------------------------------------------------------ native decoding (S83)
+
+_COLOUR_CHUNKS = (b"gAMA", b"cHRM", b"sRGB", b"iCCP")    # left out for the native decoder, which DataPiler's ignores
+
+
+def _without_colour(data: bytes) -> bytes:
+    """A PNG without its colour chunks, so that Windows' decoder gives the stored values, as DataPiler's own does."""
+    out = [data[:8]]
+    pos = 8
+    while pos + 8 <= len(data):
+        (n,) = struct.unpack(">I", data[pos:pos + 4])
+        end = pos + 12 + n
+        if data[pos + 4:pos + 8] not in _COLOUR_CHUNKS:
+            out.append(data[pos:end])
+        pos = end
+    return b"".join(out)
+
+
+class _Gdip:
+    """Windows' GDI+ PNG decoder, through ctypes (explicit argtypes, as winapi.py does): a PNG from a memory stream,
+    locked as 32-bit ARGB (B, G, R, A in memory) and turned into RGBA. None on any failure, so the caller decodes it
+    itself. One lock: GDI+ is called from one thread of a process at a time."""
+
+    def __init__(self) -> None:
+        import ctypes as ct
+        from ctypes import wintypes
+
+        self.ct = ct
+        g = ct.WinDLL("gdiplus")
+        sh = ct.WinDLL("shlwapi")
+
+        class _Startup(ct.Structure):
+            _fields_ = [("GdiplusVersion", ct.c_uint32), ("DebugEventCallback", ct.c_void_p),
+                        ("SuppressBackgroundThread", wintypes.BOOL), ("SuppressExternalCodecs", wintypes.BOOL)]
+
+        class _Rect(ct.Structure):
+            _fields_ = [("X", ct.c_int), ("Y", ct.c_int), ("Width", ct.c_int), ("Height", ct.c_int)]
+
+        class _Data(ct.Structure):
+            _fields_ = [("Width", ct.c_uint), ("Height", ct.c_uint), ("Stride", ct.c_int), ("PixelFormat", ct.c_int),
+                        ("Scan0", ct.c_void_p), ("Reserved", ct.c_size_t)]
+
+        self.Rect, self.Data = _Rect, _Data
+        g.GdiplusStartup.argtypes = (ct.POINTER(ct.c_size_t), ct.POINTER(_Startup), ct.c_void_p)
+        g.GdiplusStartup.restype = ct.c_int
+        g.GdipCreateBitmapFromStream.argtypes = (ct.c_void_p, ct.POINTER(ct.c_void_p))
+        g.GdipCreateBitmapFromStream.restype = ct.c_int
+        for name in ("GdipGetImageWidth", "GdipGetImageHeight"):
+            getattr(g, name).argtypes = (ct.c_void_p, ct.POINTER(ct.c_uint))
+            getattr(g, name).restype = ct.c_int
+        g.GdipBitmapLockBits.argtypes = (ct.c_void_p, ct.POINTER(_Rect), ct.c_uint, ct.c_int, ct.POINTER(_Data))
+        g.GdipBitmapLockBits.restype = ct.c_int
+        g.GdipBitmapUnlockBits.argtypes = (ct.c_void_p, ct.POINTER(_Data))
+        g.GdipBitmapUnlockBits.restype = ct.c_int
+        g.GdipDisposeImage.argtypes = (ct.c_void_p,)
+        g.GdipDisposeImage.restype = ct.c_int
+        sh.SHCreateMemStream.argtypes = (ct.c_char_p, wintypes.UINT)
+        sh.SHCreateMemStream.restype = ct.c_void_p
+        self.g, self.mem = g, sh.SHCreateMemStream
+        self.release = ct.WINFUNCTYPE(ct.c_ulong, ct.c_void_p)
+        self.token = ct.c_size_t(0)
+        if g.GdiplusStartup(ct.byref(self.token), ct.byref(_Startup(1, None, False, False)), None) != 0:
+            raise OSError("GDI+ did not start")
+        self.lock = threading.Lock()
+
+    def _unref(self, stream: int) -> None:
+        ct = self.ct
+        vtbl = ct.cast(ct.c_void_p(stream), ct.POINTER(ct.c_void_p))[0]
+        self.release(ct.cast(ct.c_void_p(vtbl), ct.POINTER(ct.c_void_p))[2])(stream)    # IUnknown::Release
+
+    def decode(self, data: bytes, w: int, h: int) -> bytearray | None:
+        ct, g = self.ct, self.g
+        with self.lock:
+            stream = self.mem(data, len(data))
+            if not stream:
+                return None
+            try:
+                bmp = ct.c_void_p()
+                if g.GdipCreateBitmapFromStream(ct.c_void_p(stream), ct.byref(bmp)) != 0 or not bmp.value:
+                    return None
+                try:
+                    ww, hh = ct.c_uint(), ct.c_uint()
+                    if g.GdipGetImageWidth(bmp, ct.byref(ww)) or g.GdipGetImageHeight(bmp, ct.byref(hh)) \
+                            or (ww.value, hh.value) != (w, h):
+                        return None
+                    bd = self.Data()
+                    if g.GdipBitmapLockBits(bmp, ct.byref(self.Rect(0, 0, w, h)), 1, 0x26200A, ct.byref(bd)) != 0:
+                        return None                      # 1: read; 0x26200A: PixelFormat32bppARGB
+                    try:
+                        if bd.Stride == w * 4:
+                            raw = ct.string_at(bd.Scan0, w * h * 4)
+                        else:
+                            raw = b"".join(ct.string_at(bd.Scan0 + y * bd.Stride, w * 4) for y in range(h))
+                    finally:
+                        g.GdipBitmapUnlockBits(bmp, ct.byref(bd))
+                finally:
+                    g.GdipDisposeImage(bmp)
+            finally:
+                self._unref(stream)
+        out = bytearray(len(raw))
+        out[0::4], out[1::4], out[2::4], out[3::4] = raw[2::4], raw[1::4], raw[0::4], raw[3::4]
+        return out
+
+
+_native_lock = threading.Lock()
+_native: "object | None | bool" = None          # None: not tried in this process; False: off; else the decoder
+
+
+def png_filtered(w: int, h: int, ctype: int, samples: bytes, filters: list[int], palette: bytes = b"",
+                 trns: bytes = b"") -> bytes:
+    """A PNG of w x h 8-bit samples (rows from the top, colour type ctype) with each row's filter as given, cycling:
+    for the native decoder's self-test and for tests. DataPiler's own writer of the format."""
+    bpp = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+    stride = w * bpp
+    raw = bytearray()
+    prev = bytes(stride)
+    for y in range(h):
+        line = samples[y * stride:(y + 1) * stride]
+        f = filters[y % len(filters)]
+        out = bytearray(stride)
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b = prev[i]
+            c = prev[i - bpp] if i >= bpp else 0
+            if f == 0:
+                p = 0
+            elif f == 1:
+                p = a
+            elif f == 2:
+                p = b
+            elif f == 3:
+                p = (a + b) >> 1
+            else:
+                q = a + b - c
+                pa, pb, pc = abs(q - a), abs(q - b), abs(q - c)
+                p = a if pa <= pb and pa <= pc else b if pb <= pc else c
+            out[i] = (line[i] - p) & 255
+        raw += bytes([f]) + out
+        prev = line
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+    parts = [_PNG, chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0))]
+    if palette:
+        parts.append(chunk(b"PLTE", palette))
+    if trns:
+        parts.append(chunk(b"tRNS", trns))
+    parts += [chunk(b"gAMA", struct.pack(">I", 45455)), chunk(b"IDAT", zlib.compress(bytes(raw), 6)),
+              chunk(b"IEND", b"")]
+    return b"".join(parts)
+
+
+def _selftest_pngs() -> list[bytes]:
+    """Small PNGs of every colour type and row filter, with transparent pixels whose colours differ."""
+    w, h = 7, 5
+    rgba = bytes(((x * 37 + y * 11) % 256 if k < 3 else (0 if (x + y) % 4 == 0 else (x * 50 + 3) % 256))
+                 for y in range(h) for x in range(w) for k in range(4))
+    rgb = bytes((x * 41 + y * 13 + k * 7) % 256 for y in range(h) for x in range(w) for k in range(3))
+    grey = bytes((x * 30 + y * 17) % 256 for y in range(h) for x in range(w))
+    ga = bytes((x * 30 + y * 17) % 256 if k == 0 else (x * 60) % 256 for y in range(h) for x in range(w)
+               for k in range(2))
+    idx = bytes((x + y) % 4 for y in range(h) for x in range(w))
+    pal = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 200, 100, 50])
+    out = [png_filtered(w, h, 6, rgba, [f]) for f in range(5)]
+    out += [png_filtered(w, h, 6, rgba, [0, 1, 2, 3, 4]), png_filtered(w, h, 2, rgb, [4, 3, 2, 1, 0]),
+            png_filtered(w, h, 0, grey, [1, 4]), png_filtered(w, h, 4, ga, [2, 3]),
+            png_filtered(w, h, 3, idx, [0, 1], palette=pal, trns=bytes([255, 0, 128]))]
+    return out
+
+
+def _native_decoder():
+    """S83: Windows' own PNG decoder, once it has decoded every self-test image exactly as DataPiler's own decoder
+    does; else None (and DataPiler decodes alone). Tried once a process; DATAPILER_NO_NATIVE=1 turns it off."""
+    global _native
+    if _native is None:
+        with _native_lock:
+            if _native is None:
+                found: object = False
+                if sys.platform == "win32" and os.environ.get("DATAPILER_NO_NATIVE") != "1":
+                    try:
+                        g = _Gdip()
+                        if all(g.decode(_without_colour(d), 7, 5) == _python_decode(d)[2] for d in _selftest_pngs()):
+                            found = g
+                    except Exception:
+                        found = False
+                _native = found
+    return _native or None
+
+
+def native_decoding() -> bool:
+    """S83: whether this process decodes PNGs with Windows' own decoder (for the log)."""
+    return _native_decoder() is not None
 
 
 def png_encode(w: int, h: int, rgba: bytes | bytearray) -> bytes:
@@ -576,6 +787,7 @@ class Judge:
     summed-area tables, a bounded number at a time."""
 
     KEEP = 160
+    keep_bytes: int | None = None       # S83: the memory this judge may keep decoded tiles in (None: KEEP tables)
 
     def __init__(self, ts: TileSet, level: int, cancel: threading.Event | None = None) -> None:
         self.ts = ts
@@ -621,10 +833,24 @@ class Judge:
         got = self._kept.pop(path, None)
         if got is None:
             got = _Sums(self.decode(path), self.size or 0)
-            if len(self._kept) >= self.KEEP:
+            while self._kept and len(self._kept) >= self.keep():
                 self._kept.pop(next(iter(self._kept)))
         self._kept[path] = got
         return got
+
+    def keep(self) -> int:
+        """S83: how many tiles' summed-area tables are kept: KEEP, or as many as keep_bytes holds (16 at least)."""
+        if self.keep_bytes is None or not self.size:
+            return self.KEEP
+        return max(16, self.keep_bytes // ((self.size + 1) ** 2 * 8))
+
+    def moved_ok(self) -> bool:
+        """S83: whether `moved` means something at this level: the older layout's shift is a whole number of tiles
+        (four at level 0, three at level 1); at level 2 and the legacy levels it is not, and nothing is measured."""
+        if not self.size:
+            return False
+        step = OLD_SHIFT * level_scale(self.level) / self.size
+        return abs(step - round(step)) < 1e-6 and round(step) != 0
 
     def lift(self, level: int) -> float:
         """S80: how far above its grid's bottom a level's map starts, in that level's pixels: the gap left at the
@@ -697,17 +923,14 @@ def passes(near: int, near_base: int, min_match: int = MATCH_MIN) -> bool:
     return best == UNMEASURED or best >= min_match
 
 
-def check_level(ts: TileSet, level: int, *, cancel: threading.Event | None = None,
-                progress: Callable[[int, int], None] | None = None) -> tuple[list[tuple[int, ...]], dict[str, int]]:
-    """S78: one row of TILE_CHECK_COLUMNS per exported variant of a sheet's level: where it is, which folder it was
-    found in (numbered) and how many copies, how much of it differs from the base (per mille of pixels), how like the
-    base it is, and how well it matches the next level, per mille (UNMEASURED where it cannot be). Numbers only."""
-    judge = Judge(ts, level, cancel)
-    masks = ts.mask_at(level)
+def _check_places(judge: "Judge", places: list[tuple[int, int]], masks: dict | None,
+                  tick: Callable[[], None] | None = None) -> list[tuple[int, ...]]:
+    """S78, S83: the rows of TILE_CHECK_COLUMNS for some places of a level, in order: the work of check_level, done in
+    this process or in a worker process."""
+    ts, level = judge.ts, judge.level
     rows: list[tuple[int, ...]] = []
-    total = sum(len(v) for v in judge.at.values())
-    done = 0
-    for (x, y), codes in sorted(judge.at.items()):
+    for (x, y) in places:
+        codes = judge.at[(x, y)]
         base_px = judge.decode(codes[0]) if 0 in codes else None
         base_t = judge.thumb(base_px) if base_px is not None else None
         for code in sorted(codes):
@@ -716,19 +939,119 @@ def check_level(ts: TileSet, level: int, *, cancel: threading.Event | None = Non
             drawn = UNMEASURED if base_px is None else (1000 * differs(px, base_px) + len(px) // 8) // (len(px) // 4)
             like = UNMEASURED if base_t is None or t is None else (1000 if code == 0 else ncc(list(t), list(base_t)))
             near_code, near, near_base = judge.near(x, y, code, t)
-            moved = max(judge.near(x, y, code, t, OLD_SHIFT)[1:]) if code else UNMEASURED
+            moved = max(judge.near(x, y, code, t, OLD_SHIFT)[1:]) if code and judge.moved_ok() else UNMEASURED
             in_mask = -1 if masks is None else int(code & ~masks.get((x, y), 0) == 0)
             rows.append((x, y, code, ts.folder.get(codes[code], 0), ts.copies.get((level, x, y, code), 1), drawn,
                          like, judge.other if judge.other is not None else -1, near_code, near, near_base, moved,
                          in_mask))
-            done += 1
+            if tick is not None:
+                tick()
+    return rows
+
+
+def check_level(ts: TileSet, level: int, *, cancel: threading.Event | None = None,
+                progress: Callable[[int, int], None] | None = None, workers: int = 1,
+                memory: int | None = None) -> tuple[list[tuple[int, ...]], dict[str, int]]:
+    """S78: one row of TILE_CHECK_COLUMNS per exported variant of a sheet's level: where it is, which folder it was
+    found in (numbered) and how many copies, how much of it differs from the base (per mille of pixels), how like the
+    base it is, and how well it matches the next level, per mille (UNMEASURED where it cannot be). Numbers only.
+    S83: in `workers` worker processes when there is enough to share, each keeping decoded tiles in its share of
+    `memory` bytes; the rows are the same either way."""
+    judge = Judge(ts, level, cancel)
+    masks = ts.mask_at(level)
+    total = sum(len(v) for v in judge.at.values())
+    places = sorted(judge.at)
+    if workers > 1 and total >= POOL_MIN:
+        keep = None if memory is None else memory // workers
+        chunks = _chunks(places, [len(judge.at[k]) for k in places], workers)
+        done = [0]
+
+        def got(k: int, rows: list) -> None:
+            done[0] += len(rows)
             if progress is not None:
-                progress(done, total)
+                progress(done[0], total)
+        parts = _pool(workers, (ts, level, keep, masks), _w_check, chunks, cancel, got)
+        rows = [r for part in parts for r in part]
+    else:
+        judge.keep_bytes = memory
+        n = [0]
+
+        def tick() -> None:
+            n[0] += 1
+            if progress is not None:
+                progress(n[0], total)
+        rows = _check_places(judge, places, masks, tick)
     left = sum(1 for r in rows if r[2] and not passes(r[9], r[10]))
     return rows, {"tiles": len(rows), "positions": len(judge.at), "folders": ts.folders,
                   "near_level": judge.other if judge.other is not None else -1, "other_image": left,
                   "stopped": int(ts.stopped), "masks": int(masks is not None),
-                  "outside_masks": sum(1 for r in rows if r[12] == 0)}
+                  "outside_masks": sum(1 for r in rows if r[12] == 0), "workers": workers if total >= POOL_MIN else 1}
+
+
+# ------------------------------------------------------------------------------------------------ worker processes (S83)
+
+POOL_MIN = 48               # variants or places below which a step runs in this process alone
+CHUNKS_PER_WORKER = 4       # each worker takes about this many chunks, so that one slow chunk does not hold the rest
+_W: dict = {}               # in a worker process: its judge and options, set once by _w_init
+
+
+def _chunks(places: list[tuple[int, int]], weights: list[int], workers: int) -> list[list[tuple[int, int]]]:
+    """Places in order, cut into runs of about equal weight (variants), CHUNKS_PER_WORKER a worker: neighbouring
+    places share the reference tiles they read, so a run keeps its worker's cache warm."""
+    target = max(1, sum(weights) // max(1, workers * CHUNKS_PER_WORKER))
+    out: list[list[tuple[int, int]]] = [[]]
+    w = 0
+    for k, wt in zip(places, weights):
+        if out[-1] and w + wt > target:
+            out.append([])
+            w = 0
+        out[-1].append(k)
+        w += wt
+    return [c for c in out if c]
+
+
+def _w_init(ts: "TileSet", level: int, keep: int | None, opts: object) -> None:
+    """A worker process's start: its own judge (and cache) for the level, kept for every chunk it takes."""
+    judge = Judge(ts, level)
+    judge.keep_bytes = keep
+    _W.clear()
+    _W.update(judge=judge, opts=opts)
+
+
+def _w_check(places: list[tuple[int, int]]) -> list[tuple[int, ...]]:
+    return _check_places(_W["judge"], places, _W["opts"])
+
+
+def _w_overview(places: list[tuple[int, int]]) -> list[tuple]:
+    o = _W["opts"]
+    return [_overview_place(_W["judge"], o, xy) for xy in places]
+
+
+def _pool(workers: int, init: tuple, fn: Callable[[list], list], chunks: list[list], cancel: threading.Event | None,
+          got: Callable[[int, list], None]) -> list[list]:
+    """S83: fn over every chunk in `workers` worker processes (Python's own, started afresh: the spawn method, as on
+    Windows), each set up once by _w_init(*init). The chunks' results in their order; got(k, result) as each comes.
+    Cancelled at once when cancel is set (a chunk running then finishes in the background, its result dropped);
+    a worker's error is raised here."""
+    import concurrent.futures as cf
+    import multiprocessing as mp
+
+    pool = cf.ProcessPoolExecutor(max_workers=min(workers, len(chunks)), mp_context=mp.get_context("spawn"),
+                                  initializer=_w_init, initargs=init)
+    try:
+        pending = {pool.submit(fn, ch): k for k, ch in enumerate(chunks)}
+        out: list = [None] * len(chunks)
+        while pending:
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+            done, _ = cf.wait(pending, timeout=0.25, return_when=cf.FIRST_COMPLETED)
+            for f in done:
+                k = pending.pop(f)
+                out[k] = f.result()
+                got(k, out[k])
+        return out
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # ------------------------------------------------------------------------------------------------ labels (S78)
@@ -847,7 +1170,8 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
              code: int | None = None, check: bool = True, min_match: int = MATCH_MIN, labels: bool = False,
              shrink: int = 1, masks: bool = True, skip: Collection[Path] = (),
              cancel: threading.Event | None = None,
-             progress: Callable[[int, int], None] | None = None) -> tuple[bytes, dict[str, int]]:
+             progress: Callable[[int, int], None] | None = None, workers: int = 1,
+             memory: int | None = None) -> tuple[bytes, dict[str, int]]:
     """One PNG of a sheet's level, laid out on the tile grid (column x; row y counted from the bottom, or from the
     top). Each position with every piece revealed, or in its base variant, or (variant "code") the file of one code
     where it was exported and the base elsewhere. Every piece revealed is, where the game's mask file of the sheet is
@@ -856,8 +1180,9 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
     the widest variants are laid together, and with `check` those that do not match the reference level are left out.
     `labels` draws each tile's border, its column and row, and the codes laid (a score after each, per mille) or left
     out (a minus before). `shrink` (S79) makes each tile 2, 4 or 8 times smaller, so that levels 0 and 1 fit.
-    Positions without a file stay transparent. ValueError when no tile is found, the result would pass MAX_SIDE, or a
-    tile is not a PNG DataPiler reads or not square."""
+    Positions without a file stay transparent. S83: in `workers` worker processes when there is enough to share; the
+    image is the same either way. ValueError when no tile is found, the result would pass MAX_SIDE, or a tile is not a
+    PNG DataPiler reads or not square."""
     if rows_from not in ROWS_FROM:
         raise ValueError("rows_from is bottom or top")
     if variant not in VARIANTS:
@@ -885,69 +1210,98 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
         raise ValueError("that level would make an image over %d pixels a side; choose a smaller level or shrink it"
                          % MAX_SIDE)
     canvas = bytearray(cols * size * rows * size * 4)
-    done = joined = left_out = measured = masked = 0
-    for (x, y) in places:
-        codes = at[(x, y)]
-        under = judge.decode(codes[0]) if 0 in codes else None
-        px_of: dict[int, bytearray] = {}
-        text = ["%d,%d" % (x, y)]
-        px = None
-        if variant == "base" or (variant == "code" and code not in codes):
-            if under is not None:
-                px = bytearray(under)
-                text.append("0")
-            else:
-                first_code = widest(codes)[0]            # no base exported: its first variant stands in
-                px = judge.decode(codes[first_code])
-                text.append("%X" % first_code)
-        elif variant == "code":
-            px = judge.decode(codes[code])
-            text.append("%X" % code)
-        elif game is not None:
-            m = game.get((x, y), 0)
-            want = _within(codes, m)                     # the mask itself, exported at every place the game names
-            left_out += sum(1 for c in codes if c & ~m)
-            if want is not None:
-                px = judge.decode(codes[want]) if want else bytearray(under)
-                masked += int(want != 0)
-                text.append("%X" % want)
-                if m and want != m:
-                    text.append("-%X" % (m & ~want))
-            else:
-                px = judge.decode(codes[widest(codes)[0]])
-                text.append("?")
-        else:
-            lays, out = _choose(codes, use_judge, x, y, min_match, px_of)
-            px = bytearray(under) if under is not None else None
-            for c, _ in lays:
-                over = px_of[c] if c in px_of else judge.decode(codes[c])
-                if px is None:
-                    px = bytearray(over)
-                    continue
-                lay_over(px, over, under)
-            if px is None:                               # every variant left out and no base: the first stands in
-                c = widest(codes)[0]
-                px = judge.decode(codes[c])
-            if len(lays) > 1:
-                joined += 1
-            left_out += len(out)
-            measured += sum(1 for _, sc in lays + out if sc != UNMEASURED)
-            text += ["%X" % c if sc == UNMEASURED else "%X %d" % (c, sc) for c, sc in lays] or ["0"]
-            text += ["-%X" % c if sc == UNMEASURED else "-%X %d" % (c, sc) for c, sc in out]
-        px = shrink_rgba(px, full, shrink)
+    opts = {"variant": variant, "code": code, "game": game, "judged": use_judge is not None, "min_match": min_match,
+            "full": full, "shrink": shrink}
+    tally = {"joined": 0, "left_out": 0, "measured": 0, "masked": 0}
+    line = cols * size * 4
+
+    def paste(r: tuple) -> None:
+        x, y, px, text, counts = r
+        for k, v in counts.items():
+            tally[k] += v
         top = (rows - 1 - y) * size if rows_from == "bottom" else y * size
         left = x * size
-        line = cols * size * 4
-        for r in range(size):
-            at_ = (top + r) * line + left * 4
-            canvas[at_:at_ + size * 4] = px[r * size * 4:(r + 1) * size * 4]
+        for k in range(size):
+            at_ = (top + k) * line + left * 4
+            canvas[at_:at_ + size * 4] = px[k * size * 4:(k + 1) * size * 4]
         if labels:
             label(canvas, cols * size, left, top, size, text)
-        done += 1
-        if progress is not None:
-            progress(done, len(places))
+
+    if workers > 1 and len(places) >= POOL_MIN:
+        keep = None if memory is None else memory // workers
+        chunks = _chunks(places, [len(at[k]) for k in places], workers)
+        done = [0]
+
+        def got(k: int, part: list) -> None:
+            for r in part:
+                paste(r)
+            done[0] += len(part)
+            if progress is not None:
+                progress(done[0], len(places))
+        _pool(workers, (ts, level, keep, opts), _w_overview, chunks, cancel, got)
+    else:
+        judge.keep_bytes = memory
+        for n, xy in enumerate(places, 1):
+            paste(_overview_place(judge, opts, xy))
+            if progress is not None:
+                progress(n, len(places))
     data = png_encode(cols * size, rows * size, canvas)
     return data, {"tiles": len(places), "columns": cols, "rows": rows, "tile": size, "width": cols * size,
-                  "height": rows * size, "joined": joined, "left_out": left_out, "measured": measured,
-                  "masked": masked, "outside": len(at) - len(places), "masks": int(game is not None),
+                  "height": rows * size, "joined": tally["joined"], "left_out": tally["left_out"],
+                  "measured": tally["measured"], "masked": tally["masked"], "outside": len(at) - len(places),
+                  "masks": int(game is not None),
                   "near_level": judge.other if use_judge is not None and judge.other is not None else -1}
+
+
+def _overview_place(judge: "Judge", o: dict, xy: tuple[int, int]) -> tuple:
+    """S83: one place of an overview, in this process or a worker: (x, y, its tile shrunk, its label's lines, the
+    counts it adds). o: the overview's options (variant, code, game masks, whether variants are judged, min_match,
+    the tiles' full size and the shrink)."""
+    x, y = xy
+    codes = judge.at[(x, y)]
+    variant, code, game = o["variant"], o["code"], o["game"]
+    under = judge.decode(codes[0]) if 0 in codes else None
+    px_of: dict[int, bytearray] = {}
+    text = ["%d,%d" % (x, y)]
+    counts = {"joined": 0, "left_out": 0, "measured": 0, "masked": 0}
+    if variant == "base" or (variant == "code" and code not in codes):
+        if under is not None:
+            px = bytearray(under)
+            text.append("0")
+        else:
+            first_code = widest(codes)[0]                # no base exported: its first variant stands in
+            px = judge.decode(codes[first_code])
+            text.append("%X" % first_code)
+    elif variant == "code":
+        px = judge.decode(codes[code])
+        text.append("%X" % code)
+    elif game is not None:
+        m = game.get((x, y), 0)
+        want = _within(codes, m)                         # the mask itself, exported at every place the game names
+        counts["left_out"] = sum(1 for c in codes if c & ~m)
+        if want is not None:
+            px = judge.decode(codes[want]) if want else bytearray(under)
+            counts["masked"] = int(want != 0)
+            text.append("%X" % want)
+            if m and want != m:
+                text.append("-%X" % (m & ~want))
+        else:
+            px = judge.decode(codes[widest(codes)[0]])
+            text.append("?")
+    else:
+        lays, out = _choose(codes, judge if o["judged"] else None, x, y, o["min_match"], px_of)
+        px = bytearray(under) if under is not None else None
+        for c, _ in lays:
+            over = px_of[c] if c in px_of else judge.decode(codes[c])
+            if px is None:
+                px = bytearray(over)
+                continue
+            lay_over(px, over, under)
+        if px is None:                                   # every variant left out and no base: the first stands in
+            px = judge.decode(codes[widest(codes)[0]])
+        counts["joined"] = int(len(lays) > 1)
+        counts["left_out"] = len(out)
+        counts["measured"] = sum(1 for _, sc in lays + out if sc != UNMEASURED)
+        text += ["%X" % c if sc == UNMEASURED else "%X %d" % (c, sc) for c, sc in lays] or ["0"]
+        text += ["-%X" % c if sc == UNMEASURED else "-%X %d" % (c, sc) for c, sc in out]
+    return x, y, bytes(shrink_rgba(px, o["full"], o["shrink"])), text, counts

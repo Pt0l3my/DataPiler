@@ -13,6 +13,19 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.33 - 2026-11-15
+
+- New: the image steps (tile checks and overviews) use the PC (DP29 (b), S83): worker processes on its cores (every
+  core but one by default), Windows' own PNG decoder (used only after it decodes test images exactly as DataPiler's own
+  does), and decoded tiles kept in memory. Settings has **Cores for image steps** and **Memory for image steps**; the
+  Status page has a **This PC** card with the processor, the memory, the graphics card (shown, never used) and what the
+  image steps use. Results are the same as before, only faster.
+- Changed: `moved` is measured only at levels 0 and 1, where the older layout's shift is a whole number of tiles.
+- New: **Pause** on a running job (S84): the step running finishes (a map step stops at its next map, its maps kept),
+  the job's finished steps are saved in the workspace, and **Resume job** goes on from the next step, also after
+  DataPiler is closed. Start again and Remove send a pause point to the Deleted bin, which can restore it.
+- New: **Stop** (was Cancel) asks before it cuts a running job short, and Extract's Cancel asks too.
+
 ## 0.2.32 - 2026-11-15
 
 - New: overviews draw each level as the game does (S82). The game's own mask files, which an `unpack_game_file` job

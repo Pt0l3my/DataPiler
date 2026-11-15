@@ -296,7 +296,11 @@ class ApiTest(ApiBase):
 
     def test_state_shape(self):
         s = self.get("/api/state")
-        self.assertEqual(set(s), {"version", "pills", "block", "status", "extract", "jobs", "outputs_rev", "session"})
+        self.assertEqual(set(s), {"version", "hardware", "pills", "block", "status", "extract", "jobs", "outputs_rev",
+                                  "session"})
+        self.assertEqual(set(s["hardware"]), {"pc", "work"})                    # DP29 (S83)
+        self.assertEqual(set(s["hardware"]["pc"]), {"logical", "physical", "memory", "free", "cpu", "graphics"})
+        self.assertGreaterEqual(s["hardware"]["work"]["workers"], 1)
         self.assertEqual(s["version"], datapiler.VERSION)
         self.assertEqual(set(s["pills"]), {"smithbox", "game", "link"})
         self.assertEqual(set(s["status"]), {"smithbox", "game", "project", "link"})

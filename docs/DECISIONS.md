@@ -25,7 +25,9 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   read anywhere in DataPiler's folder), the owner's request. DP26 (job cards in the owner's own order), the owner's
   request. DP27 (an overview image made on the PC), the owner's choice. DP28 (game files that Smithbox unpacked,
   opened on the PC with the game's own Oodle library), the owner's request and choice.
-- **Open.** DP29 (using the PC's hardware: cores, memory, the graphics card), put to the owner on 2026-11-15.
+  DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
+  choice of (b).
+- **Open.** None.
 
 ## DP1
 
@@ -508,7 +510,7 @@ regulation. Off Windows, or without the library in the game folder, a KRAK file 
 
 ## DP29
 
-**Using the PC's hardware: cores, memory, the graphics card** · *2026-11-15 · Open*
+**Using the PC's hardware: cores, memory, the graphics card** · *2026-11-15 · Decided by the owner: (b)*
 
 **The owner's question.** "Can we add hardware resource scan to datapiler, so it could allocate hardware resources for
 certain tasks that could be faster with GPU vs CPU? or with RAM? or run GPU, RAM, CPU simultaneously? the hardware
@@ -538,3 +540,7 @@ so en-0029 takes an estimated 20 to 60 minutes.
 
 **Recommended.** (a): most of the possible gain for little complexity; (c) only if a step one day needs heavy maths
 on whole images.
+
+**Decision.** (b), the same day: (a), with the hardware shown on the Status page (0.2.33, S83).
+
+**Owner's words.** "so currently the CPU is only using 1 core for the jobs? let's go with (b)".

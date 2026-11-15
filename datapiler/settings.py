@@ -49,6 +49,8 @@ class Settings:
     log_keep: int = 5
     mask_paths: bool = False            # DP14: the page draws the log's masks in place of paths (S35)
     map_opengl: bool = True             # DP20: map jobs run on Smithbox's OpenGL build only (S64)
+    work_cores: int = 0                 # DP29 (S83): worker processes for the image steps; 0: every core but one
+    work_memory_mb: int = 0             # DP29 (S83): memory for decoded tiles; 0: a quarter of the free memory
     recent: dict = field(default_factory=_no_recent, compare=True, hash=False)   # key -> tuple, newest first
 
     def as_dict(self) -> dict:
@@ -99,7 +101,8 @@ def _text(raw: Mapping[str, object], key: str, default: str) -> str:
     return v
 
 
-def _int(raw: Mapping[str, object], key: str, default: int, lo: int, hi: int, zero: bool = False) -> int:
+def _int(raw: Mapping[str, object], key: str, default: int, lo: int, hi: int, zero: bool = False,
+         blank: str = "any free one") -> int:
     v = raw.get(key, default)
     if isinstance(v, bool) or not isinstance(v, int):
         if isinstance(v, float) and v.is_integer():
@@ -108,7 +111,7 @@ def _int(raw: Mapping[str, object], key: str, default: int, lo: int, hi: int, ze
             raise SettingsError(key, "%s must be a whole number" % _LABEL[key])
     if not (lo <= v <= hi or (zero and v == 0)):
         if zero:
-            raise SettingsError(key, "%s must be blank (any free one) or %d to %d" % (_LABEL[key], lo, hi))
+            raise SettingsError(key, "%s must be blank (%s) or %d to %d" % (_LABEL[key], blank, lo, hi))
         raise SettingsError(key, "%s must be %d to %d" % (_LABEL[key], lo, hi))
     return v
 
@@ -119,6 +122,7 @@ _LABEL = {
     "port": "the page's port", "log_max_mb": "the log's size", "log_keep": "the number of log files kept",
     "expansion": "whether the expansion is installed", "mask_paths": "Mask paths on this page",
     "map_opengl": "Map jobs on Smithbox's OpenGL build only",
+    "work_cores": "the cores for image steps", "work_memory_mb": "the memory for image steps",
     "recent": "the folders used before",
 }
 
@@ -178,6 +182,9 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
     if not isinstance(gl, bool):
         raise SettingsError("map_opengl", "Map jobs on Smithbox's OpenGL build only must be on or off")
     vals["map_opengl"] = gl
+    vals["work_cores"] = _int(raw, "work_cores", d.work_cores, 1, 256, zero=True, blank="automatic")
+    vals["work_memory_mb"] = _int(raw, "work_memory_mb", d.work_memory_mb, 256, 1_048_576, zero=True,
+                                  blank="automatic")
     vals["recent"] = _recent(raw.get("recent", None))
     s = Settings(**vals)  # type: ignore[arg-type]
 

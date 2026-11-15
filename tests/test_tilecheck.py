@@ -5,8 +5,10 @@ import math
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -409,6 +411,81 @@ class OverviewTest(Base):
         self.assertEqual(bytes(canvas[0:4]), bytes(textures.GRID_RGBA))
 
 
+class WorkersTest(Base):
+    """S83: worker processes give the very rows and image one process gives (spawned, as on Windows)."""
+
+    MASK = None                         # OverviewTest's, set below
+
+    def test_s83_the_same_rows_with_worker_processes(self):
+        GeneralTest.fine_level(self, 0, 8, foreign_at=(3, 4))
+        ts = textures.tile_set(self.root, 0)
+        one, n1 = textures.check_level(ts, 0)
+        with mock.patch.object(textures, "POOL_MIN", 1):
+            two, n2 = textures.check_level(ts, 0, workers=2, memory=32 * 2 ** 20)
+        self.assertEqual(one, two)
+        self.assertEqual((n1["workers"], n2["workers"]), (1, 2))
+
+    def test_s83_the_same_image_with_worker_processes(self):
+        GeneralTest.fine_level(self, 0, 8, foreign_at=(3, 4))
+        a, na = textures.overview(self.root, 0, 0, labels=True)
+        with mock.patch.object(textures, "POOL_MIN", 1):
+            b, nb = textures.overview(self.root, 0, 0, labels=True, workers=2)
+        self.assertEqual(a, b)
+        self.assertEqual(na, nb)
+
+    def test_s83_the_masks_image_with_worker_processes(self):
+        OverviewTest.masked_level_1(self)
+        a, na = textures.overview(self.root, 0, 1)
+        with mock.patch.object(textures, "POOL_MIN", 1):
+            b, nb = textures.overview(self.root, 0, 1, workers=3, memory=8 * 2 ** 20)
+        self.assertEqual((a, na), (b, nb))
+
+    def test_s83_cancel_stops_the_workers(self):
+        GeneralTest.fine_level(self, 0, 8)
+        stop = threading.Event()
+        stop.set()
+        with mock.patch.object(textures, "POOL_MIN", 1), self.assertRaises(textures.Cancelled):
+            textures.check_level(textures.tile_set(self.root, 0), 0, workers=2, cancel=stop)
+
+    def test_s83_chunks_keep_the_order_and_share_the_weight(self):
+        places = [(x, y) for x in range(4) for y in range(5)]
+        chunks = textures._chunks(places, [3] * 20, 2)
+        self.assertEqual([p for c in chunks for p in c], places)
+        self.assertEqual([len(c) for c in chunks], [2] * 10)          # 60 // 8 = 7 a chunk: two places of 3 each
+
+    def test_s83_the_cache_follows_the_memory_given(self):
+        judge = textures.Judge(textures.TileSet(), 0)
+        self.assertEqual(judge.keep(), textures.Judge.KEEP)
+        judge.size, judge.keep_bytes = 256, 100 * 257 * 257 * 8
+        self.assertEqual(judge.keep(), 100)
+        judge.keep_bytes = 1
+        self.assertEqual(judge.keep(), 16)
+
+
+class NativeTest(unittest.TestCase):
+    """S83: Windows' own decoder, used only where it decodes as DataPiler does."""
+
+    def test_s83_the_self_test_images_and_colour_chunks(self):
+        for d in textures._selftest_pngs():
+            w, h, px = textures._python_decode(d)
+            self.assertEqual((w, h, len(px)), (7, 5, 140))
+            self.assertIn(b"gAMA", d)
+            self.assertNotIn(b"gAMA", textures._without_colour(d))
+            self.assertEqual(textures._python_decode(textures._without_colour(d)), (w, h, px))
+
+    @unittest.skipIf(sys.platform == "win32", "elsewhere than Windows")
+    def test_s83_elsewhere_datapiler_decodes_alone(self):
+        self.assertFalse(textures.native_decoding())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows' own decoder")
+    def test_s83_windows_decodes_as_datapiler_does(self):
+        self.assertTrue(textures.native_decoding())
+        big = bytes((x * 7 + y * 3 + k * 50) % 256 if k < 3 else (x * y) % 256 for y in range(64) for x in range(64)
+                    for k in range(4))
+        for d in textures._selftest_pngs() + [textures.png_filtered(64, 64, 6, big, [0, 1, 2, 3, 4])]:
+            self.assertEqual(textures.png_decode(d), textures._python_decode(d))
+
+
 class JobTest(unittest.TestCase):
     def doc(self, **over):
         op = {"op": "make_map_overview", "name": "ov", "sheet": 0, "level": 2}
@@ -446,6 +523,8 @@ class JobTest(unittest.TestCase):
             {"op": "check_map_tiles", "as": "t_check", "sheet": 0, "level": 12}]}).encode()
         self.assertEqual(self.where(bad), ["ops[0].level"])
 
+
+WorkersTest.MASK = OverviewTest.MASK
 
 if __name__ == "__main__":
     unittest.main()

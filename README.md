@@ -189,8 +189,9 @@ every map piece revealed (or, with `"variant": "base"`, none). Export every vari
 a tile whose pieces never meet is drawn from several of them. Variants that do not match the next zoom level are
 left out as another image's; `"labels": true` writes each tile's position and codes on it, and a job with
 `check_map_tiles` measures every tile of a level, numbers only. `"shrink": 4` makes levels 0 and 1 fit in one
-image. At levels 0 and 1 the game also keeps an older set of tiles, numbered four or three columns to the left of
-where they belong; an overview moves each to the place it matches.
+image. The container also holds tiles of an older layout. Once a job has unpacked the game's own mask files (an
+`unpack_game_file` job of `71_maptile.mtmskbnd.dcx`, see below), an overview draws each level exactly as the game
+does, from the masks, and leaves the older layout's tiles out; `check_map_tiles` marks them with `in_mask`.
 
 ## Game files unpacked by Smithbox
 

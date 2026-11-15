@@ -1700,9 +1700,12 @@ class Runner:
         except OSError as e:
             raise _Fail("a tile could not be read: %s" % logbook.why(e)) from None
         ctx.tables[o["as"]] = (list(textures.TILE_CHECK_COLUMNS), rows)
+        said = ("found: %s variants outside them" % logbook.n(n["outside_masks"])) if n["masks"] \
+            else "not found for this level"
         ctx.log.info("op %s check_map_tiles: %s tiles at %s positions, found in %s folders; compared with level %s (-1: none nests with it); "
-                     "%s variants look like another image's", i, logbook.n(n["tiles"]), logbook.n(n["positions"]),
-                     logbook.n(n["folders"]), n["near_level"], logbook.n(n["other_image"]))
+                     "%s variants look like another image's; the game's masks %s", i, logbook.n(n["tiles"]),
+                     logbook.n(n["positions"]), logbook.n(n["folders"]), n["near_level"], logbook.n(n["other_image"]),
+                     own(said))
         if not rows:
             ctx.log.warn("op %s check_map_tiles: no exported PNG tile of that sheet and level was found", i)
         return len(rows), len(rows)
@@ -1794,6 +1797,7 @@ class Runner:
                                         variant=o.get("variant", "revealed"), code=o.get("code"),
                                         check=o.get("check", True), min_match=o.get("min_match", textures.MATCH_MIN),
                                         labels=o.get("labels", False), shrink=o.get("shrink", 1),
+                                        masks=o.get("masks", True),
                                         skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
                                         progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
         except textures.Cancelled:
@@ -1812,11 +1816,12 @@ class Runner:
             raise _Fail("the workspace image could not be written: %s" % logbook.why(e)) from None
         name = o["name"] + ".png"
         ctx.local.append(name)
-        ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants, %s variants left "
-                     "out as another image's, %s of the old tile set moved to where they match), %s by %s pixels, %s "
-                     "bytes (local, never shared)", own(name), logbook.n(n["tiles"]), logbook.n(n["joined"]),
-                     logbook.n(n["left_out"]), logbook.n(n.get("moved", 0)), logbook.n(n["width"]),
-                     logbook.n(n["height"]), logbook.n(len(data)))
+        how = ("drawn from the game's own masks: %s from a mask's variant" % logbook.n(n["masked"])) if n["masks"] \
+            else "%s joined from several revealed variants" % logbook.n(n["joined"])
+        ctx.log.info("workspace image %s written: %s tiles (%s; %s variants left out as another image's or another "
+                     "layout's; %s tiles outside the level's frame), %s by %s pixels, %s bytes (local, never shared)",
+                     own(name), logbook.n(n["tiles"]), own(how), logbook.n(n["left_out"]), logbook.n(n["outside"]),
+                     logbook.n(n["width"]), logbook.n(n["height"]), logbook.n(len(data)))
         return n["tiles"], n["tiles"]
 
     def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:

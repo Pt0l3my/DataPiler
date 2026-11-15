@@ -52,16 +52,17 @@ class Base(unittest.TestCase):
         p.write_bytes(textures.png_encode(S, S, px))
 
     def two_levels(self):
-        """Level 2: 2 x 2 tiles of the world, each with a genuine variant (code 1, a lit patch) and, at (1, 1), a
-        variant from another drawing (code 2). Level 3: the world at half size, one tile, base and code 1."""
+        """Level 3: 2 x 2 tiles of the world, each with a genuine variant (code 1, a lit patch) and, at (1, 1), a
+        variant from another drawing (code 2). Level 4: the world at half size, one tile, base and code 1. (S82: the
+        legacy levels, whose scales still halve.)"""
         for x in (0, 1):
             for y in (0, 1):
                 top = (1 - y) * S                    # rows from the bottom: y 1 is the top row of the image
-                self.put(2, x, y, 0, tile(world, x * S, top))
-                self.put(2, x, y, 1, tile(world, x * S, top, patch=(10, 10, 30)))
-        self.put(2, 1, 1, 2, tile(other, 0, 0))
-        self.put(3, 0, 0, 0, tile(world, 0, 0, step=2.0))
-        self.put(3, 0, 0, 1, tile(world, 0, 0, step=2.0))
+                self.put(3, x, y, 0, tile(world, x * S, top))
+                self.put(3, x, y, 1, tile(world, x * S, top, patch=(10, 10, 30)))
+        self.put(3, 1, 1, 2, tile(other, 0, 0))
+        self.put(4, 0, 0, 0, tile(world, 0, 0, step=2.0))
+        self.put(4, 0, 0, 1, tile(world, 0, 0, step=2.0))
 
 
 class TileSetTest(Base):
@@ -89,28 +90,29 @@ class TileSetTest(Base):
 class CheckTest(Base):
     def test_a_variant_of_another_drawing_is_found(self):
         self.two_levels()
-        rows, n = textures.check_level(textures.tile_set(self.root, 0), 2)
+        rows, n = textures.check_level(textures.tile_set(self.root, 0), 3)
         by = {(r[0], r[1], r[2]): dict(zip([c for c, _ in textures.TILE_CHECK_COLUMNS], r)) for r in rows}
         self.assertEqual(len(rows), 9)
-        self.assertEqual((n["near_level"], n["other_image"], n["folders"]), (3, 1, 1))
+        self.assertEqual((n["near_level"], n["other_image"], n["folders"]), (4, 1, 1))
         base = by[(0, 0, 0)]
-        self.assertEqual((base["drawn"], base["like"], base["near_level"], base["near_code"]), (0, 1000, 3, 0))
+        self.assertEqual((base["drawn"], base["like"], base["near_level"], base["near_code"]), (0, 1000, 4, 0))
+        self.assertEqual(base["in_mask"], -1)                                     # no mask file found
         self.assertGreater(base["near"], 950)
         genuine = by[(1, 1, 1)]
         self.assertEqual(genuine["near_code"], 1)
         self.assertTrue(textures.passes(genuine["near"], genuine["near_base"]))
         self.assertEqual(genuine["drawn"], round(1000 * 30 * 30 / (S * S)))      # the lit patch only
         foreign = by[(1, 1, 2)]
-        self.assertEqual(foreign["near_code"], 0)                               # level 3 has no code 2: its base
+        self.assertEqual(foreign["near_code"], 0)                               # level 4 has no code 2: its base
         self.assertFalse(textures.passes(foreign["near"], foreign["near_base"]))
         self.assertLess(max(foreign["near"], foreign["near_base"]), 500)
 
     def test_the_coarsest_level_is_measured_against_the_finer_one(self):
         self.two_levels()
-        judge = textures.Judge(textures.tile_set(self.root, 0), 3)
-        self.assertEqual((judge.other, judge.ratio), (2, 2.0))
-        rows, n = textures.check_level(judge.ts, 3)
-        self.assertEqual(n["near_level"], 2)
+        judge = textures.Judge(textures.tile_set(self.root, 0), 4)
+        self.assertEqual((judge.other, judge.ratio), (3, 2.0))
+        rows, n = textures.check_level(judge.ts, 4)
+        self.assertEqual(n["near_level"], 3)
         self.assertTrue(all(max(r[9], r[10]) > 950 for r in rows), rows)
 
     def test_nothing_to_measure(self):
@@ -118,7 +120,8 @@ class CheckTest(Base):
         self.put(0, 0, 0, 4, tile(other, 0, 0))
         rows, n = textures.check_level(textures.tile_set(self.root, 0), 0)
         self.assertEqual(n["near_level"], -1)
-        self.assertEqual([r[7:] for r in rows], [(-1, -1, textures.UNMEASURED, textures.UNMEASURED, textures.UNMEASURED)] * 2)
+        self.assertEqual([r[7:] for r in rows],
+                         [(-1, -1, textures.UNMEASURED, textures.UNMEASURED, textures.UNMEASURED, -1)] * 2)
         self.assertTrue(textures.passes(textures.UNMEASURED, textures.UNMEASURED))
         flat = [5.0] * 16
         self.assertEqual(textures.ncc(flat, [float(k) for k in range(16)]), textures.UNMEASURED)
@@ -159,10 +162,12 @@ class GeneralTest(Base):
         ts = textures.TileSet()
         for lv, side in ((0, 41), (1, 31), (2, 11), (3, 6), (4, 3)):
             ts.levels[lv] = {(side - 1, side - 1): {0: Path("a")}}
-        self.assertEqual(textures.reference_level(ts), 3)
-        del ts.levels[3], ts.levels[4]
-        ts.levels[2] = {(8, 8): {0: Path("a")}}
-        self.assertEqual(textures.reference_level(ts), 2)                   # the expansion: 41, 31 and 9 a side
+        self.assertEqual(textures.reference_level(ts), 2)                   # S82: level 2's frame is 9; 3 is legacy
+        self.assertEqual([textures.frame(ts, lv) for lv in range(5)], [(41, 41), (31, 31), (9, 9), (6, 6), (3, 3)])
+        del ts.levels[2]
+        self.assertEqual(textures.reference_level(ts), 1)
+        del ts.levels[0], ts.levels[1]
+        self.assertEqual(textures.reference_level(ts), 3)                   # legacy levels only when nothing else
         self.assertIsNone(textures.reference_level(textures.TileSet()))
         self.assertEqual(textures.level_scale(5), 0.03125)
 
@@ -182,49 +187,49 @@ class GeneralTest(Base):
         self.assertTrue(all(v > 950 for (x, y, c), v in got.items() if c == 0), got)
         self.assertLess(got[(2, 1, 2)], 500)
 
-    def test_s80_a_level_whose_map_sits_at_the_top_of_its_grid(self):
+    def test_s80_a_level_whose_map_sits_at_the_top_of_its_frame(self):
         step = 1.0 / 4                                  # world units per level-0 pixel
-        for x in range(8):                              # level 0: 8 x 8 tiles, 512 pixels a side
-            for y in range(8):
-                self.put(0, x, y, 0, tile(world, x * S * step, (7 - y) * S * step, step=step))
-        k = 0.75                                        # level 1: the map is 384 pixels, its grid 7 rows (448)
-        for x in range(6):
+        for x in range(9):                              # level 0: 9 x 9 tiles, 576 pixels a side
+            for y in range(9):
+                self.put(0, x, y, 0, tile(world, x * S * step, (8 - y) * S * step, step=step))
+        k = 0.75                                        # level 1: the map is 432 pixels, its frame 7 tiles (448)
+        for x in range(7):
             for y in range(7):
-                top_l0 = 512 - (y * S) / k              # the tile's top, in level-0 pixels from the top
-                px = tile(world, x * S / k * step, top_l0 * step, step=step / k)
-                self.put(1, x, y, 0, px)
+                top_l0 = (6 - y) * S / k                # the tile's top, in level-0 pixels from the top
+                self.put(1, x, y, 0, tile(world, x * S / k * step, top_l0 * step, step=step / k))
                 if y:
                     self.put(1, x, y, 1, tile(world, x * S / k * step, top_l0 * step, step=step / k, patch=(5, 5, 8)))
         self.assertIn(1, textures.LEVEL_TOP)
         ts = textures.tile_set(self.root, 0)
+        self.assertEqual(textures.frame(ts, 1), (7, 7))
         rows, n = textures.check_level(ts, 1)
         scores = [max(r[9], r[10]) for r in rows if r[1] and r[9] != textures.UNMEASURED]
         self.assertTrue(scores and all(v > 900 for v in scores), scores)
         judge = textures.Judge(ts, 1)
         judge.size = S
-        self.assertEqual((judge.lift(1), judge.lift(0)), (64.0, 0.0))
+        self.assertEqual((judge.lift(1), judge.lift(0)), (16.0, 0.0))
 
-    def test_s80_a_tile_of_the_old_set_scores_where_it_belongs(self):
+    def test_s82_a_tile_of_the_older_layout_scores_where_its_ground_lies_today(self):
         self.fine_level(0, 8)
-        self.put(0, 2, 3, 4, tile(world, 4 * S / 4, (7 - 3) * S / 4, step=1.0 / 4))    # tile (4, 3)'s ground
+        self.put(0, 4, 3, 4, tile(world, 2 * S / 4, (7 - 3) * S / 4, step=1.0 / 4))    # tile (2, 3)'s ground
         old = textures.OLD_SHIFT
-        textures.OLD_SHIFT = 2 * S                      # two tiles, in level-0 pixels
+        textures.OLD_SHIFT = -2 * S                     # two tiles to the left, in level-0 pixels
         try:
             rows, _ = textures.check_level(textures.tile_set(self.root, 0), 0)
         finally:
             textures.OLD_SHIFT = old
-        r = next(r for r in rows if r[:3] == (2, 3, 4))
+        r = next(r for r in rows if r[:3] == (4, 3, 4))
         self.assertLess(max(r[9], r[10]), 500)
         self.assertGreater(r[11], 950)
         genuine = next(r for r in rows if r[:3] == (1, 1, 1))
         self.assertLess(genuine[11], 900)
 
-    def test_s81_the_expansions_geometry(self):
+    def test_s82_one_geometry_for_every_sheet(self):
         q = 2089 / 10496
-        self.assertEqual([textures.level_scale(lv, 10) for lv in (0, 1, 2, 3)], [1.0, 0.75, q, q / 2])
-        self.assertEqual([textures.level_scale(lv, s) for s in (0, 1, 11) for lv in (2,)], [0.25] * 3)
-        self.assertEqual(textures.level_top(10), frozenset({1, 2}))
-        self.assertEqual(textures.level_top(0), frozenset({1}))
+        for sheet in (0, 1, 10, 11):
+            self.assertEqual([textures.level_scale(lv, sheet) for lv in range(6)], [1.0, 0.75, q, 0.125, 0.0625, 0.03125])
+            self.assertEqual(textures.level_top(sheet), frozenset({1, 2}))
+        self.assertEqual([textures.legacy(lv) for lv in range(5)], [False, False, False, True, True])
         self.assertEqual(textures.tile_set(self.root, 10).sheet, 10)
 
     def expansion_level_2(self, sheet):
@@ -240,18 +245,15 @@ class GeneralTest(Base):
         rows, n = textures.check_level(textures.tile_set(self.root, sheet), 2)
         return [max(r[9], r[10]) for r in rows], n
 
-    def test_s81_the_expansions_level_2_at_the_top_left(self):
-        got, n = self.expansion_level_2(10)
-        self.assertEqual(n["near_level"], 0)
-        self.assertEqual(len(got), 4)
-        self.assertTrue(all(v > 950 for v in got), got)
-        judge = textures.Judge(textures.tile_set(self.root, 10), 2)
-        judge.size = S
-        self.assertAlmostEqual(judge.lift(2), 2 * S - 8 * S * textures.level_scale(2, 10))
-
-    def test_s81_the_base_maps_geometry_does_not_fit_the_expansion(self):
-        base, _ = self.expansion_level_2(0)             # the same tiles named as the base map's
-        self.assertLess(min(base), 700, base)
+    def test_s82_level_2_at_the_top_left_on_every_sheet(self):
+        for sheet in (0, 10):
+            got, n = self.expansion_level_2(sheet)
+            self.assertEqual(n["near_level"], 0)
+            self.assertEqual(len(got), 4)
+            self.assertTrue(all(v > 950 for v in got), got)
+            judge = textures.Judge(textures.tile_set(self.root, sheet), 2)
+            judge.size = S
+            self.assertAlmostEqual(judge.lift(2), 2 * S - 8 * S * textures.level_scale(2))
 
     def test_sums(self):
         px = bytes(v for k in range(16) for v in (k * 3, k * 3, k * 3, 255))
@@ -268,45 +270,45 @@ class OverviewTest(Base):
 
     def test_another_drawing_is_left_out_and_its_inner_codes_tried(self):
         self.two_levels()
-        self.put(2, 1, 1, 3, tile(other, 5, 5))      # codes 1 and 2 inside 3: 3 fails, then 2 fails, 1 is laid
-        data, n = textures.overview(self.root, 0, 2)
-        self.assertEqual((n["left_out"], n["near_level"]), (2, 3))
+        self.put(3, 1, 1, 3, tile(other, 5, 5))      # codes 1 and 2 inside 3: 3 fails, then 2 fails, 1 is laid
+        data, n = textures.overview(self.root, 0, 3)
+        self.assertEqual((n["left_out"], n["near_level"]), (2, 4))
         want = tile(world, S, 0, patch=(10, 10, 30))      # top right tile: the genuine variant
         w, h, px = textures.png_decode(data)
         got = b"".join(px[(r * w + S) * 4:(r * w + 2 * S) * 4] for r in range(S))
         self.assertEqual(got, want)
-        raw, n = textures.overview(self.root, 0, 2, check=False)
+        raw, n = textures.overview(self.root, 0, 3, check=False)
         self.assertEqual(n["left_out"], 0)
         self.assertNotEqual(raw, data)
 
     def test_one_code_where_exported_and_the_base_elsewhere(self):
         self.two_levels()
-        data, _ = textures.overview(self.root, 0, 2, variant="code", code=2)
+        data, _ = textures.overview(self.root, 0, 3, variant="code", code=2)
         w, h, px = textures.png_decode(data)
         top_right = b"".join(px[(r * w + S) * 4:(r * w + 2 * S) * 4] for r in range(S))
         bottom_left = b"".join(px[((S + r) * w) * 4:((S + r) * w + S) * 4] for r in range(S))
         self.assertEqual(top_right, tile(other, 0, 0))
         self.assertEqual(bottom_left, tile(world, 0, S))
         with self.assertRaises(ValueError):
-            textures.overview(self.root, 0, 2, variant="code")
+            textures.overview(self.root, 0, 3, variant="code")
 
     def test_shrink(self):
         self.two_levels()
-        full, n = textures.overview(self.root, 0, 2, variant="base")
-        half, m = textures.overview(self.root, 0, 2, variant="base", shrink=2)
+        full, n = textures.overview(self.root, 0, 3, variant="base")
+        half, m = textures.overview(self.root, 0, 3, variant="base", shrink=2)
         self.assertEqual((m["width"], m["height"], m["tile"]), (S, S, S // 2))
         fw, fh, fpx = textures.png_decode(full)
         hw, hh, hpx = textures.png_decode(half)
         want = [sum(fpx[((2 * 5 + a) * fw + 2 * 7 + b) * 4] for a in (0, 1) for b in (0, 1)) for _ in (0,)][0]
         self.assertEqual(hpx[(5 * hw + 7) * 4], (want + 2) // 4)
         with self.assertRaises(ValueError):
-            textures.overview(self.root, 0, 2, shrink=3)
+            textures.overview(self.root, 0, 3, shrink=3)
         self.assertEqual(textures.shrink_rgba(b"\x01\x02\x03\x04" * 4, 2, 1), bytearray(b"\x01\x02\x03\x04" * 4))
 
     def test_labels_draw_borders_and_text(self):
         self.two_levels()
-        plain, _ = textures.overview(self.root, 0, 2)
-        data, _ = textures.overview(self.root, 0, 2, labels=True)
+        plain, _ = textures.overview(self.root, 0, 3)
+        data, _ = textures.overview(self.root, 0, 3, labels=True)
         self.assertEqual(self.pixel(data, 0, 40), textures.GRID_RGBA)          # the left border
         self.assertEqual(self.pixel(data, 40, S), textures.GRID_RGBA)          # the second row's top border
         w, h, px = textures.png_decode(data)
@@ -314,54 +316,92 @@ class OverviewTest(Base):
         self.assertGreater(white, 100)
         self.assertEqual(self.pixel(plain, S - 1, S - 1), self.pixel(data, S - 1, S - 1))   # far from any label
 
-    def old_set(self, current_too=False):
-        """Level 0, 8 x 8 tiles over a level-3 reference; at (2, 3), code 4 of the old set: the ground of tile (4, 3)
-        with a lit patch, which belongs two tiles to the right (OLD_SHIFT made two tiles for the test)."""
-        GeneralTest.fine_level(self, 0, 8)
-        old_ground = (4 * S / 4, (7 - 3) * S / 4)
-        self.put(0, 2, 3, 4, tile(world, *old_ground, step=1.0 / 4, patch=(40, 40, 10)))
-        if current_too:
-            self.put(0, 4, 3, 4, tile(world, *old_ground, step=1.0 / 4, patch=(20, 40, 10)))
-        old = textures.OLD_SHIFT
-        textures.OLD_SHIFT = 2 * S
-        try:
-            return textures.overview(self.root, 0, 0, labels=False)
-        finally:
-            textures.OLD_SHIFT = old
+    MASK = """<?xml version="1.0" ?>
+<MapTileMaskList id="0">
+\t<MapTileMask exists="1" id="10000" mask="1"/>
+\t<MapTileMask exists="1" id="10100" mask="2"/>
+\t<MapTileMask exists="0" id="10200" mask="7"/>
+</MapTileMaskList>
+"""
 
-    def lit(self, data, tx, ty, c, r):
-        """Whether the pixel (c, r) of tile (tx, ty) is lit above the base."""
+    def masked_level_1(self, mask=None):
+        """S82: level 0 4 x 4 (so level 1's frame is 3 x 3); level 1 4 x 3 with a column outside the frame; at (0, 0)
+        codes 1 (the mask) and 4 (another layout's); at (1, 0) code 2 (the mask); the game's mask file beside them."""
+        for x in range(4):
+            for y in range(4):
+                self.put(0, x, y, 0, tile(world, x * S, y * S))
+        for x in range(4):
+            for y in range(3):
+                self.put(1, x, y, 0, tile(world, x * S, y * S))
+        self.put(1, 0, 0, 1, tile(world, 0, 0, patch=(10, 10, 20)))
+        self.put(1, 0, 0, 4, tile(other, 0, 0))
+        self.put(1, 1, 0, 2, tile(world, S, 0, patch=(30, 30, 20)))
+        p = self.root / "unpacked" / "MENU_MapTile_M00.mtmsk"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes((self.MASK if mask is None else mask).replace("\n", "\r\n").encode("utf-8"))
+
+    def test_s82_the_masks_are_read_by_fixed_patterns_only(self):
+        got = textures.parse_masks(self.MASK.encode())
+        self.assertEqual(got, {1: {(0, 0): 1, (1, 0): 2, (2, 0): 0}})
+        self.assertEqual(textures.parse_masks(b"\xef\xbb\xbf" + self.MASK.encode()), got)
+        for bad in ('<!DOCTYPE x [<!ENTITY a "b">]>', '<MapTileMask id="1" exists="1" mask="1"/>',
+                    '<MapTileMask exists="2" id="1" mask="1"/>', '<Other/>', 'text',
+                    '<MapTileMask exists="1" id="1" mask="99999999999"/>'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                textures.parse_masks((self.MASK + bad + "\n").encode())
+        with self.assertRaises(ValueError):
+            textures.parse_masks(b"\xff\xfe")
+        with self.assertRaises(ValueError):
+            textures.parse_masks(b" " * (textures.MAX_MASK_BYTES + 1))
+
+    def test_s82_the_tile_set_finds_the_masks_and_copies_must_agree(self):
+        self.masked_level_1()
+        ts = textures.tile_set(self.root, 0)
+        self.assertTrue(ts.masked())
+        self.assertEqual((ts.mask_at(1), ts.mask_at(0), ts.mask_copies), ({(0, 0): 1, (1, 0): 2, (2, 0): 0}, None, 1))
+        self.assertFalse(textures.tile_set(self.root, 1).masked())         # another sheet's
+        copy = self.root / "elsewhere" / "menu_maptile_m00.MTMSK"
+        copy.parent.mkdir()
+        copy.write_bytes((self.root / "unpacked" / "MENU_MapTile_M00.mtmsk").read_bytes())
+        self.assertEqual(textures.tile_set(self.root, 0).mask_copies, 2)
+        copy.write_bytes(self.MASK.replace('mask="2"', 'mask="3"').encode())
+        with self.assertRaises(ValueError):
+            textures.tile_set(self.root, 0)
+
+    def test_s82_an_overview_draws_what_the_game_draws(self):
+        self.masked_level_1()
+        data, n = textures.overview(self.root, 0, 1)
+        self.assertEqual((n["masks"], n["columns"], n["rows"], n["outside"], n["masked"], n["left_out"]),
+                         (1, 3, 3, 3, 2, 1))
         w, h, px = textures.png_decode(data)
-        top = (8 - 1 - ty) * S
-        base = tile(world, tx * S / 4, (7 - ty) * S / 4, step=1.0 / 4)
-        return px[((top + r) * w + tx * S + c) * 4] > base[(r * S + c) * 4]
+        bottom = (h - S) * w * 4
 
-    def test_s81_the_old_set_is_moved_to_where_it_matches(self):
-        data, n = self.old_set()
-        self.assertEqual(n["moved"], 1)
-        self.assertTrue(self.lit(data, 4, 3, 45, 45))               # the old variant's patch, moved to (4, 3)
-        self.assertTrue(self.lit(data, 4, 3, 7, 7))                 # today's code 1 there, over it
-        self.assertFalse(self.lit(data, 2, 3, 45, 45))              # not at its own place, where it fails
-        self.assertEqual(n["left_out"], 1)
+        def at(tx, c, r):
+            k = bottom + (r * w + tx * S + c) * 4
+            return bytes(px[k:k + 4])
+        lit = tile(world, 0, 0, patch=(10, 10, 20))
+        self.assertEqual(at(0, 15, 15), bytes(lit[(15 * S + 15) * 4:(15 * S + 15) * 4 + 4]))     # mask 1 drawn
+        two = tile(world, S, 0, patch=(30, 30, 20))
+        self.assertEqual(at(1, 35, 35), bytes(two[(35 * S + 35) * 4:(35 * S + 35) * 4 + 4]))     # mask 2 drawn
+        base = tile(world, 2 * S, 0)
+        self.assertEqual(at(2, 35, 35), bytes(base[(35 * S + 35) * 4:(35 * S + 35) * 4 + 4]))    # no pieces: base
+        plain, m = textures.overview(self.root, 0, 1, masks=False, check=False)
+        self.assertEqual((m["masks"], m["columns"], m["outside"]), (0, 4, 0))
+        labelled, _ = textures.overview(self.root, 0, 1, labels=True)
+        self.assertNotEqual(labelled, data)
 
-    def test_s81_todays_variant_of_the_same_code_wins(self):
-        data, n = self.old_set(current_too=True)
-        self.assertEqual(n["moved"], 0)
-        self.assertTrue(self.lit(data, 4, 3, 25, 45))               # today's code 4
-        self.assertFalse(self.lit(data, 4, 3, 45, 45))
-
-    def test_s81_no_old_set_at_other_levels_or_unchecked(self):
-        GeneralTest.fine_level(self, 0, 8)
-        self.put(0, 2, 3, 4, tile(world, 4 * S / 4, (7 - 3) * S / 4, step=1.0 / 4, patch=(40, 40, 10)))
-        old = textures.OLD_SHIFT
-        textures.OLD_SHIFT = 2 * S
-        try:
-            _, n = textures.overview(self.root, 0, 0, check=False)
-            self.assertEqual(n["moved"], 0)
-            _, n = textures.overview(self.root, 0, 3)
-            self.assertEqual(n["moved"], 0)
-        finally:
-            textures.OLD_SHIFT = old
+    def test_s82_the_check_says_which_codes_the_game_draws(self):
+        self.masked_level_1()
+        ts = textures.tile_set(self.root, 0)
+        rows, n = textures.check_level(ts, 1)
+        by = {r[:3]: r[12] for r in rows}
+        self.assertEqual((by[(0, 0, 0)], by[(0, 0, 1)], by[(0, 0, 4)], by[(1, 0, 2)], by[(3, 2, 0)]), (1, 1, 0, 1, 1))
+        self.assertEqual((n["masks"], n["outside_masks"]), (1, 1))
+        rows0, n0 = textures.check_level(ts, 0)
+        self.assertEqual(({r[12] for r in rows0}, n0["masks"]), ({-1}, 0))        # no masks kept for level 0
+        judge = textures.Judge(ts, 0)
+        self.assertEqual(judge.other, 1)
+        self.assertEqual(sorted(judge.there[(0, 0)]), [0, 1])                     # another layout's never stands in
 
     def test_label_lines_that_do_not_fit(self):
         canvas = bytearray(S * S * 4)
@@ -384,6 +424,8 @@ class JobTest(unittest.TestCase):
 
     def test_overview_options(self):
         self.assertEqual(self.where(self.doc(labels=True, check=False, min_match=850)), [])
+        self.assertEqual(self.where(self.doc(masks=False)), [])
+        self.assertEqual(self.where(self.doc(masks="no")), ["ops[0].masks"])
         self.assertEqual(self.where(self.doc(variant="code", code=0x4000)), [])
         self.assertEqual(self.where(self.doc(code=1)), ["ops[0].code"])
         self.assertEqual(self.where(self.doc(variant="code")), ["ops[0].code"])

@@ -13,6 +13,21 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.32 - 2026-11-15
+
+- New: overviews draw each level as the game does (S82). The game's own mask files, which an `unpack_game_file` job
+  of `71_maptile.mtmskbnd.dcx` writes to the workspace, say for every tile which map pieces touch it; with every piece
+  revealed, the game draws the variant whose code is that mask. DataPiler finds them in its folder and draws each
+  level's frame from them; every other code is another layout's and is left out. `"masks": false` turns this off.
+- New: `check_map_tiles` adds `in_mask`: whether each variant is one the game draws (1), another layout's (0), or
+  not known (-1).
+- Changed: one geometry for every sheet, measured from the masks (S82): level 1 three quarters of level 0 and level
+  2 2,089 / 10,496 of it, both at the top left of their frame (31 and 9 tiles a side). Levels 3 and 4 are an older
+  layout the game no longer draws; they are no longer the reference level.
+- Withdrawn: 0.2.31's moving of the "old tile set" in overviews. The masks show those tiles are today's, and the
+  reference level 3 the older layout's; `moved` now measures a tile 1,024 map units to the left, where the ground of
+  a tile of the older layout lies today.
+
 ## 0.2.31 - 2026-11-15
 
 - New: `unpack_game_file` opens a game file that Smithbox unpacked into DataPiler's folder (DP28, S81): DCX files are

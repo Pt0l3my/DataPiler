@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "datapiler-job-1.schema.json",
   "title": "DataPiler job, datapiler-job/1",
-  "description": "A job for DataPiler 0.1: data, never code. DataPiler checks the same rules again itself, and some more that a schema cannot state: each `as` is used once and only tables made by earlier operations are read; columns exist in their table and are of the right type (`key` and `by` take whole numbers or flags, a share file never takes the `name` column of join_names); a job writes at most one share file, under a name no other job here uses; `needs` is not above DataPiler's version; the id is not used by another job here.",
+  "description": "A job for DataPiler 0.1: data, never code. DataPiler checks the same rules again itself, and some more that a schema cannot state: each `as` is used once and only tables made by earlier operations are read; columns exist in their table and are of the right type (`key` and `by` take whole numbers or flags, a share file never takes the `name` column of join_names); a job writes at most one share file, under a name no other job here uses; `needs` is not above DataPiler's version; the id is not used by another job here. `about` came in 0.2.39: a job that has one says \"needs\": \"0.2.39\", so that an older DataPiler, which refuses the key, also names the version it needs.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,6 +25,13 @@
       "minLength": 1,
       "maxLength": 120,
       "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+    },
+    "about": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600,
+      "pattern": "^[^\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f]*$",
+      "description": "Optional (0.2.39): what the job is about and what it covers, in plain text, shown at the top of its card under About, with the codes it and the title cite (such as WHY§93, DP28, S81, G27, O48, ER05§8 or en-0036) as chips. 1 to 600 characters; a newline starts a new line, and no other control character is taken. Shown as text, never as markup; never logged and never in a share file."
     },
     "needs": {
       "type": "string",

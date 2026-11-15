@@ -20,7 +20,7 @@ FIXTURES = os.path.join(ROOT, "tests", "fixtures", "job-files")
 SCHEMA_CATCHES = {"bad-not-object.json", "bad-too-deep.json", "bad-wrong-format.json", "bad-unknown-key.json",
                   "bad-unknown-op.json", "bad-unknown-argument.json",
                   "bad-unquoted-value.json", "bad-path-name.json", "bad-extract-prefix.json", "bad-load-all.json",
-                  "bad-missing-title.json"}
+                  "bad-missing-title.json", "bad-about-control.json"}
 CHECK_ONLY = {"bad-duplicate-key.json", "bad-as-twice.json", "bad-later-table.json", "bad-two-write-share.json",
               "bad-text-local-share.json", "bad-needs-newer.json", "bad-where-type.json", "bad-raw-share.json",
               "bad-field-not-read.json"}   # DP24: the schema takes any field name; the checker wants a check first
@@ -262,6 +262,27 @@ class SchemaTest(unittest.TestCase):
             bad = json.loads(json.dumps(doc))
             mutate(bad)
             self.assertFalse(self.v.valid(bad, self.schema))
+
+    def test_about_agrees_with_the_check(self):
+        """S95 (DP34): the schema's about takes what jobs.check takes, and refuses what it refuses."""
+        about = self.schema["properties"]["about"]
+        self.assertEqual((about["minLength"], about["maxLength"]), (1, jobs.MAX_ABOUT))
+        self.assertNotIn("about", self.schema["required"])
+        doc = {"format": jobs.FORMAT, "id": "test-0007-about", "title": "About", "needs": "0.2.39", "ops": [
+            {"op": "unpack_game_file", "file": "m99_00_00_00.msb.dcx"}]}
+        for value, ok in (("One line.", True), ("Two lines:\nthe second.", True), ("x" * 600, True),
+                          ("§ and Ü (WHY§93)", True), ("", False), ("x" * 601, False), ("a\tb", False),
+                          ("a\rb", False), ("a\u0000b", False), ("a\u007fb", False), ("a\u0085b", False), (3, False),
+                          (["a"], False)):
+            d = dict(doc, about=value)
+            with self.subTest(about=repr(value)[:20]):
+                self.assertEqual(self.v.valid(d, self.schema), ok)
+                raw = json.dumps(d).encode()
+                if ok:
+                    self.assertEqual(jobs.check(raw, known_ids=(), share_names={}).about, d["about"])
+                else:
+                    with self.assertRaises(jobs.JobRefused):
+                        jobs.check(raw, known_ids=(), share_names={})
 
     def test_filters_explicit_list_of_ids(self):
         doc = {"format": jobs.FORMAT, "id": "test-0006-pick", "title": "Pick", "ops": [

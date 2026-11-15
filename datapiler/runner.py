@@ -118,12 +118,15 @@ class _Card:
     resume_from: int | None = None  # S84: the step a resumed run goes on from, its context read from the paused file
     packing: dict | None = None     # S87 (DP30): {done, of} bytes while its files are packed into 7z
     packed: dict | None = None      # S87: the last pack's parts, or its error
+    about: dict | None = None       # S95 (DP34): the About block (jobs.about_block), for a checked job only
+    details: dict | None = None     # S95: the preview's columns with the same sentences merged (jobs.details)
 
     def public(self) -> dict:
         return {"id": self.id, "title": self.title, "format": jobs.FORMAT if self.format_ok else None,
                 "sha256": self.sha256, "state": self.state,
                 "refusals": [{"op": r.op, "where": r.where, "text": r.text} for r in self.refusals],
-                "preview": self.preview, "wait": self.wait, "ops": [dict(o) for o in self.ops],
+                "preview": self.preview, "about": self.about, "details": self.details,
+                "wait": self.wait, "ops": [dict(o) for o in self.ops],
                 "pausing": self.pausing,
                 "packing": dict(self.packing) if self.packing else None,
                 "packed": json.loads(json.dumps(self.packed)) if self.packed else None,
@@ -630,7 +633,8 @@ class Runner:
                          refusals=[jobs.Refusal("id", "the job's folder does not match its id", None)],
                          preview=None, state="refused", ops=[], added=added)
         return _Card(id=job.id, sha256=sha, title=job.title, format_ok=True, job=job, refusals=[],
-                     preview=jobs.preview(job), state="checked", ops=_ops_public(job), added=added)
+                     preview=jobs.preview(job), state="checked", ops=_ops_public(job), added=added,
+                     about=jobs.about_block(job), details=jobs.details(job))
 
     # ------------------------------------------------------------------------------------------------ jobs
 

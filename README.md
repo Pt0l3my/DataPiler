@@ -153,6 +153,14 @@ first.
 Jobs that finished before DataPiler started start folded to their title row; a job that finishes while it runs stays
 unfolded, its results in view. Fold or unfold a card yourself and DataPiler remembers that for the job in this browser.
 
+Each card opens with an **About** block: the job's own description, when its file has one, a line DataPiler counts
+from the job's steps (what it reads, computes and writes, the game files grouped by map, and whether anything is
+shared), and the codes its title and description cite, such as WHY§93, DP28 or en-0036, as small chips. What each
+step reads, computes and writes is under **Details**, folded at first; unfolded, steps that say the same of different
+files are one item, with their count and the files' names. A card's Details stays open or closed while the page is
+open, whatever you fold or unfold around it. A job's description is its file's `about`: plain text of up to 600
+characters, where a newline starts a new line; a job that has one says `"needs": "0.2.39"`.
+
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
 you to type `DELETE`, then moves the saved progress to the Deleted bin (below) and starts from the beginning. A whole map job runs

@@ -13,6 +13,22 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.39 - 2026-11-15
+
+- New: an **About** block at the top of every checked job's card, before a run, while it runs and after (DP34, S95).
+  It holds the job's own description, when its file has one; a line DataPiler counts from the job's steps, such as
+  "Reads 40 game files: m12_07_00_00 (31 models and its placement file), m12_04_00_00 (7 and its placement file).
+  Computes nothing. Writes 40 local folders, none shared."; and the codes its title and description cite (such as
+  WHY§93, DP28, S81, G27, O48, ER05§8 or en-0036), as small chips of plain text.
+- Changed: a card's Reads / Computes / Writes columns are under **Details (N steps)**, folded at first (S95). Unfolded,
+  steps whose sentences differ only by the name they quote are one item, with the count and the names in a list that
+  wraps ("40 game files … that Smithbox unpacked, …"), and steps whose sentences are the same word for word are one
+  item ("2 steps: …"). Each card's Details stays open or closed while the page is open; folding the card, **Fold all**
+  and **Unfold all** leave it as it was.
+- New: a job file may have an `about`: plain text of 1 to 600 characters, where a newline starts a new line and no
+  other control character is taken; anything else is refused, naming the rule. A job that has one says
+  `"needs": "0.2.39"`, as older versions refuse the key. The schema has it.
+
 ## 0.2.38 - 2026-11-15
 
 - Changed: the top bar's server link chip says whether the link is established, not only whether it is on (DP33,

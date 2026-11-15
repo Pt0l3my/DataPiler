@@ -605,7 +605,8 @@ closed for two checks in a row, the state returns to `on` (the session's switch 
 
 Top-level keys: `format` (`"datapiler-job/1"`), `id` (`[a-z0-9][a-z0-9-]{2,63}`, not starting `extract-`, unique
 among the jobs here), `title` (1 to 120 characters, no control characters), `ops` (1 to 64), and optionally `needs`
-(`\d+\.\d+(\.\d+)?`, S13). Any other key is refused.
+(`\d+\.\d+(\.\d+)?`, S13) and, from 0.2.39, `about` (1 to 600 characters, no control character but the newline; the
+card's About block, S95). Any other key is refused.
 
 Names: tables (`as`, `rows`, `tables`) `[a-z][a-z0-9_]{0,31}`, each `as` used once, each reference to an earlier
 op's `as`; fields `[A-Za-z][A-Za-z0-9_]{0,63}`; file names `paths.NAME_RX`. Column types inside the runner:

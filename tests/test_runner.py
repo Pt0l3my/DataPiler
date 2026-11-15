@@ -1055,6 +1055,31 @@ class AddAndRemoveTest(RunnerBase):
         dup, _ = self.r.add("w.json", fixture("job-files", "bad-as-twice.json"))
         self.assertTrue(dup["id"].startswith("refused-"))
         self.assertIn("id", [r["where"] for r in dup["refusals"]])
+        for c in (card, bad, dup):                  # S95: no About block and no Details on a refused card
+            self.assertEqual((c["about"], c["details"]), (None, None))
+
+    def test_the_about_block_and_the_details(self):
+        """S95 (DP34): a checked card carries its About block and its Details, the same before a run and after a
+        load of the jobs folder (they are read from the job file again)."""
+        card, _ = self.r.add("about.json", fixture("job-files", "good-about.json"))
+        self.assertEqual(card["state"], "checked")
+        self.assertEqual(card["about"]["text"], "Every model and the placement file of two invented maps, unpacked "
+                                                "on the PC.\nFollows en-0039; the files are invented (DP28, S81).")
+        self.assertEqual(card["about"]["summary"], "Reads 40 game files: m99_07_00_00 (31 models and its placement "
+                                                   "file), m99_04_00_00 (7 and its placement file). Computes nothing. "
+                                                   "Writes 40 local folders, none shared.")
+        self.assertEqual(card["about"]["refs"], ["G27", "WHY§93", "en-0039", "DP28", "S81"])
+        self.assertEqual([(len(v), [len(x.get("names") or []) for x in v]) for v in card["details"].values()],
+                         [(1, [40]), (0, []), (1, [40])])
+        self.assertEqual(len(card["preview"]["reads"]), 40)            # the preview keeps a sentence a step
+        plain, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
+        self.assertEqual((plain["about"]["text"], plain["about"]["refs"]), (None, []))
+        again = self.new_runner()
+        again.load_folder()
+        self.assertEqual({c["id"]: (c["about"], c["details"]) for c in again.cards()},
+                         {c["id"]: (c["about"], c["details"]) for c in self.r.cards()})
+        for f in self.p.jobs.glob("*/state.json"):        # the state kept on disk holds none of it
+            self.assertNotIn("Every model", f.read_text(encoding="utf-8"))
 
     def test_remove(self):
         card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))

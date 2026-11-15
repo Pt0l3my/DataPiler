@@ -20,7 +20,7 @@ EXPECTED = {
     "bad-not-object.json": ("(file)", "the file is not a JSON object"),
     "bad-too-deep.json": ("(file)", "the file nests deeper than 16 levels"),
     "bad-wrong-format.json": ("format", "not a format DataPiler reads (it reads datapiler-job/1)"),
-    "bad-unknown-key.json": ("(top level)", "`colour` is not a key of a job (format, id, title, ops, needs)"),
+    "bad-unknown-key.json": ("(top level)", "`colour` is not a key of a job (format, id, title, about, ops, needs)"),
     "bad-duplicate-key.json": ("(top level)", "a key is given twice"),
     "bad-unknown-op.json": ("ops[2].op", "`run_command` is not an operation DataPiler has (%s)" % OPS_LIST),
     "bad-unknown-argument.json": ("ops[0]", "`path` is not an argument of fetch_rows"),
@@ -40,6 +40,8 @@ EXPECTED = {
                                          "name the maps by id"),
     "bad-where-type.json": ("ops[3].where.named", "`named` is a flag - compare it with true or false"),
     "bad-missing-title.json": ("title", "missing - a job has a title of 1 to 120 characters"),
+    "bad-about-control.json": ("about", "must be 1 to 600 characters, with no control characters but the "
+                                        "newline"),
 }
 
 
@@ -331,7 +333,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.39", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.40", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -565,3 +567,49 @@ class SameJobCheckTest(unittest.TestCase):
         chk2 = dict(chk, param="MapNameTexParam")
         self.assertEqual([r.where for r in refusals(job([rd, chk2]))], ["ops[0].fields[1]"])
 
+
+
+class AboutTest(unittest.TestCase):
+    """S95 (DP34): `about`, optional, plain text of 1 to 600 characters with no control character but the newline;
+    refused like the title, its value never quoted."""
+
+    def with_about(self, about) -> bytes:
+        doc = example()
+        doc["about"] = about
+        doc["needs"] = "0.2.39"
+        return json.dumps(doc).encode()
+
+    def test_taken(self):
+        for about in ("x", "Two lines:\nthe second one.", "x" * jobs.MAX_ABOUT, "Ünïcode and § kept (WHY§93)",
+                      "<b>not markup</b> & no entity"):
+            with self.subTest(about=about[:20]):
+                self.assertEqual(check(self.with_about(about)).about, about)
+        self.assertIsNone(check(fixture("good-example.json")).about)
+        self.assertEqual(jobs.TOP_KEYS["about"], False)
+
+    def test_refused_naming_the_rule(self):
+        rule = "must be 1 to 600 characters, with no control characters but the newline"
+        self.assertEqual(jobs.ABOUT_RULE, rule)
+        for about in ("", "x" * (jobs.MAX_ABOUT + 1), "a\tb", "a\r\nb", "a\x00b", "a\x1bb", "a\x7fb", "a\x85b",
+                      "a\x9fb", 7, None, True, ["a list"], {"an": "object"}):
+            with self.subTest(about=repr(about)[:20]):
+                got = refusals(self.with_about(about))
+                self.assertEqual([(r.where, r.text, r.op) for r in got], [("about", rule, None)])
+
+    def test_never_quoted(self):
+        for v in (PLANTED + "\t", PLANTED * 40):                 # a tab; 720 characters
+            got = refusals(self.with_about(v))
+            self.assertEqual(len(got), 1)
+            self.assertNotIn(PLANTED, got[0].text + got[0].where)
+
+    def test_a_refused_about_leaves_the_rest_checked(self):
+        doc = json.loads(self.with_about("a\tb"))
+        doc["colour"] = 1
+        got = refusals(json.dumps(doc).encode())
+        self.assertEqual([r.where for r in got], ["(top level)", "about"])
+        self.assertEqual(got[0].text, "`colour` is not a key of a job (format, id, title, about, ops, needs)")
+
+    def test_the_fixture(self):
+        j = check(fixture("good-about.json"))
+        self.assertEqual((j.id, j.needs, len(j.ops)), ("test-0005-about", "0.2.39", 40))
+        self.assertIn("\n", j.about)

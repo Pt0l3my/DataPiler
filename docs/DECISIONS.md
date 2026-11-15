@@ -30,7 +30,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   DP31 (the server link switched on by itself after launch, a setting), the owner's request, built in 0.2.36.
   DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request; its drop box
   rebuilt in 0.2.37, and DP30's jobs finished in the session left unfolded, both at the owner's word. DP33 (the
-  server link's chip says whether the link is established), the owner's request, built in 0.2.38.
+  server link's chip says whether the link is established), the owner's request, built in 0.2.38. DP34 (an About
+  block on each job card, and its columns folded under Details), the owner's request, built in 0.2.39.
 - **Open.** None.
 
 ## DP1
@@ -627,5 +628,25 @@ on the Server link card, say when the server last answered, or why it did not. W
 used (DP4), so the chip says so and claims no connection. Every rule of DP4 holds: the answer comes from the check
 DataPiler already makes (a connection to the server's port, closed at once, never while the game runs) and from the
 link's own read calls; no new call is made.
+
+**Owner's words.** As above.
+
+## DP34
+
+**An About block on each job card, and its columns folded under Details** · *2026-11-15 · The owner's request*
+
+**The owner's request.** With a screenshot of a finished job's card, its Reads, Computes and Writes columns each a
+bullet a step (an unpack job of 40 files): "the job columns are getting very long, I wondered if we could do something
+about that, perhaps make these columns fold/unfold and normally folded, but provide short description at the top above
+these column what the job is about and what it covers with references. What do you think?"
+
+**Decision.** The design agreed the same day, built in 0.2.39 (S95). Every checked job's card, before a run, while it
+runs and after, opens with an **About** block: the job's own description, when its file has one (a new optional
+`about`, plain text of 1 to 600 characters, refused like the title otherwise); a line DataPiler counts from the job's
+steps, in three sentences for what it reads, computes and writes, the game files grouped by map; and the codes the
+title and the description cite, as plain chips with no link. The columns are under one **Details** toggle inside the
+card, folded at first, and say the same as before, except that steps whose sentences differ only by the name they
+quote, or not at all, are one item with their count and the names. Whether a card's Details is open is kept while the
+page is open; DP30's fold of whole cards, and Fold all and Unfold all, leave it as it was.
 
 **Owner's words.** As above.

@@ -420,12 +420,60 @@ function jobPill(j) {
   if (j.state === "paused") return el("span", "pill warn", "paused");
   return el("span", "pill mute", j.state);
 }
-function listCol(title, items) {
+// S95 (DP34): the About block at the top of a checked job's card, before a run, during it and after: the job's own
+// words (its `about`), DataPiler's line of what it reads, computes and writes, and the codes its title and words cite,
+// as plain chips (no link: the page asks nothing of elsewhere).
+function aboutBlock(a) {
+  const d = el("div", "jabout");
+  add(d, el("b", null, "About"));
+  if (a.text) add(d, el("div", "jabout-text", a.text));
+  add(d, el("div", "jabout-sum", a.summary));
+  if (a.refs && a.refs.length) {
+    const r = el("div", "jrefs");
+    add(r, el("span", "mute", "References"));
+    a.refs.forEach((x) => { const s = el("span", "jref", x); s.title = "Cited in the job's title or description"; add(r, s); });
+    add(d, r);
+  }
+  return d;
+}
+// S95: one item of Details' columns: a step's sentence, or steps that say the same of different names merged, their
+// names in a compact list that wraps
+function detailItem(it) {
+  const li = add(el("li"), phText(it.text));
+  if (it.names) {
+    const ns = el("div", "jnames");
+    it.names.forEach((n) => add(ns, el("code", null, n)));
+    add(li, ns, phText(it.tail));
+  }
+  return li;
+}
+function detailCol(title, items) {
   const d = el("div"); add(d, el("b", null, title));
   const ul = el("ul");
-  (items || []).forEach((t) => add(ul, add(el("li"), phText(t))));
+  (items || []).forEach((it) => add(ul, detailItem(it)));
   if (!items || !items.length) add(ul, el("li", "mute", "nothing"));
   return add(d, ul);
+}
+// S95: Reads / Computes / Writes under one Details toggle inside the card, folded by default. Whether a card's Details
+// is open is kept while this page is open (not saved), by the same key as the card's fold. It is not DP30's fold of
+// whole cards (S54, S86, S92): folding a card, Fold all and Unfold all leave it as it was.
+const DETAILS_OPEN = {};
+function detailsBlock(j) {
+  const key = foldKey(j), n = (j.ops || []).length;
+  const words = "Details (" + n + (n === 1 ? " step)" : " steps)");
+  const box = el("div", "jdetails");
+  const b = el("button", "dtoggle");
+  b.title = "Show or hide what each step reads, computes and writes";
+  const cols = el("div", "cols3");
+  add(cols, detailCol("Reads", j.details.reads), detailCol("Computes", j.details.computes), detailCol("Writes", j.details.writes));
+  const show = (on) => {
+    cols.hidden = !on;
+    b.textContent = (on ? "▾ " : "▸ ") + words;
+    b.setAttribute("aria-expanded", on ? "true" : "false");
+  };
+  show(!!DETAILS_OPEN[key]);
+  b.addEventListener("click", () => { DETAILS_OPEN[key] = cols.hidden; show(DETAILS_OPEN[key]); });
+  return add(box, b, cols);
 }
 function opLine(o) {
   const parts = ["op " + o.n + " " + o.op + ": " + o.state];
@@ -627,11 +675,8 @@ function jobCard(j) {
   if (j.sha256) add(head, el("span", "mono mute", "sha256 " + short(j.sha256)));
   packBits(j, head);
   add(c, head);
-  if (j.preview && j.state !== "refused") {
-    const cols = el("div", "cols3");
-    add(cols, listCol("Reads", j.preview.reads), listCol("Computes", j.preview.computes), listCol("Writes", j.preview.writes));
-    add(c, cols);
-  }
+  if (j.about && j.state !== "refused") add(c, aboutBlock(j.about));
+  if (j.details && j.state !== "refused") add(c, detailsBlock(j));
   if (j.refusals && j.refusals.length) {
     const r = el("div", "refusals");
     j.refusals.forEach((x) => add(r, el("div", null, (x.op != null ? "op " + x.op + " - " : "") + x.where + ": " + x.text)));

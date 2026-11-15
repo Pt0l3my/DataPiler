@@ -65,7 +65,8 @@ INT32 = (-2 ** 31, 2 ** 31 - 1)
 INT_LIMIT = 2 ** 63
 
 # The keys of a job and of each operation: True when required. tests/test_schema.py checks the schema against these.
-TOP_KEYS: dict[str, bool] = {"format": True, "id": True, "title": True, "ops": True, "needs": False}
+# `about` (S95, DP34; 0.2.39): the job's own words for the About block on its card.
+TOP_KEYS: dict[str, bool] = {"format": True, "id": True, "title": True, "about": False, "ops": True, "needs": False}
 ARGS: dict[str, dict[str, bool]] = {
     "fetch_rows": {"as": True, "param": True, "fields": True, "ids": False},
     "check_fields": {"as": True, "param": True, "fields": True},
@@ -121,9 +122,28 @@ TEXT_WORDS = {"character_names": "the character names", "place_names": "the plac
 
 _PARAM_LIST = ", ".join(fields.PARAMS)
 _OP_LIST = ", ".join(OPS)
+_KEY_LIST = ", ".join(TOP_KEYS)
 _LABEL_LIST = ", ".join(guard.LABELS)
 _CONTROL_RX = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _MAX_REFUSALS = 60
+
+# S95 (DP34): the About block on a job's card. `about` is plain text, shown as text and never as markup, and never
+# logged: 1 to MAX_ABOUT characters, with no control character but the newline.
+MAX_ABOUT = 600
+ABOUT_RULE = "must be 1 to %d characters, with no control characters but the newline" % MAX_ABOUT
+_ABOUT_CONTROL_RX = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+# The codes a title or an about cites, shown as plain chips: a document's section (WHY§93, DESIGN§5, ER05§8, SN04§5.2),
+# a decision, a settled row or a research document (DP28, S81, G27, O48, P15, D35, R12, T3, ER05, SN04, SP3, PV2) and a
+# request (en-0036); DP28-DP30 gives both. Names such as BND4, DX12, F11 or S7.8.c are not codes and are left out.
+REF_RX = re.compile(r"(?<![\w§.])(?:[A-Z]{2,8}(?:\d{2})?§\d{1,3}(?:\.\d{1,3})*|(?:DP|ER|SN|SP|PV|[DGOPRST])\d{1,4}"
+                    r"|en-\d{4})(?![\w§]|\.\d)")
+MAX_REFS = 24
+# unpack_game_file's files, as the About line counts them: a map's own files are named after its id (m12_07_00_00, the
+# name up to its fourth part split at _); of those, models end .mapbnd.dcx and the placement file .msb.dcx.
+MODEL_END = ".mapbnd.dcx"
+PLACEMENT_END = ".msb.dcx"
+MAPS_LISTED = 6                  # more maps than this: the first five and "N more maps"
+FILES_LISTED = 3                 # files of no map named; more: the first two and "N more files"
 
 
 @dataclass(frozen=True)
@@ -180,6 +200,7 @@ class Job:
     share_name: str | None
     map_families: tuple[str, ...] = ()   # the families load_maps names (`m10_*`), counted only at run time (S45)
     lineage: Mapping[str, Lineage] = field(default_factory=dict, compare=False)   # every table's (DP8)
+    about: str | None = None             # S95 (DP34): the job's own words for its card, never logged
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -1032,6 +1053,10 @@ def _title_ok(v: object) -> bool:
     return isinstance(v, str) and 1 <= len(v) <= 120 and not _CONTROL_RX.search(v)
 
 
+def _about_ok(v: object) -> bool:
+    return isinstance(v, str) and 1 <= len(v) <= MAX_ABOUT and not _ABOUT_CONTROL_RX.search(v)
+
+
 def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, str],
           builtin: bool = False) -> Job:
     """The checks of design §6 at once: a JSON object of at most MAX_BYTES, nesting at most MAX_DEPTH, the
@@ -1070,12 +1095,13 @@ def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, s
         raise refuse()
 
     title = doc.get("title") if _title_ok(doc.get("title")) else None
+    about = doc.get("about") if _about_ok(doc.get("about")) else None
     if _dups(doc):
         c.add("(top level)", "a key is given twice")
     for k in doc:
         if k not in TOP_KEYS:
-            c.add("(top level)", _named(k, "is not a key of a job (format, id, title, ops, needs)",
-                                        "a key that is not a key of a job (format, id, title, ops, needs)"))
+            c.add("(top level)", _named(k, "is not a key of a job (%s)" % _KEY_LIST,
+                                        "a key that is not a key of a job (%s)" % _KEY_LIST))
     if "format" not in doc:
         c.add("format", "missing - a job says \"format\": \"datapiler-job/1\"")
     elif doc["format"] != FORMAT:
@@ -1094,6 +1120,8 @@ def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, s
         c.add("title", "missing - a job has a title of 1 to 120 characters")
     elif title is None:
         c.add("title", "must be 1 to 120 characters, with no control characters")
+    if "about" in doc and about is None:        # S95: optional, and never quoted
+        c.add("about", ABOUT_RULE)
 
     needs = doc.get("needs")
     if "needs" in doc:
@@ -1130,7 +1158,7 @@ def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, s
     lineage = {t: lin for t, lin in c.lineage.items() if lin is not None}
     return Job(id=job_id, title=title, sha256=sha, ops=plain_ops, needs=needs if "needs" in doc else None,
                uses_link=any(o["op"] in LINK_OPS for o in plain_ops), maps=len(c.maps), share_name=c.share_name,
-               map_families=tuple(sorted(c.families)), lineage=lineage)
+               map_families=tuple(sorted(c.families)), lineage=lineage, about=about)
 
 
 def canonical_sha256(ops: object) -> str:
@@ -1148,6 +1176,13 @@ def _num(v: object) -> str:
 
 
 _SIGNS = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}
+
+# unpack_game_file's two sentences, one in Reads and one in Writes; `details` merges them when steps differ only by
+# the file (S95), keeping the words after the name.
+UNPACK_READ = ("the game file `%s` that Smithbox unpacked, anywhere in DataPiler's folder, opened on the PC: DCX "
+               "decompressed (KRAK with the game's own Oodle library, loaded from the game folder, never copied) and "
+               "BND4 binders split - never an archive decrypted")
+UNPACK_WRITE = "workspace folder `unpacked/%s`: the file's inner files (local, never shared)"
 
 
 def conditions(where: Mapping[str, object]) -> str:
@@ -1194,9 +1229,7 @@ def _line(o: dict) -> str:
         return ("the exported map tiles of sheet %d, level %d, measured on the PC: for each, its folder's number, how much "
                 "differs from its base and how well it matches the sheet's reference level - numbers only" % (o["sheet"], o["level"]))
     if op == "unpack_game_file":
-        return ("the game file `%s` that Smithbox unpacked, anywhere in DataPiler's folder, opened on the PC: DCX "
-                "decompressed (KRAK with the game's own Oodle library, loaded from the game folder, never copied) and "
-                "BND4 binders split - never an archive decrypted" % o["file"])
+        return UNPACK_READ % o["file"]
     if op == "unused_names":
         return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
@@ -1259,9 +1292,226 @@ def preview(job: Job) -> dict[str, list[str]]:
         key = "reads" if op in READS else "computes" if op in COMPUTES else "writes"
         out[key].append(_line(o))
         if op == "unpack_game_file":
-            out["writes"].append("workspace folder `unpacked/%s`: the file's inner files (local, never shared)"
-                                 % o["file"])
+            out["writes"].append(UNPACK_WRITE % o["file"])
     return out
+
+
+# ------------------------------------------------------------------------------------------------ the About block
+
+def _once(items) -> list:
+    """The items in order, each once."""
+    out: list = []
+    for x in items:
+        if x not in out:
+            out.append(x)
+    return out
+
+
+def _cap(s: str) -> str:
+    return s[:1].upper() + s[1:]
+
+
+def refs(text: str) -> list[str]:
+    """The codes a title or an about cites (REF_RX), in order, each once, at most MAX_REFS (S95)."""
+    return _once(m.group(0) for m in REF_RX.finditer(text or ""))[:MAX_REFS]
+
+
+def map_of(name: str) -> str | None:
+    """The map a game file is of: m12_07_00_00 for m12_07_00_00_100001.mapbnd.dcx and m12_07_00_00.msb.dcx (the name
+    before its first dot, up to its fourth part split at _), when that is a map id; None for any other file."""
+    head = "_".join(name.split(".", 1)[0].split("_")[:4])
+    return head if MAP_RX.fullmatch(head) else None
+
+
+def _files_words(files: list[str]) -> str:
+    """"40 game files: m12_07_00_00 (31 models and its placement file), m12_04_00_00 (7 and its placement file)": the
+    files grouped by map, in order, each map's models, other files and placement file counted; the word "models" is
+    said once and left out after, where a map has no other files; files of no map named, up to FILES_LISTED."""
+    maps: dict[str, list[int]] = {}               # map -> [models, placement files, other files]
+    loose: list[str] = []
+    for f in files:
+        m = map_of(f)
+        if m is None:
+            loose.append(f)
+            continue
+        low = f.lower()
+        maps.setdefault(m, [0, 0, 0])[0 if low.endswith(MODEL_END) else 1 if low.endswith(PLACEMENT_END) else 2] += 1
+    items = list(maps.items())
+    shown = items if len(items) <= MAPS_LISTED else items[:MAPS_LISTED - 1]
+    words: list[str] = []
+    said = False
+    for m, (models, placed, other) in shown:
+        bits: list[str] = []
+        if models:
+            bits.append("{:,}".format(models) if said and not other else _plural(models, "model", "models"))
+            said = True
+        if other:
+            bits.append(_plural(other, "other file", "other files") if models or placed else
+                        _plural(other, "file", "files"))
+        if placed:
+            bits.append("its placement file" if placed == 1 else _plural(placed, "placement file", "placement files"))
+        words.append("%s (%s)" % (m, _and(bits)))
+    more: list[str] = []
+    if len(items) > len(shown):
+        more.append(_plural(len(items) - len(shown), "more map", "more maps"))
+    if len(loose) <= FILES_LISTED:
+        words.extend(loose)
+    else:
+        words.extend(loose[:FILES_LISTED - 1])
+        more.append(_plural(len(loose) - FILES_LISTED + 1, "more file", "more files"))
+    # a list after a colon, joined by commas (each map's own words hold an "and"); "and" only before what is counted
+    listed = ", ".join(words)
+    if more:
+        listed = _and(([listed] if listed else []) + more)
+    return "%s: %s" % (_plural(len(files), "game file", "game files"), listed)
+
+
+def _maps_short(maps: list) -> str:
+    """As _maps_words, with at most four families named: "the maps of m10_*, m11_*, m12_* and 11 more families"."""
+    fams = [m for m in maps if MAP_FAMILY_RX.fullmatch(m)]
+    if len(fams) <= 4:
+        return _maps_words(maps)
+    ids = [m for m in maps if not MAP_FAMILY_RX.fullmatch(m)]
+    s = "the maps of %s and %s" % (", ".join(fams[:3]), _plural(len(fams) - 3, "more family", "more families"))
+    return s + (" and " + _plural(len(ids), "map", "maps") if ids else "")
+
+
+def _sheet_levels(ops: list[dict]) -> str:
+    """"sheet 0, level 4", "sheet 0, levels 2 and 3 and sheet 10, level 1"."""
+    by: dict[int, list[int]] = {}
+    for o in ops:
+        lv = by.setdefault(o["sheet"], [])
+        if o["level"] not in lv:
+            lv.append(o["level"])
+    return _and(["sheet %d, %s %s" % (s, "level" if len(lv) == 1 else "levels", _and([str(x) for x in lv]))
+                 for s, lv in by.items()])
+
+
+def _some(names: list[str], one: str, many: str) -> str:
+    """Up to four names, else their count: "NpcParam and TalkParam", "6 params"."""
+    names = _once(names)
+    return _and(names) if len(names) <= 4 else _plural(len(names), one, many)
+
+
+def summary(job: Job) -> str:
+    """The About block's line (S95): what the job reads, computes and writes, counted from its steps, which the
+    Details columns word one by one, in three sentences. It names only what those columns name: the params, the
+    maps' ids, the game files (by map) and the share file."""
+    by: dict[str, list[dict]] = {}
+    for o in job.ops:
+        by.setdefault(o["op"], []).append(o)
+    files = _once(o["file"] for o in by.get("unpack_game_file", []))
+    loaded = _once(m for o in by.get("load_maps", []) for m in o["maps"])
+    clauses: list[str] = []
+    if loaded:
+        clauses.append("loads %s in Smithbox" % _maps_short(loaded))
+    reads: list[str] = []
+    for op, ops in by.items():
+        if op == "fetch_rows":
+            reads.append("rows of " + _some([o["param"] for o in ops], "param", "params"))
+        elif op == "check_fields":
+            reads.append("the field types of " + _some([o["param"] for o in ops], "param", "params"))
+        elif op == "read_placements":
+            placed = None if any(o["maps"] == "all" for o in ops) else _once(m for o in ops for m in o["maps"])
+            if placed is not None and set(placed) == set(loaded):
+                reads.insert(0, "their placed characters")       # right after "loads ... in Smithbox and reads"
+            else:
+                reads.append("the placed characters of " + ("the loaded maps" if placed is None else
+                                                             _maps_short(placed)))
+        elif op == "read_map_tiles":
+            reads.append("the names and sizes of the exported map tiles")
+        elif op == "check_map_tiles":
+            reads.append("measurements of the map tiles of " + _sheet_levels(ops))
+    if files:
+        reads.append(_files_words(files))     # last: its list of maps ends the sentence
+    if reads:
+        clauses.append("reads " + _and(reads))
+    computes: list[str] = []
+    for op, ops in by.items():
+        n = len(ops)
+        if op == "join_names":
+            computes.append("%s with %s" % (_plural(n, "join", "joins"),
+                                            _and(_once(TEXT_WORDS[o["text"]] for o in ops))))
+        elif op == "unused_names":
+            computes.append(_plural(n, "list of unused names", "lists of unused names"))
+        elif op == "filter":
+            computes.append(_plural(n, "filter", "filters"))
+        elif op == "count":
+            computes.append(_plural(n, "count", "counts"))
+        elif op == "distinct":
+            computes.append(_plural(n, "distinct list", "distinct lists"))
+    writes = ["the share file %s.json" % o["name"] for o in by.get("write_share", [])]
+    for op, ops in by.items():
+        if op == "unpack_game_file":
+            writes.append(_plural(len(files), "local folder", "local folders"))
+        elif op == "write_local":
+            writes.append(_plural(len(ops), "local file", "local files"))
+        elif op == "make_map_overview":
+            writes.append(_plural(len(ops), "local image", "local images"))
+    return "%s. %s. %s." % (
+        _cap(" and ".join(clauses)) if clauses else "Reads nothing",
+        "Computes " + _and(computes) if computes else "Computes nothing",
+        ("Writes " + _and(writes) + ("" if "write_share" in by else ", none shared")) if writes else "Writes nothing")
+
+
+def about_block(job: Job) -> dict:
+    """The About block on a job's card (S95, DP34): the job's own `about` (or None), the summary line and the codes
+    its title and about cite."""
+    return {"text": job.about, "summary": summary(job), "refs": refs(job.title + "\n" + (job.about or ""))}
+
+
+# The merged forms of unpack_game_file's two sentences, for `details`: (the head, which takes the count of names, and
+# the words after the names), the read's words after the name kept as UNPACK_READ has them.
+UNPACK_READ_MANY = ("%s game files", UNPACK_READ.split("`%s` ", 1)[1])
+UNPACK_WRITE_MANY = ("%s workspace folders in `unpacked/`", "each with its file's inner files (local, never shared)")
+
+
+def details(job: Job) -> dict[str, list[dict]]:
+    """The preview's columns as the card's Details show them (S95): steps whose sentences are the same but for the
+    one name they quote are merged into one item {"text": "40 game files", "names": [...], "tail": "that Smithbox
+    unpacked, ..."}, the names in order, each once; steps whose sentences are the same word for word into one item
+    {"text": "2 steps: ..."}; every other step is {"text": its sentence}. Items keep the place of their first step."""
+    out: dict[str, list[dict]] = {"reads": [], "computes": [], "writes": []}
+    groups: dict[tuple[str, str], dict] = {}
+
+    def put(col: str, line: str, quoted: str | None = None, name: str | None = None,
+            many: tuple[str, str] | None = None) -> None:
+        # quoted: what the sentence quotes between backticks; name: how the merged item lists it
+        shape = line.replace("`%s`" % quoted, "`\0`", 1) if quoted is not None else line
+        g = groups.get((col, shape))
+        if g is None:
+            g = groups[(col, shape)] = {"line": line, "names": [], "steps": 0, "many": many}
+            out[col].append(g)
+        g["steps"] += 1
+        if name is not None and name not in g["names"]:
+            g["names"].append(name)
+
+    for o in job.ops:
+        op = o["op"]
+        col = "reads" if op in READS else "computes" if op in COMPUTES else "writes"
+        line = _line(o)
+        if op == "unpack_game_file":
+            f = o["file"]
+            put(col, line, f, f, UNPACK_READ_MANY)
+            put("writes", UNPACK_WRITE % f, "unpacked/" + f, f, UNPACK_WRITE_MANY)
+        elif op == "write_local":
+            put(col, line, o["name"] + ".json", o["name"] + ".json",
+                ("%s workspace files", "each with %s (local)" % _plural(len(o["tables"]), "table", "tables")))
+        elif op == "make_map_overview":
+            put(col, line, o["name"] + ".png", o["name"] + ".png",
+                ("%s workspace images", "of " + line.split(": ", 1)[1]))
+        else:
+            put(col, line)
+
+    def item(g: dict) -> dict:
+        if g["steps"] == 1:
+            return {"text": g["line"]}
+        if len(g["names"]) < 2:                       # the same sentence, word for word
+            return {"text": "%s steps: %s" % ("{:,}".format(g["steps"]), g["line"])}
+        head, tail = g["many"]
+        return {"text": head % "{:,}".format(len(g["names"])), "names": list(g["names"]), "tail": tail}
+
+    return {col: [item(g) for g in items] for col, items in out.items()}
 
 
 def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:

@@ -158,6 +158,43 @@ class Page02Test(unittest.TestCase):
         for state in ("connected", "waiting", "no_answer"):
             self.assertIn(state + ": [", words)
 
+    def test_s95_the_about_block_and_the_folded_details(self):
+        """DP34: a checked card shows its About block first, then Reads / Computes / Writes under one Details toggle,
+        folded by default and kept open or closed while the page is open only; DP30's fold of whole cards leaves it."""
+        js, css = self.files["app.js"], self.files["app.css"]
+        card = js[js.index("function jobCard("):js.index("function jobOrder(")]
+        about, details = card.index("aboutBlock(j.about)"), card.index("detailsBlock(j)")
+        self.assertLess(card.index("add(c, head);"), about)
+        self.assertLess(about, details)
+        self.assertLess(details, card.index("if (j.refusals && j.refusals.length)"))
+        self.assertIn('if (j.about && j.state !== "refused") add(c, aboutBlock(j.about));', card)
+        self.assertIn('if (j.details && j.state !== "refused") add(c, detailsBlock(j));', card)
+        self.assertNotIn("cols3", card)                        # the columns are drawn under Details only
+        self.assertNotIn("j.preview", card)
+        block = js[js.index("function aboutBlock("):js.index("function opLine(")]
+        for part in ('el("b", null, "About")', 'el("div", "jabout-text", a.text)', 'el("div", "jabout-sum", a.summary)',
+                     'el("span", "jref", x)', '"References"'):
+            self.assertIn(part, block)
+        self.assertNotRegex(block, r"innerHTML|insertAdjacentHTML|href|<a\b|window\.open")   # plain chips, no link
+        self.assertIn("const DETAILS_OPEN = {};", block)
+        det = block[block.index("function detailsBlock("):]
+        self.assertIn('"Details (" + n + (n === 1 ? " step)" : " steps)")', det)
+        self.assertIn("show(!!DETAILS_OPEN[key]);", det)          # folded unless opened while this page is open
+        self.assertIn('b.setAttribute("aria-expanded", on ? "true" : "false");', det)
+        self.assertIn("const key = foldKey(j)", det)
+        self.assertNotIn("store.", det)                           # never saved in the browser
+        self.assertIn('it.names.forEach((n) => add(ns, el("code", null, n)));', block)
+        for name in ("foldAll", "unfoldAll"):
+            line = next(ln for ln in js.splitlines() if '$("%s")' % name in ln)
+            self.assertNotIn("DETAILS_OPEN", line)
+        fold = js[js.index("function setFolded("):js.index("function setFolded(") + 400]
+        self.assertNotIn("DETAILS_OPEN", fold[:fold.index("\n}\n")])
+        self.assertEqual(js.count("DETAILS_OPEN"), 4)            # declared, read once, set once, read once
+        self.assertIn(".jobcard.folded > :not(.jhead) { display: none; }", css)   # About and Details fold with it
+        for rule in (".jnames { display: flex; flex-wrap: wrap;", "button.dtoggle {", ".jref {",
+                     ".jabout-text { white-space: pre-line;"):
+            self.assertIn(rule, css)
+
     def test_only_the_pages_own_addresses(self):
         js = self.files["folders.js"]
         used = set(re.findall(r'api\("(/api/[a-z/-]+)"', js))

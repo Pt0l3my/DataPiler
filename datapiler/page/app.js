@@ -568,7 +568,16 @@ function jobCard(j) {
       show.addEventListener("click", () => { showTab("outputs"); openShare(sh.name); });
       add(res, add(line, show));
     }
-    if (j.result.local && j.result.local.length) add(res, el("div", null, "Workspace: " + j.result.local.join(", ")));
+    if (j.result.local && j.result.local.length) {
+      // S76: the job's own workspace folder, where its files and images are
+      const row = el("div", "jlocal");
+      add(row, el("span", null, "Workspace: " + j.result.local.join(", ")));
+      const ob = el("button", "sm", "Open folder");
+      ob.title = "Open this job's folder in the workspace (Windows)";
+      ob.addEventListener("click", () => api("/api/open", { area: "job", job: j.id }).then((r) => { if (!r.ok) note(r.error || "Not opened."); }).catch((e) => note(e.message)));
+      add(row, ob);
+      add(res, row);
+    }
     if (j.result.failed) {
       const f = j.result.failed;
       let t = "Failed at op " + f.op + ": " + f.why;

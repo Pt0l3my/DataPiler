@@ -111,6 +111,25 @@ class OverviewTest(unittest.TestCase):
         top, _ = textures.overview(self.root, 0, 4, rows_from="top")
         self.assertEqual(self.pixel(top, 0, 0), (10, 0, 0))
 
+    def test_s76_a_revealed_variant_is_laid_over_the_base(self):
+        s = 2
+        base = bytes([100, 100, 100, 255]) * (s * s)
+        over = bytes([200, 0, 0, 255, 0, 0, 0, 0, 0, 200, 0, 128, 0, 0, 0, 0])   # opaque, clear, half, clear
+        for rel, data in (("ex/MENU_MapTile_M00_L4_00_00_00000000.png", textures.png_encode(s, s, base)),
+                          ("ex/MENU_MapTile_M00_L4_00_00_00000005.png", textures.png_encode(s, s, over))):
+            p = self.root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+        data, n = textures.overview(self.root, 0, 4)
+        w, h, px = textures.png_decode(data)
+        self.assertEqual(bytes(px[0:4]), bytes([200, 0, 0, 255]))      # the overlay where it is opaque
+        self.assertEqual(bytes(px[4:8]), bytes([100, 100, 100, 255]))   # the base where it is clear
+        self.assertEqual(bytes(px[8:12]), bytes([50, 150, 50, 255]))    # half and half
+        only, _ = textures.overview(self.root, 0, 4, variant="base")
+        self.assertEqual(bytes(textures.png_decode(only)[2][0:4]), bytes([100, 100, 100, 255]))
+        with self.assertRaises(ValueError):
+            textures.overview(self.root, 0, 4, variant="most")
+
     def test_refusals(self):
         with self.assertRaises(ValueError):
             textures.overview(self.root, 0, 4)                 # nothing exported

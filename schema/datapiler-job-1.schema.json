@@ -1138,7 +1138,7 @@
     },
     "op_make_map_overview": {
       "type": "object",
-      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, each tile in its most revealed variant (the code with the most bits), laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side.",
+      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, each tile in its most revealed variant (the code with the most bits), laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side. variant: revealed (default; the most revealed variant laid over the tile's base variant, as the game shows it) or base (the base variant alone).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -1167,6 +1167,12 @@
           "enum": [
             "bottom",
             "top"
+          ]
+        },
+        "variant": {
+          "enum": [
+            "revealed",
+            "base"
           ]
         }
       }

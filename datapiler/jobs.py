@@ -77,7 +77,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "count": {"as": True, "rows": True, "by": False, "where": False},
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
-    "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False},
+    "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
@@ -821,6 +821,8 @@ class _Checker:
                 self.add("%s.%s" % (place, key), "must be a whole number from %d to %d" % (lo, hi), i)
         if "rows_from" in o and o["rows_from"] not in textures.ROWS_FROM:
             self.add(place + ".rows_from", "must be bottom or top", i)
+        if "variant" in o and o["variant"] not in textures.VARIANTS:
+            self.add(place + ".variant", "must be revealed or base", i)
 
     def op_write_share(self, place: str, i: int, o: dict) -> None:
         if self.share_at is not None:

@@ -722,7 +722,13 @@ class Api:
             return self.live.paths.workspace
         if area == "share":
             return self.live.paths.share
-        raise Bad("area must be workspace or share")
+        if area == "job":
+            # S76: a job's own workspace folder, workspace/local/<job id>/, where its files and images are
+            job = body.get("job")
+            if not isinstance(job, str) or not paths_mod.name_ok(job) or not (self.live.paths.local / job).is_dir():
+                raise Bad("no workspace folder for that job")
+            return self.live.paths.local / job
+        raise Bad("area must be workspace, share or job")
 
     def open_folder(self, body: dict) -> dict:
         folder = self._area(body)

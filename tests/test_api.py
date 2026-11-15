@@ -493,6 +493,12 @@ class ApiTest(ApiBase):
         self.assertEqual(self.b.opened, str(self.live.paths.share))
         with self.assertRaises(Bad):
             self.api.post("/api/open", {"area": "elsewhere"})
+        (self.live.paths.local / "en-0020-map-overview").mkdir(parents=True, exist_ok=True)
+        _, r, _ = self.post("/api/open", {"area": "job", "job": "en-0020-map-overview"})
+        self.assertEqual(self.b.opened, str(self.live.paths.local / "en-0020-map-overview"))   # S76
+        for bad in ({"area": "job", "job": "../share"}, {"area": "job", "job": "en-9999-none"}, {"area": "job"}):
+            with self.assertRaises(Bad):
+                self.api.post("/api/open", bad)
 
     def test_copy_path(self):
         f = self.live.paths.share / "roster-counts.json"

@@ -13,6 +13,14 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.26 - 2026-11-15
+
+- Fixed: the overview images were split up and showed their joins (S76). A tile's revealed variants are mostly
+  transparent: the game draws them over the tile's base variant (code 0). `make_map_overview` now does the same: it
+  lays the most revealed variant over the base, by its alpha. `"variant": "base"` gives the base alone.
+- A job card that wrote workspace files or images has an **Open folder** button: it opens that job's folder in the
+  workspace (Windows).
+
 ## 0.2.25 - 2026-11-15
 
 - A new job operation, `make_map_overview` (DP27, S75): it lays the map tiles you exported from Smithbox out on their

@@ -1680,6 +1680,7 @@ class Runner:
         ctx.on_op(i, "running", 0, None, None)
         try:
             data, n = textures.overview(self.paths.root, o["sheet"], o["level"], rows_from=o.get("rows_from", "bottom"),
+                                        variant=o.get("variant", "revealed"),
                                         skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
                                         progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
         except textures.Cancelled:

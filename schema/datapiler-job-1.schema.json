@@ -871,7 +871,7 @@
     },
     "op_check_map_tiles": {
       "type": "object",
-      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
+      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). moved (per mille, the better of the two matches with the tile measured 1,024 map units to the right, where the old tile set's columns belong). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
       "additionalProperties": false,
       "required": [
         "op",

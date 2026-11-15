@@ -332,7 +332,10 @@ CELLS = 32                   # cells a side, at most, that a variant and the ref
 REF_MIN_SIDE = 6             # the reference level: the coarsest with at least this many tiles a side
 TILE_CHECK_COLUMNS: tuple[tuple[str, str], ...] = (
     ("x", "int"), ("y", "int"), ("code", "int"), ("folder", "int"), ("copies", "int"), ("drawn", "int"),
-    ("like", "int"), ("near_level", "int"), ("near_code", "int"), ("near", "int"), ("near_base", "int"))
+    ("like", "int"), ("near_level", "int"), ("near_code", "int"), ("near", "int"), ("near_base", "int"),
+    ("moved", "int"))
+LEVEL_TOP = frozenset({1})   # S80: levels whose map sits at the top of their grid (level 1: WHY§70); the rest, the bottom
+OLD_SHIFT = 1024             # S80: map units (level-0 pixels) the old tile set's columns sit left of today's (WHY§70)
 
 
 def thumb(px: bytes | bytearray, size: int) -> array:
@@ -520,9 +523,19 @@ class Judge:
         self._kept[path] = got
         return got
 
-    def near(self, x: int, y: int, code: int, t: array | None) -> tuple[int, int, int]:
+    def lift(self, level: int) -> float:
+        """S80: how far above its grid's bottom a level's map starts, in that level's pixels: the gap left at the
+        bottom by a level whose map sits at the top of its grid (LEVEL_TOP), else 0. The map is level 0's grid at
+        the level's scale."""
+        if level not in LEVEL_TOP or self.size is None:
+            return 0.0
+        full = (self.ts.grid(0)[1] or 41) * self.size * level_scale(level)
+        return max(0.0, self.ts.grid(level)[1] * self.size - full)
+
+    def near(self, x: int, y: int, code: int, t: array | None, shift: float = 0.0) -> tuple[int, int, int]:
         """(the other level's codes compared, OR-ed, or -1; the match with them; the match with the other level's
-        base), per mille; UNMEASURED where it cannot be measured."""
+        base), per mille; UNMEASURED where it cannot be measured. shift (S80): map units to the right that the tile
+        is measured at, for the old tile set (OLD_SHIFT)."""
         if self.other is None or t is None or self.size is None:
             return -1, UNMEASURED, UNMEASURED
         size = self.size
@@ -532,7 +545,9 @@ class Judge:
         while n > 4 and span / n < 1.0:
             n //= 2
         mine_all = _shrink_thumb(t, n)
-        x0, y0 = x * span, y * span                    # its bottom left, in the other level's pixels from the bottom
+        mine, theirs = level_scale(self.level), level_scale(self.other)
+        x0 = (x * size + shift * mine) * self.ratio   # its bottom left, in the other level's pixels from the bottom
+        y0 = (y * size - self.lift(self.level)) / mine * theirs + self.lift(self.other)
         cell = span / n
         chosen = -1
         pairs: dict[str, tuple[list[float], list[float]]] = {"code": ([], []), "base": ([], [])}
@@ -597,8 +612,9 @@ def check_level(ts: TileSet, level: int, *, cancel: threading.Event | None = Non
             drawn = UNMEASURED if base_px is None else (1000 * differs(px, base_px) + len(px) // 8) // (len(px) // 4)
             like = UNMEASURED if base_t is None or t is None else (1000 if code == 0 else ncc(list(t), list(base_t)))
             near_code, near, near_base = judge.near(x, y, code, t)
+            moved = max(judge.near(x, y, code, t, OLD_SHIFT)[1:]) if code else UNMEASURED
             rows.append((x, y, code, ts.folder.get(codes[code], 0), ts.copies.get((level, x, y, code), 1), drawn,
-                         like, judge.other if judge.other is not None else -1, near_code, near, near_base))
+                         like, judge.other if judge.other is not None else -1, near_code, near, near_base, moved))
             done += 1
             if progress is not None:
                 progress(done, total)

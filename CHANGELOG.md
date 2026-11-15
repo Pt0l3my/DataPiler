@@ -13,6 +13,13 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.30 - 2026-11-15
+
+- Fixed: level 1 was measured from the bottom of its grid, but its map sits at the top (S80), so almost none of its
+  tiles passed. Levels now carry where their map sits; level 1 is lifted by the gap its grid leaves.
+- New: `check_map_tiles` gives each variant a `moved` score as well: how well it matches 1,024 map units (four
+  level-0 columns) to the right, where the game's old tile set belongs. Levels 0 and 1 hold such a set beside today's.
+
 ## 0.2.29 - 2026-11-15
 
 - Every level of every sheet is checked now, not only levels 2 to 4 (S79): each sheet has a reference level (the

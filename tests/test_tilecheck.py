@@ -118,7 +118,7 @@ class CheckTest(Base):
         self.put(0, 0, 0, 4, tile(other, 0, 0))
         rows, n = textures.check_level(textures.tile_set(self.root, 0), 0)
         self.assertEqual(n["near_level"], -1)
-        self.assertEqual([r[7:] for r in rows], [(-1, -1, textures.UNMEASURED, textures.UNMEASURED)] * 2)
+        self.assertEqual([r[7:] for r in rows], [(-1, -1, textures.UNMEASURED, textures.UNMEASURED, textures.UNMEASURED)] * 2)
         self.assertTrue(textures.passes(textures.UNMEASURED, textures.UNMEASURED))
         flat = [5.0] * 16
         self.assertEqual(textures.ncc(flat, [float(k) for k in range(16)]), textures.UNMEASURED)
@@ -181,6 +181,43 @@ class GeneralTest(Base):
         self.assertTrue(all(v >= textures.MATCH_MIN for (x, y, c), v in got.items() if c != 2), got)
         self.assertTrue(all(v > 950 for (x, y, c), v in got.items() if c == 0), got)
         self.assertLess(got[(2, 1, 2)], 500)
+
+    def test_s80_a_level_whose_map_sits_at_the_top_of_its_grid(self):
+        step = 1.0 / 4                                  # world units per level-0 pixel
+        for x in range(8):                              # level 0: 8 x 8 tiles, 512 pixels a side
+            for y in range(8):
+                self.put(0, x, y, 0, tile(world, x * S * step, (7 - y) * S * step, step=step))
+        k = 0.75                                        # level 1: the map is 384 pixels, its grid 7 rows (448)
+        for x in range(6):
+            for y in range(7):
+                top_l0 = 512 - (y * S) / k              # the tile's top, in level-0 pixels from the top
+                px = tile(world, x * S / k * step, top_l0 * step, step=step / k)
+                self.put(1, x, y, 0, px)
+                if y:
+                    self.put(1, x, y, 1, tile(world, x * S / k * step, top_l0 * step, step=step / k, patch=(5, 5, 8)))
+        self.assertIn(1, textures.LEVEL_TOP)
+        ts = textures.tile_set(self.root, 0)
+        rows, n = textures.check_level(ts, 1)
+        scores = [max(r[9], r[10]) for r in rows if r[1] and r[9] != textures.UNMEASURED]
+        self.assertTrue(scores and all(v > 900 for v in scores), scores)
+        judge = textures.Judge(ts, 1)
+        judge.size = S
+        self.assertEqual((judge.lift(1), judge.lift(0)), (64.0, 0.0))
+
+    def test_s80_a_tile_of_the_old_set_scores_where_it_belongs(self):
+        self.fine_level(0, 8)
+        self.put(0, 2, 3, 4, tile(world, 4 * S / 4, (7 - 3) * S / 4, step=1.0 / 4))    # tile (4, 3)'s ground
+        old = textures.OLD_SHIFT
+        textures.OLD_SHIFT = 2 * S                      # two tiles, in level-0 pixels
+        try:
+            rows, _ = textures.check_level(textures.tile_set(self.root, 0), 0)
+        finally:
+            textures.OLD_SHIFT = old
+        r = next(r for r in rows if r[:3] == (2, 3, 4))
+        self.assertLess(max(r[9], r[10]), 500)
+        self.assertGreater(r[11], 950)
+        genuine = next(r for r in rows if r[:3] == (1, 1, 1))
+        self.assertLess(genuine[11], 900)
 
     def test_sums(self):
         px = bytes(v for k in range(16) for v in (k * 3, k * 3, k * 3, 255))

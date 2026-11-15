@@ -798,10 +798,16 @@ class Judge:
         self.other: int | None = None
         ref = reference_level(ts)
         if ref is not None and self.at:
-            if level != ref:
+            # S83: with the game's masks, the variants each level draws are known, so a level is measured against
+            # its nearest level the game draws (level 0 against 1, 1 and 2 against each other): sharper than the
+            # coarsest, and never the older layout's levels 3 and 4, which en-0029 met at level 2. Without them,
+            # S79: the reference level, and the reference against its nearest level.
+            drawn_only = ts.masked() and not legacy(level)
+            if level != ref and not drawn_only:
                 self.other = ref
             else:
-                near = sorted((lv for lv, at in ts.levels.items() if at and lv != level),
+                near = sorted((lv for lv, at in ts.levels.items() if at and lv != level
+                               and not (drawn_only and legacy(lv))),
                               key=lambda lv: (abs(lv - level), -lv))
                 self.other = near[0] if near else None
         self.ratio = level_scale(self.other, self.sheet) / level_scale(level, self.sheet) \

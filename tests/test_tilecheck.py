@@ -405,6 +405,19 @@ class OverviewTest(Base):
         self.assertEqual(judge.other, 1)
         self.assertEqual(sorted(judge.there[(0, 0)]), [0, 1])                     # another layout's never stands in
 
+    def test_s83_with_masks_a_level_is_measured_against_its_nearest_drawn_level(self):
+        """en-0029: level 2 was measured against the older layout's level 3, the tie going to the coarser level."""
+        self.masked_level_1()
+        for lv, side in ((2, 2), (3, 2), (4, 1)):
+            for x in range(side):
+                for y in range(side):
+                    self.put(lv, x, y, 0, tile(world, x * S, y * S))
+        ts = textures.tile_set(self.root, 0)
+        self.assertEqual([textures.Judge(ts, lv).other for lv in (0, 1, 2, 3, 4)], [1, 2, 1, 2, 2])   # 3, 4: the reference
+        bare = textures.TileSet()                                                  # no masks: S79 as before
+        bare.levels = {lv: dict(at) for lv, at in ts.levels.items()}
+        self.assertEqual(textures.Judge(bare, 2).other, 3)
+
     def test_label_lines_that_do_not_fit(self):
         canvas = bytearray(S * S * 4)
         textures.label(canvas, S, 0, 0, S, ["%d" % k for k in range(20)])

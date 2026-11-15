@@ -21,6 +21,9 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
   Status page has a **This PC** card with the processor, the memory, the graphics card (shown, never used) and what the
   image steps use. Results are the same as before, only faster.
 - Changed: `moved` is measured only at levels 0 and 1, where the older layout's shift is a whole number of tiles.
+- Fixed: with the game's masks, each level is measured against its nearest level the game draws (level 0 against
+  1, levels 1 and 2 against each other). en-0029 measured level 2 against the older layout's level 3, so none of it
+  passed on the base map and the underground.
 - New: **Pause** on a running job (S84): the step running finishes (a map step stops at its next map, its maps kept),
   the job's finished steps are saved in the workspace, and **Resume job** goes on from the next step, also after
   DataPiler is closed. Start again and Remove send a pause point to the Deleted bin, which can restore it.

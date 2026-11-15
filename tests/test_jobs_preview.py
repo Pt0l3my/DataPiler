@@ -35,7 +35,7 @@ class PreviewTest(unittest.TestCase):
                       "the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, "
                       "row, code and size - no image is opened beyond its size",
                       "the exported map tiles of sheet 0, level 4, measured on the PC: for each, its folder's number, "
-                      "how much differs from its base and how well it matches the next level - numbers only"],
+                      "how much differs from its base and how well it matches the sheet's reference level - numbers only"],
             "computes": ["join npc with the character names - local",
                          "the entries of the character names that no row of npc names by nameId - local",
                          "keeps the rows of npc_named where teamType >= 6 and teamType <= 30 and npcType in 3 values "
@@ -46,7 +46,7 @@ class PreviewTest(unittest.TestCase):
             "writes": ["workspace file `npc-named.json`: 3 tables (local)",
                        "share file `every-op-counts.json`: 2 tables",
                        "workspace image `every-op-overview.png`: the exported map tiles of sheet 0, level 4, each with "
-                       "every piece revealed, from variants that match the next level, labelled (local, never shared)"],
+                       "every piece revealed, from variants that match the sheet's reference level, labelled (local, never shared)"],
         })
 
     def test_the_other_wordings(self):

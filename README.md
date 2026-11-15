@@ -188,7 +188,8 @@ A job with `make_map_overview` lays one sheet's level out as a single PNG in the
 every map piece revealed (or, with `"variant": "base"`, none). Export every variant of the tiles, not only some:
 a tile whose pieces never meet is drawn from several of them. Variants that do not match the next zoom level are
 left out as another image's; `"labels": true` writes each tile's position and codes on it, and a job with
-`check_map_tiles` measures every tile of a level, numbers only.
+`check_map_tiles` measures every tile of a level, numbers only. `"shrink": 4` makes levels 0 and 1 fit in one
+image.
 
 ## What it will and won't do
 

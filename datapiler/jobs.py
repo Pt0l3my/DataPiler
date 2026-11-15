@@ -79,7 +79,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
     "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False, "code": False,
-                          "check": False, "min_match": False, "labels": False},
+                          "check": False, "min_match": False, "labels": False, "shrink": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
@@ -848,6 +848,9 @@ class _Checker:
         mm = o.get("min_match")
         if "min_match" in o and (isinstance(mm, bool) or not isinstance(mm, int) or not 0 <= mm <= 1000):
             self.add(place + ".min_match", "must be a whole number from 0 to 1000", i)
+        sh = o.get("shrink")
+        if "shrink" in o and (isinstance(sh, bool) or sh not in textures.SHRINKS):
+            self.add(place + ".shrink", "must be 1, 2, 4 or 8", i)
 
     def op_write_share(self, place: str, i: int, o: dict) -> None:
         if self.share_at is not None:
@@ -1168,7 +1171,7 @@ def _line(o: dict) -> str:
                 "and size - no image is opened beyond its size")
     if op == "check_map_tiles":
         return ("the exported map tiles of sheet %d, level %d, measured on the PC: for each, its folder's number, how much "
-                "differs from its base and how well it matches the next level - numbers only" % (o["sheet"], o["level"]))
+                "differs from its base and how well it matches the sheet's reference level - numbers only" % (o["sheet"], o["level"]))
     if op == "unused_names":
         return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
@@ -1202,11 +1205,12 @@ def _line(o: dict) -> str:
         elif o.get("variant") == "code":
             look = "in its code %X variant where exported" % o["code"]
         elif o.get("check", True):
-            look = "with every piece revealed, from variants that match the next level"
+            look = "with every piece revealed, from variants that match the sheet's reference level"
         else:
             look = "with every piece revealed"
+        extra = (", shrunk %d times" % o["shrink"] if o.get("shrink", 1) > 1 else "") + (", labelled" if o.get("labels") else "")
         return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each %s%s (local, never shared)"
-                % (o["name"], o["sheet"], o["level"], look, ", labelled" if o.get("labels") else ""))
+                % (o["name"], o["sheet"], o["level"], look, extra))
     return op
 
 

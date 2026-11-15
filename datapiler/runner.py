@@ -1707,7 +1707,7 @@ class Runner:
             data, n = textures.overview(self.paths.root, o["sheet"], o["level"], rows_from=o.get("rows_from", "bottom"),
                                         variant=o.get("variant", "revealed"), code=o.get("code"),
                                         check=o.get("check", True), min_match=o.get("min_match", textures.MATCH_MIN),
-                                        labels=o.get("labels", False),
+                                        labels=o.get("labels", False), shrink=o.get("shrink", 1),
                                         skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
                                         progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
         except textures.Cancelled:

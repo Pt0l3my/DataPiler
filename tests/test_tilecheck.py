@@ -108,7 +108,7 @@ class CheckTest(Base):
     def test_the_coarsest_level_is_measured_against_the_finer_one(self):
         self.two_levels()
         judge = textures.Judge(textures.tile_set(self.root, 0), 3)
-        self.assertEqual((judge.other, judge.up), (2, False))
+        self.assertEqual((judge.other, judge.ratio), (2, 2.0))
         rows, n = textures.check_level(judge.ts, 3)
         self.assertEqual(n["near_level"], 2)
         self.assertTrue(all(max(r[9], r[10]) > 950 for r in rows), rows)
@@ -128,6 +128,65 @@ class CheckTest(Base):
         self.assertTrue(all(t == "int" for _, t in textures.TILE_CHECK_COLUMNS))
         words = guard.fixed_words()
         self.assertTrue(all(c in words for c, _ in textures.TILE_CHECK_COLUMNS))
+
+
+class GeneralTest(Base):
+    """S79: every level against the sheet's reference level, at any of LEVEL_SCALES' ratios."""
+
+    def fine_level(self, level, side, foreign_at=None):
+        """`side` x `side` tiles of the world at `level`, with a level-3 tile of the same ground; each with code 1 (a
+        lit patch) and, at foreign_at, code 2 from another drawing."""
+        k = textures.level_scale(level) / textures.level_scale(3)          # this level's pixels per level-3 pixel
+        step = 1.0 / 4                                                      # world units per pixel at this level
+        for x in range(side):
+            for y in range(side):
+                top = (side - 1 - y) * S
+                self.put(level, x, y, 0, tile(world, x * S * step, top * step, step=step))
+                self.put(level, x, y, 1, tile(world, x * S * step, top * step, step=step, patch=(5, 5, 8)))
+        if foreign_at is not None:
+            self.put(level, foreign_at[0], foreign_at[1], 2, tile(other, 0, 0))
+        span = side * S / k                                                 # level-3 pixels the level covers
+        assert abs(span - S) < 1e-6, span
+        self.put(3, 0, 0, 0, tile(world, 0, 0, step=step * k))
+        self.put(3, 0, 0, 1, tile(world, 0, 0, step=step * k))
+
+    def scores(self, level):
+        ts = textures.tile_set(self.root, 0)
+        rows, n = textures.check_level(ts, level)
+        return {(r[0], r[1], r[2]): max(r[9], r[10]) for r in rows}, n
+
+    def test_the_reference_level(self):
+        ts = textures.TileSet()
+        for lv, side in ((0, 41), (1, 31), (2, 11), (3, 6), (4, 3)):
+            ts.levels[lv] = {(side - 1, side - 1): {0: Path("a")}}
+        self.assertEqual(textures.reference_level(ts), 3)
+        del ts.levels[3], ts.levels[4]
+        ts.levels[2] = {(8, 8): {0: Path("a")}}
+        self.assertEqual(textures.reference_level(ts), 2)                   # the expansion: 41, 31 and 9 a side
+        self.assertIsNone(textures.reference_level(textures.TileSet()))
+        self.assertEqual(textures.level_scale(5), 0.03125)
+
+    def test_level_0_against_level_3(self):
+        self.fine_level(0, 8, foreign_at=(3, 4))
+        got, n = self.scores(0)
+        self.assertEqual(n["near_level"], 3)
+        self.assertTrue(all(v >= textures.MATCH_MIN for (x, y, c), v in got.items() if c != 2), got)
+        self.assertTrue(all(v > 950 for (x, y, c), v in got.items() if c == 0), got)
+        self.assertLess(got[(3, 4, 2)], 500)
+
+    def test_level_1_against_level_3_at_a_sixth(self):
+        self.fine_level(1, 6, foreign_at=(2, 1))
+        got, n = self.scores(1)
+        self.assertEqual(n["near_level"], 3)
+        self.assertTrue(all(v >= textures.MATCH_MIN for (x, y, c), v in got.items() if c != 2), got)
+        self.assertTrue(all(v > 950 for (x, y, c), v in got.items() if c == 0), got)
+        self.assertLess(got[(2, 1, 2)], 500)
+
+    def test_sums(self):
+        px = bytes(v for k in range(16) for v in (k * 3, k * 3, k * 3, 255))
+        sums = textures._Sums(px, 4)
+        self.assertEqual(sums.total(0, 0, 4, 4), sum(k * 3 for k in range(16)))
+        self.assertEqual(sums.total(1, 2, 3, 4), (9 + 10 + 13 + 14) * 3)
 
 
 class OverviewTest(Base):
@@ -159,6 +218,19 @@ class OverviewTest(Base):
         self.assertEqual(bottom_left, tile(world, 0, S))
         with self.assertRaises(ValueError):
             textures.overview(self.root, 0, 2, variant="code")
+
+    def test_shrink(self):
+        self.two_levels()
+        full, n = textures.overview(self.root, 0, 2, variant="base")
+        half, m = textures.overview(self.root, 0, 2, variant="base", shrink=2)
+        self.assertEqual((m["width"], m["height"], m["tile"]), (S, S, S // 2))
+        fw, fh, fpx = textures.png_decode(full)
+        hw, hh, hpx = textures.png_decode(half)
+        want = [sum(fpx[((2 * 5 + a) * fw + 2 * 7 + b) * 4] for a in (0, 1) for b in (0, 1)) for _ in (0,)][0]
+        self.assertEqual(hpx[(5 * hw + 7) * 4], (want + 2) // 4)
+        with self.assertRaises(ValueError):
+            textures.overview(self.root, 0, 2, shrink=3)
+        self.assertEqual(textures.shrink_rgba(b"\x01\x02\x03\x04" * 4, 2, 1), bytearray(b"\x01\x02\x03\x04" * 4))
 
     def test_labels_draw_borders_and_text(self):
         self.two_levels()
@@ -198,6 +270,9 @@ class JobTest(unittest.TestCase):
         self.assertEqual(self.where(self.doc(variant="code", code=-1)), ["ops[0].code"])
         self.assertEqual(self.where(self.doc(labels="yes")), ["ops[0].labels"])
         self.assertEqual(self.where(self.doc(min_match=1001)), ["ops[0].min_match"])
+        self.assertEqual(self.where(self.doc(shrink=4)), [])
+        self.assertEqual(self.where(self.doc(shrink=3)), ["ops[0].shrink"])
+        self.assertEqual(self.where(self.doc(shrink=True)), ["ops[0].shrink"])
 
     def test_check_map_tiles(self):
         raw = json.dumps({"format": "datapiler-job/1", "id": "test-0301-tiles", "title": "tiles", "ops": [

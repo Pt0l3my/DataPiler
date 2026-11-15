@@ -9,6 +9,7 @@ environment, logs, update downloads or the Deleted bin are left out, as are link
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import struct
@@ -313,18 +314,22 @@ def png_encode(w: int, h: int, rgba: bytes | bytearray) -> bytes:
             + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
 
 
-# ------------------------------------------------------------------------------------------------ tile check (S78)
+# ------------------------------------------------------------------------------------------------ tile check (S78, S79)
 #
 # The overviews of 0.2.25 to 0.2.27 mixed two images at level 2: next to variants that are the base with pieces drawn
-# in, the export holds variants that carry another drawing of the whole map, at three quarters of the level's scale
-# (WHY§64). The file names hold nothing to tell them apart, so DataPiler looks: a level whose grid is twice as fine as
-# the next level's must look like it at half size (levels 2, 3 and 4 nest so, from the bottom left). Each variant is
-# measured against the next level's variant for the same pieces, and its base, on small grey thumbnails.
+# in, the game's container holds variants of another drawing, named by code like the rest (WHY§64, WHY§67). The file
+# names hold nothing to tell them apart, so DataPiler looks. S79: every level of a sheet is measured against one
+# reference level (the coarsest with six tiles a side or more, else the coarsest), the reference against its
+# neighbour, each scaled by LEVEL_SCALES from the bottom left: each variant's grey thumbnail against the reference's
+# variant for the same pieces, and its base, sampled over the same ground.
 
 THUMB = 64                   # a tile's grey thumbnail, pixels a side
 UNMEASURED = -9999           # a score that could not be measured: no next level, a tile too small, or nothing in it
 MATCH_MIN = 700              # per mille: a variant that matches the next level less than this is another image's
 FLAT = 2.0                   # grey levels: a thumbnail part flatter than this holds nothing to compare
+LEVEL_SCALES = (1.0, 0.75, 0.25, 0.125, 0.0625)   # S79: each level's size against level 0 (2 to 4 measured, WHY§67)
+CELLS = 32                   # cells a side, at most, that a variant and the reference are compared on
+REF_MIN_SIDE = 6             # the reference level: the coarsest with at least this many tiles a side
 TILE_CHECK_COLUMNS: tuple[tuple[str, str], ...] = (
     ("x", "int"), ("y", "int"), ("code", "int"), ("folder", "int"), ("copies", "int"), ("drawn", "int"),
     ("like", "int"), ("near_level", "int"), ("near_code", "int"), ("near", "int"), ("near_base", "int"))
@@ -407,9 +412,71 @@ def nests(finer: tuple[int, int], coarser: tuple[int, int]) -> bool:
     return all((f + 1) // 2 <= c <= (f + 1) // 2 + 1 for f, c in zip(finer, coarser)) and min(finer) > 0
 
 
+def level_scale(level: int) -> float:
+    """S79: a level's size against level 0's (halving past the table)."""
+    if level < len(LEVEL_SCALES):
+        return LEVEL_SCALES[level]
+    return LEVEL_SCALES[-1] / 2 ** (level - len(LEVEL_SCALES) + 1)
+
+
+def reference_level(ts: TileSet) -> int | None:
+    """S79: the level a sheet's other levels are measured against: the coarsest with REF_MIN_SIDE tiles a side or more,
+    else the coarsest. None when the sheet has no tile."""
+    levels = sorted(lv for lv, at in ts.levels.items() if at)
+    if not levels:
+        return None
+    big = [lv for lv in levels if min(ts.grid(lv)) >= REF_MIN_SIDE]
+    return max(big) if big else max(levels)
+
+
+def _shrink_thumb(t: array, n: int) -> list[float]:
+    """A THUMB-side thumbnail as n x n means (n divides THUMB), rows from the top."""
+    k = THUMB // n
+    out = []
+    for r in range(n):
+        for c in range(n):
+            s = 0.0
+            for i in range(k):
+                row = (r * k + i) * THUMB + c * k
+                for j in range(k):
+                    s += t[row + j]
+            out.append(s / (k * k))
+    return out
+
+
+class _Sums:
+    """A tile's grey summed-area table: the sum of any rectangle of its pixels in four reads."""
+
+    def __init__(self, px: bytes | bytearray, size: int) -> None:
+        self.size = size
+        w = size + 1
+        sums = array("d", bytes(8 * w * w))
+        for r in range(size):
+            at = r * size * 4
+            R = px[at:at + size * 4:4]
+            G = px[at + 1:at + size * 4:4]
+            B = px[at + 2:at + size * 4:4]
+            run = 0.0
+            o = (r + 1) * w
+            above = r * w
+            for c in range(size):
+                run += (R[c] + G[c] + B[c]) / 3.0
+                sums[o + c + 1] = sums[above + c + 1] + run
+        self.sums = sums
+
+    def total(self, x0: int, y0: int, x1: int, y1: int) -> float:
+        """The sum over columns x0..x1-1 and rows y0..y1-1, rows from the top."""
+        w = self.size + 1
+        s = self.sums
+        return s[y1 * w + x1] - s[y0 * w + x1] - s[y1 * w + x0] + s[y0 * w + x0]
+
+
 class Judge:
-    """S78: measures a level's exported variants against the next level whose grid nests with it by two (the coarser
-    one, else the finer one), from the bottom left. Decoded thumbnails of the other level are kept."""
+    """S78/S79: measures a level's exported variants against the sheet's reference level (the reference against its
+    nearest level), scaled by LEVEL_SCALES from the bottom left. The other level's tiles are read once each and kept as
+    summed-area tables, a bounded number at a time."""
+
+    KEEP = 160
 
     def __init__(self, ts: TileSet, level: int, cancel: threading.Event | None = None) -> None:
         self.ts = ts
@@ -417,13 +484,17 @@ class Judge:
         self.cancel = cancel
         self.at = ts.levels.get(level, {})
         self.other: int | None = None
-        self.up = True
-        if level + 1 in ts.levels and nests(ts.grid(level), ts.grid(level + 1)):
-            self.other = level + 1
-        elif level - 1 in ts.levels and nests(ts.grid(level - 1), ts.grid(level)):
-            self.other, self.up = level - 1, False
+        ref = reference_level(ts)
+        if ref is not None and self.at:
+            if level != ref:
+                self.other = ref
+            else:
+                near = sorted((lv for lv, at in ts.levels.items() if at and lv != level),
+                              key=lambda lv: (abs(lv - level), -lv))
+                self.other = near[0] if near else None
+        self.ratio = level_scale(self.other) / level_scale(level) if self.other is not None else 0.0
         self.size: int | None = None
-        self._kept: dict[Path, array | None] = {}
+        self._kept: dict[Path, _Sums] = {}
 
     def decode(self, path: Path) -> bytearray:
         if self.cancel is not None and self.cancel.is_set():
@@ -440,34 +511,66 @@ class Judge:
             return None
         return thumb(px, self.size)
 
-    def _other(self, path: Path) -> array | None:
-        if path not in self._kept:
-            self._kept[path] = self.thumb(self.decode(path))
-        return self._kept[path]
+    def _sums(self, path: Path) -> _Sums:
+        got = self._kept.pop(path, None)
+        if got is None:
+            got = _Sums(self.decode(path), self.size or 0)
+            if len(self._kept) >= self.KEEP:
+                self._kept.pop(next(iter(self._kept)))
+        self._kept[path] = got
+        return got
 
     def near(self, x: int, y: int, code: int, t: array | None) -> tuple[int, int, int]:
-        """(the other level's code compared or -1, the match with it, the match with the other level's base), per
-        mille; UNMEASURED where it cannot be measured."""
-        if self.other is None or t is None:
+        """(the other level's codes compared, OR-ed, or -1; the match with them; the match with the other level's
+        base), per mille; UNMEASURED where it cannot be measured."""
+        if self.other is None or t is None or self.size is None:
             return -1, UNMEASURED, UNMEASURED
+        size = self.size
         there = self.ts.levels[self.other]
-        if self.up:
-            parts = [(_half(t), (x // 2, y // 2), (x % 2, y % 2))]
-        else:
-            parts = [(_quarter(t, i, j), (2 * x + i, 2 * y + j), None) for j in (0, 1) for i in (0, 1)]
+        span = size * self.ratio                       # this tile's side, in the other level's pixels
+        n = CELLS
+        while n > 4 and span / n < 1.0:
+            n //= 2
+        mine_all = _shrink_thumb(t, n)
+        x0, y0 = x * span, y * span                    # its bottom left, in the other level's pixels from the bottom
+        cell = span / n
         chosen = -1
         pairs: dict[str, tuple[list[float], list[float]]] = {"code": ([], []), "base": ([], [])}
-        for part, pos, quarter in parts:
-            codes = there.get(pos) or {}
-            for kind, want in (("code", _within(codes, code)), ("base", 0 if 0 in codes else None)):
-                o = self._other(codes[want]) if want is not None else None
-                if o is None:
-                    continue
-                if kind == "code":
-                    chosen = max(chosen, 0) | want
-                pairs[kind][0].extend(part)
-                pairs[kind][1].extend(_quarter(o, *quarter) if quarter is not None else _half(o))
-        return chosen, ncc(*pairs["code"]), ncc(*pairs["base"])
+        for j in range(n):                             # rows from the top of this tile
+            gy1 = y0 + span - j * cell                 # top and bottom of the cell, from the bottom of the level
+            gy0 = gy1 - cell
+            b0 = math.floor(gy0 + 1e-6)
+            b1 = max(b0 + 1, math.ceil(gy1 - 1e-6))
+            for i in range(n):
+                gx0 = x0 + i * cell
+                a0 = math.floor(gx0 + 1e-6)
+                a1 = max(a0 + 1, math.ceil(gx0 + cell - 1e-6))
+                for kind in ("code", "base"):
+                    total = area = 0.0
+                    for ty in range(b0 // size, (b1 - 1) // size + 1):
+                        for tx in range(a0 // size, (a1 - 1) // size + 1):
+                            codes = there.get((tx, ty))
+                            if not codes:
+                                continue
+                            want = _within(codes, code) if kind == "code" else (0 if 0 in codes else None)
+                            if want is None:
+                                continue
+                            if kind == "code":
+                                chosen = max(chosen, 0) | want
+                            sums = self._sums(codes[want])
+                            cx0, cx1 = max(a0, tx * size) - tx * size, min(a1, (tx + 1) * size) - tx * size
+                            by0, by1 = max(b0, ty * size) - ty * size, min(b1, (ty + 1) * size) - ty * size
+                            if cx1 <= cx0 or by1 <= by0:
+                                continue
+                            total += sums.total(cx0, size - by1, cx1, size - by0)
+                            area += (cx1 - cx0) * (by1 - by0)
+                    if area:
+                        pairs[kind][0].append(mine_all[j * n + i])
+                        pairs[kind][1].append(total / area)
+        least = n * n // 4
+        code_score = ncc(*pairs["code"]) if len(pairs["code"][0]) >= least else UNMEASURED
+        base_score = ncc(*pairs["base"]) if len(pairs["base"][0]) >= least else UNMEASURED
+        return chosen, code_score, base_score
 
 
 def passes(near: int, near_base: int, min_match: int = MATCH_MIN) -> bool:
@@ -515,9 +618,8 @@ _GLYPHS = {   # 3 x 5, rows from the top
     ",": "000000000010100", "-": "000000111000000", "+": "000010111010000", " ": "000000000000000",
     "?": "111001011000010", "f": "011010111010010",
 }
-LABEL_SCALE = 3
-_ADVANCE = 4 * LABEL_SCALE
-_LINE = 6 * LABEL_SCALE + 1
+LABEL_SCALE = 3              # the font's size on a tile of LABEL_FULL pixels or more; smaller tiles get smaller text
+LABEL_FULL = 192
 GRID_RGBA = (255, 210, 0, 255)
 
 
@@ -533,7 +635,11 @@ def _box(canvas: bytearray, width: int, left: int, top: int, w: int, h: int) -> 
 
 def label(canvas: bytearray, width: int, left: int, top: int, size: int, lines: list[str]) -> None:
     """S78: a tile's border, in GRID_RGBA, and its lines of text, white on a dark box, drawn into the canvas (RGBA,
-    `width` pixels a row) at the tile whose top left is (left, top)."""
+    `width` pixels a row) at the tile whose top left is (left, top). S79: the text is three times the font on a tile of
+    LABEL_FULL pixels or more, twice on half of that, else once."""
+    scale = LABEL_SCALE if size >= LABEL_FULL else (2 if size >= LABEL_FULL // 2 else 1)
+    _ADVANCE = 4 * scale
+    _LINE = 6 * scale + 1
     for k in range(size):
         canvas[((top + k) * width + left) * 4:((top + k) * width + left) * 4 + 4] = bytes(GRID_RGBA)
         canvas[(top * width + left + k) * 4:(top * width + left + k) * 4 + 4] = bytes(GRID_RGBA)
@@ -553,15 +659,34 @@ def label(canvas: bytearray, width: int, left: int, top: int, size: int, lines: 
                 for gx in range(3):
                     if g[gy * 3 + gx] != "1":
                         continue
-                    for sy in range(LABEL_SCALE):
-                        row = y0 + 1 + gy * LABEL_SCALE + sy
-                        at = (row * width + left + 3 + i * _ADVANCE + gx * LABEL_SCALE) * 4
-                        canvas[at:at + 4 * LABEL_SCALE] = b"\xff\xff\xff\xff" * LABEL_SCALE
+                    for sy in range(scale):
+                        row = y0 + 1 + gy * scale + sy
+                        at = (row * width + left + 3 + i * _ADVANCE + gx * scale) * 4
+                        canvas[at:at + 4 * scale] = b"\xff\xff\xff\xff" * scale
 
 
 # ------------------------------------------------------------------------------------------------ overview (S75)
 
 VARIANTS = ("revealed", "base", "code")   # S77/S78: every piece revealed, the base alone, or one code as exported
+SHRINKS = (1, 2, 4, 8)                    # S79: an overview's tiles may be shrunk so that levels 0 and 1 fit
+
+
+def shrink_rgba(px: bytes | bytearray, size: int, f: int) -> bytearray:
+    """S79: a size x size RGBA tile as (size / f) x (size / f), each pixel the mean of an f x f block, rounded."""
+    if f == 1:
+        return bytearray(px)
+    side = size // f
+    out = bytearray(side * side * 4)
+    line = size * 4
+    half = f * f // 2
+    for r in range(side):
+        for ch in range(4):
+            rows = [px[(r * f + k) * line + ch:(r * f + k + 1) * line:4] for k in range(f)]
+            o = r * side * 4 + ch
+            for c in range(side):
+                a = c * f
+                out[o + c * 4] = (sum(sum(row[a:a + f]) for row in rows) + half) // (f * f)
+    return out
 
 
 def _choose(codes: dict[int, Path], judge: Judge | None, x: int, y: int, min_match: int,
@@ -597,21 +722,24 @@ def _choose(codes: dict[int, Path], judge: Judge | None, x: int, y: int, min_mat
 
 def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", variant: str = "revealed",
              code: int | None = None, check: bool = True, min_match: int = MATCH_MIN, labels: bool = False,
-             skip: Collection[Path] = (),
+             shrink: int = 1, skip: Collection[Path] = (),
              cancel: threading.Event | None = None,
              progress: Callable[[int, int], None] | None = None) -> tuple[bytes, dict[str, int]]:
     """One PNG of a sheet's level, laid out on the tile grid (column x; row y counted from the bottom, or from the
     top). Each position with every piece revealed (S77; with `check`, variants that do not match the next level are
     left out, S78), or in its base variant, or (variant "code") the file of one code where it was exported and the
     base elsewhere. `labels` draws each tile's border, its column and row, and the codes laid (a score after each, per
-    mille) or left out (a minus before). Positions without a file stay transparent. ValueError when no tile is found,
-    the result would pass MAX_SIDE, or a tile is not a PNG DataPiler reads or not square."""
+    mille) or left out (a minus before). `shrink` (S79) makes each tile 2, 4 or 8 times smaller, so that levels 0 and 1
+    fit. Positions without a file stay transparent. ValueError when no tile is found, the result would pass MAX_SIDE,
+    or a tile is not a PNG DataPiler reads or not square."""
     if rows_from not in ROWS_FROM:
         raise ValueError("rows_from is bottom or top")
     if variant not in VARIANTS:
         raise ValueError("variant is revealed, base or code")
     if variant == "code" and (code is None or not 0 <= code <= 0xFFFFFFFF):
         raise ValueError("variant code needs a code")
+    if shrink not in SHRINKS:
+        raise ValueError("shrink is 1, 2, 4 or 8")
     ts = tile_set(root, sheet, skip=skip, cancel=cancel)
     at = ts.levels.get(level, {})
     if not at:
@@ -656,10 +784,15 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
             text += ["%X" % c if sc == UNMEASURED else "%X %d" % (c, sc) for c, sc in lays] or ["0"]
             text += ["-%X" % c if sc == UNMEASURED else "-%X %d" % (c, sc) for c, sc in out]
         if size is None:
-            size = judge.size
+            if judge.size % shrink:
+                raise ValueError("the tiles cannot be shrunk %d times" % shrink)
+            full = judge.size
+            size = full // shrink
             if cols * size > MAX_SIDE or rows * size > MAX_SIDE:
-                raise ValueError("that level would make an image over %d pixels a side; choose a smaller level" % MAX_SIDE)
+                raise ValueError("that level would make an image over %d pixels a side; choose a smaller level or "
+                                 "shrink it" % MAX_SIDE)
             canvas = bytearray(cols * size * rows * size * 4)
+        px = shrink_rgba(px, full, shrink)
         top = (rows - 1 - y) * size if rows_from == "bottom" else y * size
         left = x * size
         line = cols * size * 4

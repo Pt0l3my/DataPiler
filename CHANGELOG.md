@@ -13,6 +13,14 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.29 - 2026-11-15
+
+- Every level of every sheet is checked now, not only levels 2 to 4 (S79): each sheet has a reference level (the
+  coarsest with six tiles a side or more), and every other level is measured against it at its own scale (levels 0
+  and 1 too, at an eighth and a sixth of level 3), the reference against its nearest level. The expansion's map gets
+  the same check.
+- New: `"shrink"` (2, 4 or 8) makes an overview's tiles smaller, so that levels 0 and 1 fit; labels shrink with them.
+
 ## 0.2.28 - 2026-11-15
 
 - Fixed: level 2 overviews mixed two images (S78). Besides the variants that are the base with pieces drawn in, the

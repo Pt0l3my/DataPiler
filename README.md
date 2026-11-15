@@ -128,6 +128,9 @@ everything the job has done in the workspace; **Resume job** goes on from the ne
 closed, as long as the job file, the game and Smithbox are the same. **Stop** cuts the step short instead, and asks
 first.
 
+Finished jobs start folded to their title row. Fold or unfold a card yourself and DataPiler remembers that for the job
+in this browser.
+
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
 you to type `DELETE`, then moves the saved progress to the Deleted bin (below) and starts from the beginning. A whole map job runs
@@ -214,7 +217,18 @@ folder, never inside the game's own folder. A job with `unpack_game_file` names 
 it there; DataPiler opens it on your PC and writes its inner files to the job's folder in the workspace. Files packed
 with Oodle (KRAK) are opened with the game's own `oo2core` library from your Game folder, which DataPiler loads while
 it runs and never copies; it never decrypts the game's archives, and refuses to open a key or the regulation. Like
-the rest of the workspace, the unpacked files are game files: they stay on your PC.
+the rest of the workspace, the unpacked files are game files: they stay on your PC, unless you pack them yourself to
+share for research (below).
+
+## Packing a finished job's files
+
+A finished job's card has **Pack 7z** on its title row, folded or not. It packs the job's share file (only while it
+passes all six checks) and every file in the job's workspace folder into a 7z archive in the workspace's `packed`
+folder: `<job id>.7z`, or, when the archive is larger than 29.9 MB, parts `<job id>.7z.001`, `.002` and on, which
+7-Zip opens from the first with the others beside it. The files go in under the job's id and nothing else: no folder
+above the job's, no times. Each archive is read back whole before it is offered, and packing the job again replaces
+it. **Open packed folder** opens the folder (Windows). The workspace's files are game files and research material:
+share them only for the research they were made for, never publicly.
 
 ## What it will and won't do
 

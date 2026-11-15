@@ -26,7 +26,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   request. DP27 (an overview image made on the PC), the owner's choice. DP28 (game files that Smithbox unpacked,
   opened on the PC with the game's own Oodle library), the owner's request and choice.
   DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
-  choice of (b).
+  choice of (b). DP30 (a finished job's files packed into 7z to upload; finished jobs folded), the owner's request.
 - **Open.** None.
 
 ## DP1
@@ -544,3 +544,20 @@ on whole images.
 **Decision.** (b), the same day: (a), with the hardware shown on the Status page (0.2.33, S83).
 
 **Owner's words.** "so currently the CPU is only using 1 core for the jobs? let's go with (b)".
+
+## DP30
+
+**A finished job's files packed into 7z to upload; finished jobs folded** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "for next datapiler version, can you make it so by default that datapiler shows completed
+jobs in folded state? also, add a button to completed jobs to compress into 7z format up to 29.9MB parts (multiple
+parts if needed)."
+
+**Decision.** As asked, in 0.2.35. A finished job's card starts folded to its title row; the owner's own fold or unfold
+of a card is remembered and wins (S86). A **Pack 7z** button on that title row packs the job's share file (only while
+it passes the guard now) and every file of its workspace folder into a 7z archive in the workspace's `packed` folder,
+cut into parts of at most 29.9 MB when it is larger (S87). The archive holds the files under the job's id and nothing
+about the PC. The workspace's files stay research material (DP21): the button only makes the archive on the PC, and
+sharing it stays the owner's own act.
+
+**Owner's words.** As above.

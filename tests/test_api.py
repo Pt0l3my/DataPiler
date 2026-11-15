@@ -83,6 +83,13 @@ class FakeRunner:
             return {"ok": False, "ask": {"maps": 98, "text": "Start loads 98 maps in Smithbox. Go on?"}}
         return {"ok": True}
 
+    def pack(self, job_id, *, share_ok):
+        # S87: the API hands over its guard check; the stand-in applies it to the file the test names
+        if job_id != JOB_ID:
+            raise ValueError("unknown")
+        self.packed_with = share_ok
+        return {"ok": True}
+
     def removal_word(self, job_id):
         if job_id != JOB_ID:
             raise ValueError("unknown")
@@ -490,6 +497,22 @@ class ApiTest(ApiBase):
         self.assertEqual(r, {"ok": True})
         with self.assertRaises(Bad):
             self.api.post("/api/jobs/act", {"id": "nobody", "what": "start"})
+
+    def test_s87_pack_hands_the_runner_the_guard_check(self):
+        _, r, _ = self.post("/api/jobs/act", {"id": JOB_ID, "what": "pack", "confirm_maps": None})
+        self.assertEqual(r, {"ok": True})
+        f = self.live.paths.share / "roster-counts.json"
+        f.write_bytes(b'{"tables": []}')
+        self.assertTrue(self.runner.packed_with(f))      # every check passes now
+        self.guard.fail[b'{"tables": []}'] = 6
+        self.assertFalse(self.runner.packed_with(f))     # one fails: the share file is not packed
+        self.guard.fail.clear()
+        with self.assertRaises(Bad):
+            self.api.post("/api/jobs/act", {"id": "nobody", "what": "pack"})
+
+    def test_s87_open_the_packed_folder(self):
+        _, r, _ = self.post("/api/open", {"area": "packed"})
+        self.assertEqual(self.b.opened, str(self.live.paths.packed))
 
     def test_open_folder_off_windows(self):
         _, r, _ = self.post("/api/open", {"area": "share"})

@@ -18,7 +18,7 @@ from dataclasses import replace
 
 from _packs import FakeOodle, bnd4_bytes, dcx_bytes, menu_like
 
-from datapiler import catalogue, deleted, events, gamefiles, guard, jobs, link, logbook, paths, runner, textdb, textures
+from datapiler import catalogue, deleted, events, gamefiles, guard, jobs, link, logbook, paths, runner, sevenzip, textdb, textures
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -463,6 +463,109 @@ class JobRunTest(RunnerBase):
         for t, d in self.events:
             for v in d.values():
                 self.assertTrue(v is None or isinstance(v, (bool, int, float, logbook.Own)), (t, d))
+
+
+class PackTest(RunnerBase):
+    """S87 (DP30): a finished job's share file and workspace folder packed into 7z to upload, in a thread of its own;
+    invented files only."""
+
+    COLS = [c for c, _ in gamefiles.UNPACK_COLUMNS]
+    JID = "test-0087-pack"
+
+    def done_job(self) -> dict:
+        self.put_game_file(menu_like(("Serevan_m00.testmsk", "Serevan_m01.testmsk")), "99_invented.testmskbnd.dcx")
+        ops = [{"op": "unpack_game_file", "file": "99_invented.testmskbnd.dcx", "as": "masks"},
+               {"op": "write_share", "name": "masks", "tables": ["masks"], "columns": {"masks": self.COLS}}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": self.JID, "title": "Pack (invented)", "ops": ops}).encode()
+        with mock.patch.object(gamefiles, "load_oodle", return_value=FakeOodle()):
+            return self.run_job(raw)
+
+    def packed(self) -> dict:
+        self.assertTrue(wait_for(lambda: self.card(self.JID)["packing"] is None and self.card(self.JID)["packed"]),
+                        self.card(self.JID))
+        return self.card(self.JID)["packed"]
+
+    def test_s87_the_share_file_and_the_workspace_folder_go_into_one_archive(self):
+        self.done_job()
+        self.assertEqual(self.r.pack(self.JID, share_ok=lambda f: True), {"ok": True})
+        done = self.packed()
+        self.assertNotIn("error", done)
+        self.assertEqual([x["name"] for x in done["parts"]], [self.JID + ".7z"])
+        part = self.p.packed / (self.JID + ".7z")
+        self.assertEqual(done["parts"][0]["size"], part.stat().st_size)
+        got = {}
+        listed = sevenzip.check([part], sink=lambda n, b: got.setdefault(n, bytearray()).extend(b))
+        names = sorted(n for n, _ in listed)
+        self.assertIn(self.JID + "/masks.json", names)
+        inner = self.JID + "/unpacked/99_invented.testmskbnd.dcx/menu/Invented/mask/Serevan_m01.testmsk"
+        self.assertIn(inner, names)
+        self.assertEqual(bytes(got[inner]), bytes([1]) * 41)
+        self.assertEqual(bytes(got[self.JID + "/masks.json"]), (self.p.share / "masks.json").read_bytes())
+        self.assertEqual(done["files"], len(names))
+        for n in names:                                    # relative names only: nothing of the PC's folders
+            self.assertTrue(n.startswith(self.JID + "/"), n)
+            self.assertNotIn(str(self.p.root), n)
+
+    def test_s87_a_share_file_failing_the_guard_now_stops_the_pack(self):
+        self.done_job()
+        r = self.r.pack(self.JID, share_ok=lambda f: False)
+        self.assertFalse(r["ok"])
+        self.assertIn("does not pass the guard now", r["error"])
+        self.assertFalse(self.p.packed.exists() and any(self.p.packed.iterdir()))
+        self.assertIsNone(self.card(self.JID)["packing"])
+
+    def test_s87_only_a_finished_job_is_packed(self):
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0087-new", "title": "Not run (invented)",
+                          "ops": [{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}]}).encode()
+        card, _ = self.r.add("job.json", raw)
+        r = self.r.pack(card["id"], share_ok=lambda f: True)
+        self.assertEqual(r, {"ok": False, "error": "Only a finished job can be packed."})
+        with self.assertRaises(ValueError):
+            self.r.pack("no-such-job", share_ok=lambda f: True)
+
+    def test_s87_a_job_with_no_files_left_has_nothing_to_pack(self):
+        self.done_job()
+        (self.p.share / "masks.json").unlink()
+        import shutil
+        shutil.rmtree(self.p.local / self.JID)
+        r = self.r.pack(self.JID, share_ok=lambda f: True)
+        self.assertEqual(r, {"ok": False, "error": "This job made no files to pack."})
+
+    def test_s87_no_run_or_removal_while_packing(self):
+        self.done_job()
+        with self.r._cv:
+            self.r._cards[self.JID].packing = {"done": 0, "of": 1}
+        for what in ("start", "resume", "update", "remove"):
+            r = self.r.act(self.JID, what)
+            self.assertFalse(r["ok"], what)
+            self.assertIn("being packed", r["error"])
+        self.assertEqual(self.r.pack(self.JID, share_ok=lambda f: True), {"ok": True})     # already under way
+        with self.r._cv:
+            self.r._cards[self.JID].packing = None
+
+    def test_s87_packing_again_replaces_the_earlier_pack(self):
+        self.done_job()
+        self.r.pack(self.JID, share_ok=lambda f: True)
+        first = self.packed()
+        stale = self.p.packed / (self.JID + ".7z.002")
+        stale.write_bytes(b"left from an older, larger pack")
+        with self.r._cv:
+            self.r._cards[self.JID].packed = None
+        self.r.pack(self.JID, share_ok=lambda f: True)
+        again = self.packed()
+        self.assertEqual([x["name"] for x in again["parts"]], [x["name"] for x in first["parts"]])
+        self.assertFalse(stale.exists())
+
+    def test_s87_the_log_names_no_file(self):
+        self.done_job()
+        _, seq = logbook.lines_after(0, limit=0)
+        self.r.pack(self.JID, share_ok=lambda f: True)
+        self.packed()
+        lines, _ = logbook.lines_after(seq)
+        self.assertTrue(any("packed into 1 7z part(s)" in x["msg"] for x in lines), lines)
+        for x in lines:
+            for word in ("Serevan", "masks.json", str(self.p.root)):
+                self.assertNotIn(word, x["msg"])
 
 
 class PauseTest(RunnerBase):
@@ -984,7 +1087,7 @@ class UnpackTest(RunnerBase):
         with mock.patch.object(gamefiles, "load_oodle", return_value=fake):
             card = self.run_job(self.job(ops))
         self.assertEqual(fake.calls, 1)
-        self.assertEqual(card["ops"][0]["done"], 2)
+        self.assertEqual((card["ops"][0]["done"], card["ops"][0]["of"]), (2, 2))    # S88: written of to write
         out = paths.local_folder(self.p, "test-0081-unpack", "unpacked") / "99_invented.testmskbnd.dcx"
         self.assertEqual((out / "menu" / "Invented" / "mask" / "Serevan_m01.testmsk").read_bytes(), bytes([1]) * 41)
         raw = (self.p.share / "masks.json").read_bytes()

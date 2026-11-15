@@ -36,6 +36,7 @@ class Paths:
     textdb: Path
     share_counts: Path      # the row counts of the share files written (check 6's input, kept local; DP8)
     bin: Path               # the Deleted bin (DP22, S70): what a removal moved out, until the owner erases it
+    packed: Path            # S87 (DP30): 7z archives of finished jobs' files, packed to upload
     versions: Path          # every game version's kept reads, outputs and change reports (DP23, S71); never removed
     share: Path
     logs: Path
@@ -70,6 +71,7 @@ def resolve(root: Path, workspace_dir: str, share_dir: str) -> Paths:
         textdb=workspace / "textdb.sqlite",
         share_counts=workspace / "share-counts.json",
         bin=workspace / "bin",
+        packed=workspace / "packed",
         versions=workspace / "versions",
         share=_under(root, share_dir),
         logs=logs,

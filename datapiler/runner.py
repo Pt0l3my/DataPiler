@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, deleted, events, fields, fileio, gamefiles, hardware, jobs, logbook
+from . import catalogue, deleted, events, fields, fileio, gamefiles, hardware, jobs, logbook, sevenzip
 from . import paths as paths_mod, textures
 from . import versions
 from . import link as link_mod
@@ -116,6 +116,8 @@ class _Card:
     pause: threading.Event = field(default_factory=threading.Event)   # S84: stop after the step running now
     pausing: bool = False
     resume_from: int | None = None  # S84: the step a resumed run goes on from, its context read from the paused file
+    packing: dict | None = None     # S87 (DP30): {done, of} bytes while its files are packed into 7z
+    packed: dict | None = None      # S87: the last pack's parts, or its error
 
     def public(self) -> dict:
         return {"id": self.id, "title": self.title, "format": jobs.FORMAT if self.format_ok else None,
@@ -123,6 +125,8 @@ class _Card:
                 "refusals": [{"op": r.op, "where": r.where, "text": r.text} for r in self.refusals],
                 "preview": self.preview, "wait": self.wait, "ops": [dict(o) for o in self.ops],
                 "pausing": self.pausing,
+                "packing": dict(self.packing) if self.packing else None,
+                "packed": json.loads(json.dumps(self.packed)) if self.packed else None,
                 "result": json.loads(json.dumps(self.result)) if self.result is not None else None,
                 "added": self.added}          # S54: the page sorts the newest first by it
 
@@ -931,6 +935,8 @@ class Runner:
             card = self._cards.get(job_id) if isinstance(job_id, str) else None
             if card is None:
                 raise ValueError("no such job")
+            if card.packing is not None and what in ("start", "resume", "update", "remove"):
+                return {"ok": False, "error": "The job's files are being packed; wait until that finishes."}
             if what == "pause":
                 if card.state not in ("running", "waiting") or self._current != ("job", card.id):
                     return {"ok": False, "error": "Only a running job can pause."}
@@ -1026,6 +1032,91 @@ class Runner:
             _job_log.info("job %s removed to the Deleted bin", own(card.id))
             events.emit("job.state", id=own(card.id), state=own("removed"))
             return {"ok": True}
+
+    # ------------------------------------------------------------------------------------------------ pack (S87)
+
+    def pack(self, job_id: str, *, share_ok: Callable[[Path], bool]) -> dict:
+        """S87 (DP30): packs a finished job's files into a 7z archive in the workspace's packed folder, cut into parts of
+        at most 29.9 MB when it is larger, ready to upload: its share file, only while it passes the guard now
+        (share_ok), and every file of its own workspace folder (local research material, which the owner shares by
+        hand). It runs in a thread of its own; the card shows its progress, then its parts. {"ok": True}, or
+        {"ok": False, "error": ...}. ValueError for an unknown id."""
+        with self._cv:
+            card = self._cards.get(job_id) if isinstance(job_id, str) else None
+            if card is None:
+                raise ValueError("no such job")
+            if card.packing is not None:
+                return {"ok": True}
+            if card.state != "done":
+                return {"ok": False, "error": "Only a finished job can be packed."}
+            share = (card.result or {}).get("share")
+            cid = card.id
+        entries: list[tuple[str, Path]] = []
+        name = share.get("name") if isinstance(share, dict) else None
+        if isinstance(name, str) and name.endswith(".json") and paths_mod.name_ok(name[:-5]):
+            f = paths_mod.share_file(self.paths, name[:-5])
+            if f.is_file():
+                if not share_ok(f):
+                    return {"ok": False, "error": "The job's share file does not pass the guard now, so nothing was "
+                                                  "packed: never share it. Running the job again writes it afresh."}
+                entries.append(("%s/%s" % (cid, f.name), f))
+        local = self.paths.local / cid
+        try:
+            if local.is_dir():
+                for f in sorted(local.rglob("*")):
+                    if f.is_file() and not f.is_symlink():
+                        entries.append(("%s/%s" % (cid, f.relative_to(local).as_posix()), f))
+            total = sum(f.stat().st_size for _, f in entries)
+        except OSError as e:
+            return {"ok": False, "error": "The job's files could not be read: %s." % logbook.why(e)}
+        if not entries:
+            return {"ok": False, "error": "This job made no files to pack."}
+        with self._cv:
+            if card.packing is not None:
+                return {"ok": True}
+            if card.state != "done":
+                return {"ok": False, "error": "Only a finished job can be packed."}
+            card.packing = {"done": 0, "of": total}
+            card.packed = None
+        events.emit("job.state", id=own(cid), state=own(card.state))
+        threading.Thread(target=self._pack_run, args=(card, entries, total), name="datapiler-pack",
+                         daemon=True).start()
+        return {"ok": True}
+
+    def _pack_run(self, card: _Card, entries: list[tuple[str, Path]], total: int) -> None:
+        t0 = time.monotonic()
+        last = [0.0]
+
+        def progress(done: int, of: int) -> None:
+            now = time.monotonic()
+            if now - last[0] >= 0.25 or done >= of:
+                last[0] = now
+                with self._cv:
+                    card.packing = {"done": done, "of": of}
+
+        try:
+            parts = sevenzip.write(entries, self.paths.packed, card.id, progress=progress)
+            sizes = [p.stat().st_size for p in parts]
+            packed = {"parts": [{"name": p.name, "size": n} for p, n in zip(parts, sizes)], "files": len(entries),
+                      "bytes": total, "size": sum(sizes), "at": time.time()}
+            _job_log.info("job %s: %s files, %s bytes, packed into %s 7z part(s), %s bytes in all, in the workspace's "
+                          "packed folder (local) in %s s", own(card.id), logbook.n(len(entries)), logbook.n(total),
+                          logbook.n(len(parts)), logbook.n(sum(sizes)), logbook.n(round(time.monotonic() - t0, 1)))
+        except sevenzip.PackError as e:
+            packed = {"error": "The files could not be packed: %s." % e, "at": time.time()}
+            _job_log.warn("job %s: its files could not be packed: %s", own(card.id), own(str(e)))
+        except OSError as e:
+            packed = {"error": "The files could not be packed: %s." % logbook.why(e), "at": time.time()}
+            _job_log.warn("job %s: its files could not be packed: %s", own(card.id), logbook.why(e))
+        except Exception as e:
+            packed = {"error": "The files could not be packed: an internal error (%s)." % logbook.why(e),
+                      "at": time.time()}
+            _job_log.error("job %s: packing failed: an internal error (%s)", own(card.id), logbook.why(e))
+        with self._cv:
+            card.packing = None
+            card.packed = packed
+            self._cv.notify_all()
+        events.emit("job.state", id=own(card.id), state=own(card.state))
 
     def cards(self) -> list[dict]:
         """/api/state "jobs", in the order they were added. S66: a result's "kept" (what Resume goes on from) is
@@ -1988,7 +2079,7 @@ class Runner:
                      "folder (local, never shared)", i, own(name), logbook.n(len(found)), logbook.n(size),
                      logbook.n(len(rows) - 1), logbook.n(binders), logbook.n(packed["dflt"]), logbook.n(packed["krak"]),
                      logbook.n(written[0]), logbook.n(written[1]))
-        return written[0], len(rows)
+        return written[0], written[0]      # S88: the files written, of the files to write
 
     def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to

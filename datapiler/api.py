@@ -682,6 +682,14 @@ class Api:
                 got = body.get("confirm")
                 if got != word and got != deleted.WORD:
                     return _ask("Remove the job?", (JOB_ASK_KEPT if word == deleted.WORD else JOB_ASK) % jid, word)
+            elif what == "pack":
+                # S87 (DP30): a finished job's files packed into 7z to upload; its share file goes in only while it
+                # passes all six checks now, as Copy path asks
+                def share_ok(f: Path) -> bool:
+                    _, checks = self._guard_now(f)
+                    return self._first_failed(checks) is None
+
+                return self.runner.pack(jid, share_ok=share_ok)
             elif what in RUN_BUTTONS:
                 # The owner's rule of 2026-11-14: a run that would move saved map progress to the Deleted bin (Start
                 # again always; Resume job and Update data when it is of another version) wants DELETE typed in
@@ -732,7 +740,9 @@ class Api:
             if not isinstance(job, str) or not paths_mod.name_ok(job) or not (self.live.paths.local / job).is_dir():
                 raise Bad("no workspace folder for that job")
             return self.live.paths.local / job
-        raise Bad("area must be workspace, share or job")
+        if area == "packed":
+            return self.live.paths.packed          # S87 (DP30): the 7z archives of finished jobs, packed to upload
+        raise Bad("area must be workspace, share, job or packed")
 
     def open_folder(self, body: dict) -> dict:
         folder = self._area(body)

@@ -496,12 +496,63 @@ function openCompare(j) {
   }).catch((e) => note(e.message));
 }
 // S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
+// S86 (the owner's request of 2026-11-15): a finished job starts folded; the owner's own fold or unfold of a card is
+// remembered and wins.
 function foldKey(j) { return String(j.sha256 || j.id || ""); }
-function folded() { try { return new Set(JSON.parse(store.get("dp.jobs.folded") || "[]")); } catch (e) { return new Set(); } }
+function keySet(name) { try { return new Set(JSON.parse(store.get(name) || "[]")); } catch (e) { return new Set(); } }
+function folded() { return keySet("dp.jobs.folded"); }
+function unfolded() { return keySet("dp.jobs.unfolded"); }
+function isFolded(j) {
+  const key = foldKey(j);
+  if (unfolded().has(key)) return false;
+  return folded().has(key) || j.state === "done";
+}
 function setFolded(key, on) {
-  const s = folded();
-  if (on) s.add(key); else s.delete(key);
-  store.set("dp.jobs.folded", JSON.stringify([...s].slice(-200)));
+  const f = folded(), u = unfolded();
+  if (on) { f.add(key); u.delete(key); } else { f.delete(key); u.add(key); }
+  store.set("dp.jobs.folded", JSON.stringify([...f].slice(-200)));
+  store.set("dp.jobs.unfolded", JSON.stringify([...u].slice(-200)));
+}
+// S87 (DP30): a finished job's files, packed into 7z to upload: its share file and its workspace folder, in parts of
+// at most 29.9 MB when larger. The button sits on the title row, so a folded card has it too.
+const PACKED_SEEN = {};
+function packBits(j, head) {
+  const has = j.result && (j.result.share || (j.result.local && j.result.local.length));
+  if (j.state !== "done" || !has) return;
+  const pk = j.packing;
+  const b = el("button", "sm", pk ? "Packing… " + (pk.of ? Math.floor(100 * pk.done / pk.of) : 0) + "%" : "Pack 7z");
+  b.title = "Pack this job's share file and its workspace folder into a 7z archive in the workspace's packed folder, " +
+    "in parts of up to 29.9 MB when it is larger, ready to upload. The workspace files are research material: share them only for this project's research.";
+  if (pk) b.disabled = true;
+  b.addEventListener("click", () => {
+    api("/api/jobs/act", { id: j.id, what: "pack", confirm_maps: null }).then((r) => {
+      if (!r.ok) note(r.error || "Not packed.");
+      poll();
+    }).catch((e) => note(e.message));
+  });
+  add(head, b);
+  const done = j.packed;
+  if (!done || pk) return;
+  if (done.error) {
+    const bad = el("span", "pill err", "not packed");
+    bad.title = done.error;
+    add(head, bad);
+  } else {
+    const n = done.parts.length;
+    const pill = el("span", "pill ok", "packed: " + (n === 1 ? "1 part" : n + " parts") + ", " + fmtSize(done.size));
+    pill.title = done.parts.map((x) => x.name + " - " + fmtSize(x.size)).join("\n");
+    add(head, pill);
+    const ob = el("button", "sm", "Open packed folder");
+    ob.title = "Open the workspace's packed folder (Windows)";
+    ob.addEventListener("click", () => api("/api/open", { area: "packed" }).then((r) => { if (!r.ok) note(r.error || "Not opened."); }).catch((e) => note(e.message)));
+    add(head, ob);
+  }
+  if (PACKED_SEEN[j.id] !== done.at) {
+    if (PACKED_SEEN[j.id] !== undefined || Date.now() / 1000 - done.at < 30) {
+      note(done.error ? done.error : "Packed " + j.id + ": " + (done.parts.length === 1 ? done.parts[0].name : done.parts.length + " parts, " + done.parts[0].name + " first") + ", " + fmtSize(done.size) + ", in the workspace's packed folder.", !done.error);
+    }
+    PACKED_SEEN[j.id] = done.at;
+  }
 }
 // S54: where the job is, as a step of its ops and a share of the whole, for every state that has ops.
 function jobProgress(j) {
@@ -519,7 +570,7 @@ function jobProgress(j) {
 }
 function jobCard(j) {
   const key = foldKey(j);
-  const c = el("div", "jobcard" + (folded().has(key) ? " folded" : ""));
+  const c = el("div", "jobcard" + (isFolded(j) ? " folded" : ""));
   c.dataset.jid = j.id;
   const head = el("div", "jhead");
   // S74: drag the grip to move the card above, below or between others; or focus it and use the arrow keys
@@ -544,7 +595,7 @@ function jobCard(j) {
     if (DRAG) { DRAG = null; JOBS_KEY = ""; if (ST) paintJobs(ST); }
   });
   add(head, grip);
-  const fold = el("button", "fold", folded().has(key) ? "▸" : "▾");
+  const fold = el("button", "fold", isFolded(j) ? "▸" : "▾");
   fold.title = "Fold or unfold this job";
   fold.addEventListener("click", () => {
     const on = !c.classList.contains("folded");
@@ -560,6 +611,7 @@ function jobCard(j) {
   const prog = jobProgress(j);
   if (prog) add(head, el("span", "jprog", prog));
   if (j.sha256) add(head, el("span", "mono mute", "sha256 " + short(j.sha256)));
+  packBits(j, head);
   add(c, head);
   if (j.preview && j.state !== "refused") {
     const cols = el("div", "cols3");

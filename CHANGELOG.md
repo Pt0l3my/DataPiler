@@ -13,6 +13,19 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.35 - 2026-11-15
+
+- New: **Pack 7z** on a finished job's title row (DP30, S87). It packs the job's share file (only while it passes all
+  six checks now) and every file in the job's workspace folder into a 7z archive in the workspace's `packed` folder,
+  ready to upload: `<job id>.7z`, or parts `<job id>.7z.001`, `.002` and on when the archive is larger than 29.9 MB,
+  which 7-Zip opens from the first. The files go in under the job's id, with no times and nothing about the PC; each
+  archive is read back whole before it is offered, and packing a job again replaces its earlier archive. **Open packed
+  folder** opens the folder (Windows).
+- Changed: finished jobs start folded to their title row (DP30, S86). Folding or unfolding a card yourself is remembered
+  in the browser and wins.
+- Fixed: an unpack step counts the files it writes, so en-0032's steps read "2 of 2 files" (S88); the binder it opened
+  was counted as a third.
+
 ## 0.2.34 - 2026-11-15
 
 - Changed: the levels' sizes, measured on the game's own overviews (en-0029, S85): level 1 is 0.74857 of level 0 and

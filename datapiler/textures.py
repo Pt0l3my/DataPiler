@@ -1038,8 +1038,8 @@ def _pool(workers: int, init: tuple, fn: Callable[[list], list], chunks: list[li
           got: Callable[[int, list], None]) -> list[list]:
     """S83: fn over every chunk in `workers` worker processes (Python's own, started afresh: the spawn method, as on
     Windows), each set up once by _w_init(*init). The chunks' results in their order; got(k, result) as each comes.
-    Cancelled at once when cancel is set (a chunk running then finishes in the background, its result dropped);
-    a worker's error is raised here."""
+    When cancel is set, the chunks not started are dropped and those running finish (seconds), so that no worker is
+    left reading files, then Cancelled; a worker's error is raised here likewise."""
     import concurrent.futures as cf
     import multiprocessing as mp
 
@@ -1058,7 +1058,7 @@ def _pool(workers: int, init: tuple, fn: Callable[[list], list], chunks: list[li
                 got(k, out[k])
         return out
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 # ------------------------------------------------------------------------------------------------ labels (S78)

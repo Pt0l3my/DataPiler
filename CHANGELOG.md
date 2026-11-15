@@ -19,6 +19,8 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
   level 2 0.19875, on every sheet, both from the top left (they were taken as 3/4 and 2,089 / 10,496). Checks of level
   0 against level 1 no longer drift towards the right and the bottom. Overviews were never affected: each level is drawn
   on its own grid.
+- Fixed: Stop during a tile check or an overview now waits for the worker processes' running chunks (a few seconds)
+  instead of leaving them reading files in the background.
 
 ## 0.2.33 - 2026-11-15
 

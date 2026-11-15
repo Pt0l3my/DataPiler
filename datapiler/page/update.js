@@ -148,6 +148,7 @@
       }
       add(foot, close, again);
     }
+    if (["up_to_date", "older", "none", "not_installable", "newer", "failed"].indexOf(s) >= 0) add(body, fileZone());
     add(body, el("div", "up-err"));
     const pri = foot.querySelector("button.pri") || foot.querySelector("button:last-child");
     if (pri) setTimeout(() => { if (H && H.box.contains(pri)) pri.focus(); }, 0);
@@ -172,6 +173,49 @@
       "bold, code. Links show their address and do not open from here."));
     add(foot, releaseLink(v), close,
         btn("Download " + (l.zip ? mib(l.zip.size) : ""), "pri", () => press({ action: "download" })));
+  }
+
+  // DP32 (S91): a release zip given by hand, dropped here or chosen: DataPiler checks it as it checks a download
+  // (its shape, every file against the zip's own manifest, the version inside, never an older one), shows its sha256
+  // to compare with the one given with it, and installs it only on Install and restart.
+  const FILE_MAX = 32 * 1048576;
+  function fileZone() {
+    const z = el("div", "up-drop");
+    const input = el("input");
+    input.type = "file";
+    input.accept = ".zip";
+    input.hidden = true;
+    add(z, el("div", null, "Install from a file: drop a DataPiler release zip here, or "),
+        btn("Choose file…", null, () => input.click()), input);
+    add(z, el("div", "mute up-small", "DataPiler checks the zip's shape and every file in it against its own " +
+      "manifest, and shows its sha256 to compare with the one given with it. Nothing changes until you press " +
+      "Install and restart."));
+    input.addEventListener("change", () => giveFile(input.files && input.files[0]));
+    z.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); z.classList.add("up-over"); });
+    z.addEventListener("dragleave", () => z.classList.remove("up-over"));
+    z.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      z.classList.remove("up-over");
+      giveFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+    });
+    return z;
+  }
+  function giveFile(f) {
+    if (!f || BUSY || LEAVING) return;
+    if (!/\.zip$/i.test(f.name)) { problem("Give a .zip file: a DataPiler release zip."); return; }
+    if (f.size > FILE_MAX) { problem("That file is larger than a release zip can be (32 MiB)."); return; }
+    BUSY = true;
+    problem("Checking " + f.name + "…");
+    f.arrayBuffer().then((buf) => {
+      const u = new Uint8Array(buf);
+      let s = "";
+      for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+      return api("/api/update/file", { name: f.name, data: btoa(s) });
+    }).then((v) => {
+      BUSY = false;
+      show(v);
+    }).catch((e) => { BUSY = false; problem((e && e.message) || "The file could not be read."); });
   }
 
   function progressText(p) {
@@ -201,7 +245,16 @@
   }
 
   function paintReady(v, body, foot) {
-    const l = v.latest || {}, p = v.plan || {};
+    const given = v.file || null;
+    const l = given ? { version: given.version } : (v.latest || {}), p = v.plan || {};
+    if (given) {
+      const sum = el("div", "mono up-sha");
+      add(sum, given.sha256);
+      add(body, kv([["From a file", el("span", "mono", given.name)], ["Version", given.version],
+                    ["Size", mib(given.size) + " (" + mb(given.size) + ")"], ["sha256", sum]]));
+      add(body, box("warn", "Given by hand: no release vouches for this zip. Compare its sha256 above with the one " +
+        "given with the file before you install it."));
+    }
     add(body, checkLines(v.checks));
     const what = el("div", "up-box");
     add(what, el("b", null, "Install and restart"), " stops DataPiler. Its window then replaces " + fmtN(p.write) +
@@ -218,12 +271,15 @@
                     "them from pypi.org, as at the first start");
     else add(libs, mark(true), " Python libraries: unchanged");
     add(body, libs);
-    add(body, box("warn", "DataPiler.exe is not code-signed. This one was built by the release workflow from the " +
+    add(body, box("warn", given ? "DataPiler.exe is not code-signed, and this zip was given by hand: install it only " +
+      "when its sha256 matches the one given with it. Nothing in it starts until you press Install and restart." :
+      "DataPiler.exe is not code-signed. This one was built by the release workflow from the " +
       "repository's source, and its checksum is the release's. Nothing downloaded starts until you press Install " +
       "and restart."));
     add(body, failedBox(v.failed));
-    add(body, el("div", "mute up-small", "A download not installed is removed when DataPiler next starts."));
-    const discard = btn("Discard the download", "left", () => press({ action: "cancel" }));
+    add(body, el("div", "mute up-small", (given ? "A file" : "A download") + " not installed is removed when " +
+      "DataPiler next starts."));
+    const discard = btn(given ? "Discard the file" : "Discard the download", "left", () => press({ action: "cancel" }));
     add(foot, discard, btn("Later", null, () => H && H.close()),
         btn("Install and restart", "pri", () => press({ action: "install" })));
   }

@@ -63,13 +63,14 @@ class UpdateJs(unittest.TestCase):
             self.assertNotIn(bad, CODE, bad)
 
     def test_only_its_three_addresses(self):
+        # and, from 0.2.36 (DP32, S91), the fourth: a release zip given by hand goes to /api/update/file
         strings = re.findall(r"\"(/[^\"]*)\"", CODE)
         self.assertTrue(strings)
-        self.assertLessEqual(set(strings), {"/api/update", "/api/update-result", "/"}, strings)
+        self.assertLessEqual(set(strings), {"/api/update", "/api/update-result", "/api/update/file", "/"}, strings)
         fetched = re.findall(r"\bfetch\(([^,)]*)", CODE)
         self.assertEqual(fetched, ['"/"'])
         for first in re.findall(r"\bapi\(([^,)]*)", CODE):
-            self.assertIn(first, ('"/api/update"', '"/api/update-result"'))
+            self.assertIn(first, ('"/api/update"', '"/api/update-result"', '"/api/update/file"'))
         self.assertNotRegex(CODE, r"https?://")
         self.assertNotIn("XMLHttpRequest", CODE)
         self.assertNotIn("WebSocket", CODE)

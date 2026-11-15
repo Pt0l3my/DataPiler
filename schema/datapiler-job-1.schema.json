@@ -247,7 +247,11 @@
             "MapNameTexParam_m61",
             "MapPieceTexParam",
             "MapPieceTexParam_m61",
-            "MapGridCreateHeightLimitInfo"
+            "MapGridCreateHeightLimitInfo",
+            "WeatherLotTexParam",
+            "WeatherLotTexParam_m61",
+            "MimicryEstablishmentTexParam",
+            "MimicryEstablishmentTexParam_m61"
           ]
         },
         "fields": {
@@ -756,6 +760,130 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WeatherLotTexParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WeatherLotTexParam_m61"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MimicryEstablishmentTexParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MimicryEstablishmentTexParam_m61"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -789,7 +917,11 @@
             "MapNameTexParam_m61",
             "MapPieceTexParam",
             "MapPieceTexParam_m61",
-            "MapGridCreateHeightLimitInfo"
+            "MapGridCreateHeightLimitInfo",
+            "WeatherLotTexParam",
+            "WeatherLotTexParam_m61",
+            "MimicryEstablishmentTexParam",
+            "MimicryEstablishmentTexParam_m61"
           ]
         },
         "fields": {

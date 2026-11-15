@@ -27,7 +27,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   opened on the PC with the game's own Oodle library), the owner's request and choice.
   DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
   choice of (b). DP30 (a finished job's files packed into 7z to upload; finished jobs folded), the owner's request.
-  DP31 (the server link switched on by itself after launch, a setting), the owner's request, for the next version.
+  DP31 (the server link switched on by itself after launch, a setting), the owner's request, built in 0.2.36.
+  DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request.
 - **Open.** None.
 
 ## DP1
@@ -578,5 +579,24 @@ and stops if it starts), and the project folder in Settings never the game's fol
 which project Smithbox has open, so it asks the owner once a session to confirm it (build plan §10, P1). Turning the
 switch on gives that confirmation for every session: the switch says so, and the log notes each time the link is
 switched on by the setting.
+
+**Owner's words.** As above.
+
+- Later (2026-11-15): built in 0.2.36 (S90), with the four map-information colour keys the owner chose to have read
+  in the same version (S89) and DP32.
+
+## DP32
+
+**A release zip installed from a file dropped on the Update pop-up** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "I was wondering if you could also add manual update to updater a file drop zone with
+manually add file button. so the user could just drop a file and datapiler would update itself and restart."
+
+**Decision.** As asked, in 0.2.36 (S91). The Update pop-up has a zone to drop a DataPiler release zip on, and a
+**Choose file…** button. DataPiler checks the zip as it checks a download, but for the release's published checksums,
+which a file given by hand has none of: its size, its shape, every file against the zip's own manifest, and the
+version inside, never older than the running one. The pop-up then shows the zip's sha256 in full, to compare with the
+one given with the file, and **Install and restart** installs it through the same helper as a download: backup,
+checks where each file landed, the new version started, and the old one put back on any failure.
 
 **Owner's words.** As above.

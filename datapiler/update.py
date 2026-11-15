@@ -14,6 +14,8 @@ the helper, writes update/pending.json and asks the app to stop with exit code 7
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -48,6 +50,10 @@ HELPER_MAX = 1024 * 1024
 API_ACCEPT = "application/vnd.github+json"
 ASSET_ACCEPT = "application/octet-stream"
 ACTIONS = ("check", "download", "install", "cancel")
+FILE_MAX = 32 * 1024 * 1024        # DP32 (S91): a release zip given by hand, at most this
+FILE_NAME_RX = re.compile(r"[^\x00-\x1f\x7f/\\:*?\"<>|]{1,120}\.zip", re.IGNORECASE)
+INIT_MAX = 64 * 1024
+VERSION_LINE_RX = re.compile(rb'^VERSION = "(\d{1,4}\.\d{1,4}\.\d{1,4})"\r?$', re.MULTILINE)
 STATES = ("idle", "checking", "up_to_date", "newer", "older", "not_installable", "none", "downloading", "ready",
           "failed")
 
@@ -489,6 +495,7 @@ class _Staged:
     size: int
     version: str
     manifest: dict[str, str] = field(default_factory=dict)
+    given: str | None = None        # DP32 (S91): the name of a zip given by hand; None for a download
 
 
 class Updater:
@@ -527,11 +534,14 @@ class Updater:
 
     def view(self) -> dict:
         with self._lock:
+            st = self._staged
+            given = {"name": st.given, "version": st.version, "size": st.size, "sha256": st.sha256} \
+                if st is not None and st.given is not None and self._state == "ready" else None
             return {"state": self._state, "this": self.version, "checked_at": self._checked_at,
                     "latest": self._rel.view() if self._rel is not None else None, "why": self._why,
                     "progress": dict(self._progress) if self._progress else None,
                     "checks": [dict(c) for c in self._checks], "plan": dict(self._plan) if self._plan else None,
-                    "failed": dict(self._failed) if self._failed else None}
+                    "failed": dict(self._failed) if self._failed else None, "file": given}
 
     def get(self) -> dict:
         """GET /api/update: the view; notes the poll (a download stops when the pop-up has not read this for
@@ -617,6 +627,135 @@ class Updater:
             return True
         t.join(timeout)
         return not t.is_alive()
+
+    def from_file(self, body: dict) -> tuple[int, dict]:
+        """DP32 (S91): POST /api/update/file {"name": "<file>.zip", "data": base64}: a release zip the owner gives by
+        hand, dropped on the pop-up or chosen with its button. It is checked as a download is, but for the release's
+        published checksums, which a file given by hand has none of: its size, its shape, its own manifest (every
+        file's sha256, and the version inside), and a version newer than this one or the same. The view then shows
+        its sha256 to compare with the one given with it, and the pop-up is ready as after a verified download:
+        Install and restart installs it the same way."""
+        if not isinstance(body, dict) or sorted(body) != ["data", "name"]:
+            return 400, {"error": "the body holds name and data"}
+        name, data = body.get("name"), body.get("data")
+        if not isinstance(name, str) or not FILE_NAME_RX.fullmatch(name):
+            return 400, {"error": "a release zip's name, ending .zip"}
+        if not isinstance(data, str) or len(data) > (FILE_MAX + 2) // 3 * 4 + 4:
+            return 400, {"error": "a zip of at most %d MiB" % (FILE_MAX // (1024 * 1024))}
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError):
+            return 400, {"error": "data must be base64"}
+        with self._lock:
+            if self._closed or self._leaving:
+                return 400, {"error": "DataPiler is stopping"}
+            if self._state in ("checking", "downloading"):
+                return 400, {"error": "Wait until the check or the download has finished, then give the file again."}
+            if self._state == "ready":
+                self._discard()                      # the file replaces a download or a file not installed
+            self._poll = self._clock()
+            self._gen += 1
+            checks, staged, failed = self._take_file(raw, name)
+            if staged is None:
+                self._reset("failed")
+                self._checks = checks
+                self._failed = {"stage": "verify", "text": failed, "kept": False}
+                log.warn("a release zip given by hand was refused: %s", own(failed))
+                return 200, self.view()
+            old = install.manifest_here(self.root)
+            pl = install.helper(install.APP).plan(self.root, staged.manifest, old)
+            self._reset("ready")
+            self._checks = checks
+            self._plan = {"write": len(pl.write), "add": len(pl.add), "remove": len(pl.remove), "same": len(pl.same),
+                          "edited": len(pl.edited), "files": len(staged.manifest),
+                          "libs": staged.manifest.get("requirements.lock") != install.lock_sha256(self.root)}
+            self._staged = staged
+            log.info("a release zip given by hand checked: %s, %s bytes, sha256 %s", own(staged.version),
+                     logbook.n(staged.size), own(staged.sha256))
+            return 200, self.view()
+
+    def _take_file(self, raw: bytes, name: str) -> tuple[list[dict], "_Staged | None", str]:
+        """The checks of a zip given by hand, in order, and the staged zip, or None and why not."""
+        checks: list[dict] = []
+
+        def line(cid: str, ok: object, text: str) -> None:
+            checks.append({"id": cid, "ok": ok, "text": text})
+
+        size = len(raw)
+        if size > FILE_MAX or size == 0:
+            line("size", False, "%s bytes - a release zip is at most %s MiB" % (logbook.n(size),
+                                                                                 logbook.n(FILE_MAX // (1024 * 1024))))
+            return checks, None, "the file is not a release zip's size"
+        got = hashlib.sha256(raw).hexdigest()
+        line("given", "warn", "given by hand, %s bytes, sha256 %s - compare it with the sha256 given with the file: "
+                              "no release vouches for it" % (logbook.n(size), got))
+        folder = self.root / install.UPDATE_DIR / "given"
+        part = folder / "given.zip.part"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(part, raw)
+            version = self._version_in(part)
+        except OSError as e:
+            self._remove(part)
+            return checks, None, "the file could not be written to update\\ (%s)" % logbook.why(e)
+        except ValueError as e:
+            self._remove(part)
+            line("version", False, str(e))
+            return checks, None, str(e)
+        this, theirs = version_key(self.version), version_key(version)
+        if this is not None and theirs is not None and theirs < this:
+            self._remove(part)
+            line("version", False, "it holds %s, older than this version (%s)" % (version, core(self.version)))
+            return checks, None, "it holds an older version than this one"
+        line("version", True if theirs != this else "warn",
+             "it holds %s%s" % (version, ", this version again: installing it puts back its files" if theirs == this
+                                 else ""))
+        h = install.helper(install.APP)
+        try:
+            arch = h.check_archive(part, version=version)
+        except h.Refused as e:
+            self._remove(part)
+            if e.stage == "shape":
+                line("shape", False, e.text)
+            else:
+                line("shape", True, "one folder, DataPiler - nothing outside it, no links")
+                line("manifest", False, e.text)
+            return checks, None, "it did not pass its checks (%s)" % e.text
+        line("shape", True, "one folder, DataPiler, %s files - nothing outside it, no links" % logbook.n(arch.files))
+        line("manifest", True, "its manifest: every file's sha256 checked; version inside: %s" % arch.version)
+        final_dir = self.root / install.UPDATE_DIR / version
+        final = final_dir / ("DataPiler-%s.zip" % version)
+        try:
+            final_dir.mkdir(parents=True, exist_ok=True)
+            os.replace(part, final)
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+        except OSError as e:
+            self._remove(part)
+            return checks, None, "the file could not be kept in update\\ (%s)" % logbook.why(e)
+        return checks, _Staged(zip=final, sha256=got, size=size, version=version, manifest=dict(arch.manifest),
+                               given=name), ""      # its name is shown on the page only, never logged
+
+    @staticmethod
+    def _version_in(zip_path: Path) -> str:
+        """The VERSION line of DataPiler/datapiler/__init__.py in the zip. ValueError when it is not a DataPiler zip."""
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                try:
+                    zi = zf.getinfo("DataPiler/datapiler/__init__.py")
+                except KeyError:
+                    raise ValueError("not a DataPiler release zip: it holds no DataPiler\\datapiler\\__init__.py") from None
+                if zi.file_size > INIT_MAX:
+                    raise ValueError("not a DataPiler release zip: its __init__.py is too large")
+                text = zf.read(zi)
+        except zipfile.BadZipFile:
+            raise ValueError("not a zip file") from None
+        m = VERSION_LINE_RX.search(text)
+        if m is None:
+            raise ValueError("not a DataPiler release zip: no VERSION line in its __init__.py")
+        return m.group(1).decode("ascii")
 
     # -------------------------------------------------------------------------------------------- the presses
     # Reached only from post (S27; test_update_static).
@@ -706,8 +845,14 @@ class Updater:
             self._reset("newer")
             return t
         if self._state == "ready":
+            given = self._staged is not None and self._staged.given is not None
             self._discard()
-            self._reset("newer")
+            if given and self._rel is not None:
+                self._apply(self._rel)           # DP32 (S91): back to what the release check said
+            elif given:
+                self._reset("idle")
+            else:
+                self._reset("newer")
             return None
         return None
 

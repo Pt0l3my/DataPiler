@@ -28,3 +28,8 @@
 .up-link { display: inline-block; color: var(--text); background: var(--card2); border: 1px solid var(--edge);
            border-radius: 7px; padding: 5px 12px; text-decoration: none; }
 .up-link:hover { border-color: var(--acc); }
+/* DP32 (S91): the zone for a release zip given by hand */
+.up-drop { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--edge); border-radius: 8px; }
+.up-drop.up-over { border-color: var(--acc); }
+.up-drop > div:first-child { display: inline; margin-right: 6px; }
+.up-sha { word-break: break-all; font-size: 12px; }

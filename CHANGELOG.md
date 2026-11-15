@@ -13,6 +13,19 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.36 - 2026-11-15
+
+- New: install from a file (DP32, S91). The Update pop-up has a zone to drop a DataPiler release zip on, and
+  **Choose file…**. DataPiler checks the zip as it checks a download (its shape, every file against the zip's own
+  manifest, the version inside, never an older one), shows its sha256 in full to compare with the one given with the
+  file, and **Install and restart** installs it as it installs a download.
+- New: **Link to Smithbox's server by itself** in Settings (DP31, S90), off at first. With it on, DataPiler switches the
+  server link on once Smithbox's server answers, the game is closed and the project folder passes its check, and again
+  if the link closed, unless you switched the link off yourself in that session. It stands for the question whether
+  Smithbox has your project open.
+- New: jobs can read the map-information images' other two colour keys, weather and mimicry, with the expansion's, and
+  share their rows for research under DP21's label (S89).
+
 ## 0.2.35 - 2026-11-15
 
 - New: **Pack 7z** on a finished job's title row (DP30, S87). It packs the job's share file (only while it passes all

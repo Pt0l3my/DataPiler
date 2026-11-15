@@ -313,6 +313,8 @@ class Run:
                 self.folders.at_start()
             except Exception as e:
                 logbook.get("folders").warn("Detect at start failed: %s", logbook.why(e))
+        if self.api is not None and not self.args.no_link:
+            self.api.start_auto_link()           # DP31 (S90): does nothing while its setting is off
 
     def _env_lines(self, p: paths.Paths) -> None:
         e = logbook.get("env")

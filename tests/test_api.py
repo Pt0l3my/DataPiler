@@ -407,6 +407,48 @@ class ApiTest(ApiBase):
         code, r, _ = self.post("/api/link", {"on": True})                      # asked once only
         self.assertEqual(r, {"ok": True, "state": "on"})
 
+    def test_s90_the_link_switches_on_by_itself_with_its_setting(self):
+        from dataclasses import replace
+        self.assertIsNone(self.api.auto_link_once())                      # the setting is off
+        self.assertEqual(self.post("/api/settings/one", {"key": "link_auto", "value": True})[0], 200)
+        self.assertTrue(self.live.settings.link_auto)
+        self.assertIsNone(self.api.auto_link_once())                      # Smithbox's server does not answer
+        self.assertEqual(self.link.switched, [])
+        self.status._port_answers = lambda: True
+        self.status._port = None
+        with mock.patch.object(self.status, "game_running", return_value=mock.Mock(running=True)):
+            self.assertIsNone(self.api.auto_link_once())                  # the game runs: the link waits
+        self.assertEqual(self.api.auto_link_once(), "on")
+        self.assertEqual(self.link.switched, [True])
+        self.assertTrue(self.live.session.link)
+        self.assertTrue(self.live.session.project_confirmed)             # the setting stands for the question
+        self.assertIsNone(self.api.auto_link_once())                      # on already
+        self.link.close("Smithbox stopped")                                # the link closed by itself...
+        self.assertEqual(self.api.auto_link_once(), "on")                 # ...comes back on by itself
+        _, r, _ = self.post("/api/link", {"on": False})                    # the owner switches it off
+        self.assertEqual(r["state"], "off")
+        self.assertIsNone(self.api.auto_link_once())                      # not on by itself again this session
+        self.assertEqual(self.link.switched, [True, True, False])
+        _, r, _ = self.post("/api/link", {"on": True})                     # by hand: the setting stands for the question
+        self.assertEqual(r, {"ok": True, "state": "on"})
+        self.assertFalse(self.live.session.link_off_by_owner)
+        self.live.settings = replace(self.live.settings, link_auto=False)
+        self.post("/api/link", {"on": False})
+        self.live.session.project_confirmed = False
+        _, r, _ = self.post("/api/link", {"on": True})                     # the setting off: asked again
+        self.assertIn("ask", r)
+
+    def test_s90_the_auto_links_thread_starts_once_and_ends_with_close(self):
+        self.api.AUTO_LINK_SECS = 0.05
+        self.api.start_auto_link()
+        t = self.api._auto_thread
+        self.assertTrue(t.is_alive())
+        self.api.start_auto_link()
+        self.assertIs(self.api._auto_thread, t)
+        self.api.close()
+        t.join(2.0)
+        self.assertFalse(t.is_alive())
+
     def test_a_new_project_folder_is_confirmed_again(self):
         self.post("/api/link", {"on": True, "confirm_project": True})
         self.assertTrue(self.live.session.project_confirmed)

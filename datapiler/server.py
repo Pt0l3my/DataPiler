@@ -30,6 +30,8 @@ PAGE_CSS = ("app.css", "update.css")
 TOKEN_HEADER = "X-DataPiler-Token"
 DROP_PATH = "/api/jobs/drop"
 DROP_MAX = 400 * 1024           # a 256 KB job in base64, and its name
+UPDATE_FILE_PATH = "/api/update/file"
+UPDATE_FILE_MAX = 44 * 1024 * 1024   # DP32 (S91): a 32 MiB release zip in base64, and its name
 POST_MAX = 64 * 1024
 # A request refused before its body is read: the answer is sent, then whatever of the body is still arriving is read
 # and dropped, up to these limits, before the connection closes. Closing with it unread makes Windows send a reset,
@@ -267,7 +269,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = -1
-        cap = DROP_MAX if path == DROP_PATH else POST_MAX
+        cap = DROP_MAX if path == DROP_PATH else UPDATE_FILE_MAX if path == UPDATE_FILE_PATH else POST_MAX
         if n < 0:
             self._will_not_read()
             return self.send(400, {"error": "no length"})

@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.36", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.37", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -541,7 +541,9 @@ class MapCoordsTest(unittest.TestCase):
         self.assertEqual(set(fields.MAP_PARAMS), {"BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam",
                                                   "WorldMapPieceParam", "WorldMapLegacyConvParam", "MapNameTexParam",
                                                   "MapNameTexParam_m61", "MapPieceTexParam", "MapPieceTexParam_m61",
-                                                  "MapGridCreateHeightLimitInfo"})
+                                                  "MapGridCreateHeightLimitInfo", "WeatherLotTexParam",
+                                                  "WeatherLotTexParam_m61", "MimicryEstablishmentTexParam",
+                                                  "MimicryEstablishmentTexParam_m61"})   # S89
 
 
 class SameJobCheckTest(unittest.TestCase):

@@ -67,6 +67,11 @@ and what changed in [CHANGELOG.md](CHANGELOG.md).
   so and offers **R** to go back to the version you had, with its Python environment. It never goes back by itself.
 - **If the Python libraries changed**, the window asks Y again after the restart, as at the first start; the new
   `.venv` is built beside the old one, which stays until the new version's page is up.
+- **From a file:** the pop-up also takes a DataPiler release zip given by hand: drop it on the pop-up's zone, or press
+  **Choose file…**. It is checked as a download is (its shape, every file against the zip's own manifest, the version
+  inside, never older than the one running), and the pop-up shows its sha256 in full: compare it with the one given
+  with the file before you press **Install and restart**, which then works as above. No release vouches for a file
+  given by hand.
 - **At each start** DataPiler checks its own files against the release's manifest and says in the log which differ.
   It repairs nothing. A copy from the repository has no manifest: it can check for a release, but installs one only by
   hand.
@@ -105,6 +110,12 @@ starts. Smithbox runs that server while `System_Enable_Soapstone_Server` is `tru
 `%LOCALAPPDATA%\Smithbox\Configuration\Startup.json` (its default). The server has no password, so any program on the
 PC can call it while it runs: when you are done, set the switch to `false` in that file and restart Smithbox.
 DataPiler reads the file and never writes it.
+
+With **Link to Smithbox's server by itself** on (Settings; off at first), DataPiler switches the link on for you once
+Smithbox's server answers, the game is closed and the project folder passes its check, at start or later, and again
+if the link has closed. It never does so after you switched the link off yourself in that session. The setting stands
+for the question whether Smithbox has your project open, so turn it on only if Smithbox always opens that project;
+the link's other rules stay as they are.
 
 **Map jobs** need Smithbox's Visual Map Editor enabled in the project (Projects tab › Available Editors, then Update
 Project and a restart of Smithbox). While a job loads maps, keep Smithbox's window up, not minimised, with its Map

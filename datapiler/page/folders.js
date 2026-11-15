@@ -13,6 +13,7 @@
   const part = (scope, name) => scope && scope.querySelector('[data-part="' + name + '"]');
   const isMasked = () => !!(VIEW && VIEW.settings && VIEW.settings.mask_paths);
   const mapGl = () => !(VIEW && VIEW.settings && VIEW.settings.map_opengl === false);
+  const linkAuto = () => !!(VIEW && VIEW.settings && VIEW.settings.link_auto);     // DP31 (S90)
   const shownOf = (x) => (x && x.shown != null ? x.shown : (x && x.path) || "");
 
   function checkLine(box, c) {
@@ -108,6 +109,7 @@
     paintFound("expansion", "expansion", part(exp, "found"), (r.expansion || {}).found, (r.expansion || {}).notes);
     $("sMask").textContent = m ? "Switch off" : "Switch on";
     $("sGl").textContent = mapGl() ? "Switch off" : "Switch on";
+    $("sAuto").textContent = linkAuto() ? "Switch off" : "Switch on";
   }
 
   function runCheck(key) {
@@ -172,6 +174,7 @@
   document.addEventListener("dp:settings", (e) => paint(e.detail));
   $("sMask").addEventListener("click", () => saveOne("mask_paths", !isMasked()).catch(failed));
   $("sGl").addEventListener("click", () => saveOne("map_opengl", !mapGl()).catch(failed));
+  $("sAuto").addEventListener("click", () => saveOne("link_auto", !linkAuto()).catch(failed));
 
   // ---- the picker (design 0002 section 3.2), drawn in the page in the one overlay
   function openPicker(key, want, opener) {

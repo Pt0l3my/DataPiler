@@ -37,7 +37,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(s.as_dict(), {"smithbox_dir": "", "game_dir": "", "project_dir": "", "workspace_dir": "workspace",
                                        "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
                                        "log_max_mb": 2, "log_keep": 5, "mask_paths": False, "map_opengl": True,
-                                       "work_cores": 0, "work_memory_mb": 0,
+                                       "work_cores": 0, "work_memory_mb": 0, "link_auto": False,
                                        "recent": {"smithbox_dir": [], "game_dir": [], "project_dir": []}})
 
     def test_dp29_the_caps_for_image_steps(self):
@@ -210,14 +210,21 @@ class SettingsTest(unittest.TestCase):
     def test_session_never_saved(self):
         f = self.root / "settings.json"
         session = settings.Session()
-        self.assertEqual((session.link, session.debug), (False, False))
-        session.link = session.debug = True
+        self.assertEqual((session.link, session.debug, session.link_off_by_owner), (False, False, False))
+        session.link = session.debug = session.link_off_by_owner = True
         settings.save(f, Settings())
-        text = f.read_text(encoding="utf-8")
-        self.assertNotIn("link", text)
-        self.assertNotIn("debug", text)
+        saved = set(json.loads(f.read_text(encoding="utf-8")))
+        for key in ("link", "debug", "project_confirmed", "link_off_by_owner"):     # link_auto is a setting (S90)
+            self.assertNotIn(key, saved)
         self.refused("link", link=True)
         self.refused("debug", debug=True)
+
+    def test_dp31_link_to_smithboxs_server_by_itself(self):
+        """S90: saved, off at first, on or off only."""
+        self.assertIs(Settings().link_auto, False)
+        self.assertIs(self.check(link_auto=True).link_auto, True)
+        for bad in ("yes", 1, None):
+            self.refused("link_auto", link_auto=bad)
 
 
 if __name__ == "__main__":

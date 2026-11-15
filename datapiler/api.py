@@ -50,7 +50,7 @@ STALE_ASK = ("The job %s holds saved map progress of another game version or job
 RUN_BUTTONS = {"start": "Start again", "resume": "Resume job", "update": "Update data"}
 EMPTY_ASK = "Erase everything in the Deleted bin for good (%s)? This cannot be undone: type DELETE to go on."
 LEVELS = logbook.LEVELS
-ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths", "map_opengl")
+ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths", "map_opengl", "link_auto")
 FOLDER_WANTS = {"smithbox_dir": "smithbox", "game_dir": "game", "project_dir": "project"}
 _PATH_CONTROL_RX = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -170,6 +170,8 @@ class Api:
         self.libs = libs
         self.outputs_rev = 0
         self._lock = threading.Lock()
+        self._auto_stop = threading.Event()          # DP31 (S90): ends the auto-link's thread
+        self._auto_thread: threading.Thread | None = None
         self._log = logbook.get("page")
         # Outputs' guard results, per share file: (mtime_ns, size, text generation) -> (ok, first failed check)
         self._passed: dict[str, tuple[tuple[int, int, int], bool, int | None]] = {}
@@ -180,7 +182,8 @@ class Api:
         self._unsub.append(events.subscribe("textdb.changed", self._on_text))
 
     def close(self) -> None:
-        """As 0.1, then updates.close() and folders.close() when given."""
+        """As 0.1, then updates.close() and folders.close() when given; the auto-link's thread ends (S90)."""
+        self._auto_stop.set()
         for u in self._unsub:
             u()
         for part in (self.updates, self.folders):
@@ -422,6 +425,11 @@ class Api:
             if self.updates is None:
                 return 404, {"error": "not found"}, None
             return self.updates.post(body)
+        if path == "/api/update/file":                  # DP32 (S91): a release zip given by hand
+            if self.updates is None:
+                return 404, {"error": "not found"}, None
+            code, answer = self.updates.from_file(body)
+            return code, answer, None
         handler = self._posts().get(path)
         if handler is None:
             return 404, {"error": "not found"}, None
@@ -479,6 +487,7 @@ class Api:
         if not on:
             state = self.link.switch(False)
             self.live.session.link = False
+            self.live.session.link_off_by_owner = True       # DP31 (S90): not on by itself again this session
             return {"ok": True, "state": state}
         if self.link.state == "no_libs" or not self.libs:
             return {"ok": False, "state": self.link.state,
@@ -490,18 +499,60 @@ class Api:
         if g.running:
             return {"ok": False, "state": self.link.state, "why": "the game is running - close it first"}
         # DP4 refuses a project in the game's folder, but DataPiler sees only the folder set in Settings, not the
-        # project Smithbox has open (build plan §10, P1): the owner confirms it once a session.
-        if not self.live.session.project_confirmed:
+        # project Smithbox has open (build plan §10, P1): the owner confirms it once a session, or once for good by
+        # turning on Link to Smithbox's server by itself (DP31, S90).
+        if not self.live.session.project_confirmed and not self.live.settings.link_auto:
             if body.get("confirm_project") is not True:
                 return {"ok": False, "state": self.link.state, "ask": {"text": PROJECT_ASK}}
             self.live.session.project_confirmed = True
             self._log.info("the owner confirmed that Smithbox has the project folder set in Settings open")
         state = self.link.switch(True)
         self.live.session.link = state in ("on", "blocked")
+        self.live.session.link_off_by_owner = False
         if state == "on":
             return {"ok": True, "state": state}
         return {"ok": False, "state": state, "why": "the game is running - the server link waits until it closes"
                 if state == "blocked" else "the server link did not switch on"}
+
+    AUTO_LINK_SECS = 5.0
+
+    def start_auto_link(self) -> None:
+        """DP31 (S90): once the page is up, a daemon thread tries auto_link_once every AUTO_LINK_SECS until DataPiler
+        stops. It does nothing while the setting is off."""
+        with self._lock:
+            if self._auto_thread is not None or self._auto_stop.is_set():
+                return
+            self._auto_thread = threading.Thread(target=self._auto_link_loop, name="datapiler-autolink", daemon=True)
+            self._auto_thread.start()
+
+    def _auto_link_loop(self) -> None:
+        while not self._auto_stop.is_set():
+            try:
+                self.auto_link_once()
+            except Exception as e:
+                self._log.warn("the server link could not be switched on by the setting: %s", logbook.why(e))
+            if self._auto_stop.wait(self.AUTO_LINK_SECS):
+                return
+
+    def auto_link_once(self) -> str | None:
+        """DP31 (S90): with Link to Smithbox's server by itself on, switches the link on when it is off, the owner has
+        not switched it off this session, its libraries are there, the project folder passes, the game is closed and
+        Smithbox's server answers; the setting stands for the session's project question. Every rule of DP4 holds as
+        when the owner switches it on. Gives the link's state when it switched it, else None."""
+        s = self.live.session
+        if not self.live.settings.link_auto or s.link_off_by_owner or self.link is None or not self.libs:
+            return None
+        if self.link.state != "off":
+            return None
+        ok, _ = self.status.project_ok()
+        if not ok or self.status.game_running().running or self.status.port_answers() is not True:
+            return None
+        s.project_confirmed = True
+        state = self.link.switch(True)
+        s.link = state in ("on", "blocked")
+        self._log.info("the server link is switched on by the setting Link to Smithbox's server by itself: Smithbox's "
+                       "server answers and the game is closed")
+        return state
 
     def debug(self, body: dict) -> dict:
         on = _bool(body, "on")

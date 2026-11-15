@@ -51,6 +51,7 @@ class Settings:
     map_opengl: bool = True             # DP20: map jobs run on Smithbox's OpenGL build only (S64)
     work_cores: int = 0                 # DP29 (S83): worker processes for the image steps; 0: every core but one
     work_memory_mb: int = 0             # DP29 (S83): memory for decoded tiles; 0: a quarter of the free memory
+    link_auto: bool = False             # DP31 (S90): the server link switched on by itself once Smithbox's server answers
     recent: dict = field(default_factory=_no_recent, compare=True, hash=False)   # key -> tuple, newest first
 
     def as_dict(self) -> dict:
@@ -76,6 +77,7 @@ class Session:          # never saved: off at every start
     link: bool = False
     debug: bool = False
     project_confirmed: bool = False     # the owner said the project open in Smithbox is the one in Settings
+    link_off_by_owner: bool = False     # DP31 (S90): the owner switched the link off: not on by itself again this session
 
 
 def _absolute(s: str) -> bool:
@@ -123,6 +125,7 @@ _LABEL = {
     "expansion": "whether the expansion is installed", "mask_paths": "Mask paths on this page",
     "map_opengl": "Map jobs on Smithbox's OpenGL build only",
     "work_cores": "the cores for image steps", "work_memory_mb": "the memory for image steps",
+    "link_auto": "Link to Smithbox's server by itself",
     "recent": "the folders used before",
 }
 
@@ -182,6 +185,10 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
     if not isinstance(gl, bool):
         raise SettingsError("map_opengl", "Map jobs on Smithbox's OpenGL build only must be on or off")
     vals["map_opengl"] = gl
+    auto = raw.get("link_auto", d.link_auto)
+    if not isinstance(auto, bool):
+        raise SettingsError("link_auto", "Link to Smithbox's server by itself must be on or off")
+    vals["link_auto"] = auto
     vals["work_cores"] = _int(raw, "work_cores", d.work_cores, 1, 256, zero=True, blank="automatic")
     vals["work_memory_mb"] = _int(raw, "work_memory_mb", d.work_memory_mb, 256, 1_048_576, zero=True,
                                   blank="automatic")

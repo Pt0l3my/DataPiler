@@ -159,6 +159,12 @@
         "named_only",
         "vanilla_rows"
       ]
+    },
+    {
+      "op": "make_map_overview",
+      "name": "every-op-overview",
+      "sheet": 0,
+      "level": 4
     }
   ]
 }

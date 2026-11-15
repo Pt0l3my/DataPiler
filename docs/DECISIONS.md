@@ -23,7 +23,7 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   version's data kept, re-read and compare), both decided the same day, as recommended.
 - **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended. DP25 (exported textures
   read anywhere in DataPiler's folder), the owner's request. DP26 (job cards in the owner's own order), the owner's
-  request.
+  request. DP27 (an overview image made on the PC), the owner's choice.
 - **Open.** None.
 
 ## DP1
@@ -471,4 +471,17 @@ rearrange them (drag with mouse cursor on top of each other in in between)."
 
 **Decision.** 0.2.24 (S74): each job card has a grip to drag it above, below or between the others, with a line where
 it will land, and the up and down arrows on the grip do the same; the order is kept across restarts.
+
+## DP27
+
+**An overview image of the exported map tiles, made on the PC** · *2026-11-15 · The owner's choice*
+
+**Question.** EldenNet's exact world-to-map fit needs an image to align against (EldenNet WHY§62). Recommended:
+DataPiler assembles one image of a sheet's level from the tiles the owner already exported, on the PC, which the owner
+uploads for research only, never committed.
+
+**Decision.** As recommended: 0.2.25's `make_map_overview` (S75) writes the image to the workspace; nothing of it goes
+into a share file, and it is research material in the owner's terms of DP21.
+
+**Owner's words.** "yes, build 0.2.25 with the overview image".
 

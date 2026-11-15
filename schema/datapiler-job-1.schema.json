@@ -72,6 +72,9 @@
           },
           {
             "$ref": "#/$defs/op_write_share"
+          },
+          {
+            "$ref": "#/$defs/op_make_map_overview"
           }
         ]
       }
@@ -1129,6 +1132,41 @@
           "enum": [
             "character_names",
             "place_names"
+          ]
+        }
+      }
+    },
+    "op_make_map_overview": {
+      "type": "object",
+      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, each tile in its most revealed variant (the code with the most bits), laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name",
+        "sheet",
+        "level"
+      ],
+      "properties": {
+        "op": {
+          "const": "make_map_overview"
+        },
+        "name": {
+          "$ref": "#/$defs/file_name"
+        },
+        "sheet": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "rows_from": {
+          "enum": [
+            "bottom",
+            "top"
           ]
         }
       }

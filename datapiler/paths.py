@@ -127,3 +127,8 @@ def share_file(p: Paths, name: str) -> Path:
 def local_file(p: Paths, job_id: str, name: str) -> Path:
     """workspace/local/<job_id>/<name>.json. ValueError likewise."""
     return p.local / _name(job_id) / (_name(name) + ".json")
+
+
+def local_image(p: Paths, job_id: str, name: str) -> Path:
+    """workspace/local/<job_id>/<name>.png (S75): an image a job makes on the PC, never shared. ValueError likewise."""
+    return p.local / _name(job_id) / (_name(name) + ".png")

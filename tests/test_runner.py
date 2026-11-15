@@ -207,6 +207,11 @@ class RunnerBase(unittest.TestCase):
     def card(self, jid: str, r: runner.Runner | None = None) -> dict:
         return next(c for c in (r or self.r).cards() if c["id"] == jid)
 
+    def put_tile(self) -> None:
+        d = self.p.root / "exports"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "MENU_MapTile_M00_L4_00_00_00000000.png").write_bytes(textures.png_encode(2, 2, bytes([9, 9, 9, 255]) * 4))
+
     def run_job(self, raw: bytes, *, state: str = "done") -> dict:
         card, again = self.r.add("job.json", raw)
         self.assertFalse(again)
@@ -359,8 +364,12 @@ class JobRunTest(RunnerBase):
         self.assertIn(("FieldTypes", "NpcParam"), self.link.calls)
 
     def test_every_op_and_the_local_file(self):
+        self.put_tile()                                       # S75: make_map_overview needs one
         card = self.run_job(fixture("job-files", "good-every-op.json"))
-        self.assertEqual(card["result"]["local"], ["npc-named.json"])
+        self.assertEqual(card["result"]["local"], ["npc-named.json", "every-op-overview.png"])
+        img = self.p.local / "test-0001-every-op" / "every-op-overview.png"
+        self.assertEqual(textures.png_decode(img.read_bytes())[:2], (2, 2))     # S75: one 2-pixel tile
+        self.assertFalse(any(n.endswith(".png") for n in os.listdir(self.p.share)))
         local = self.p.local / "test-0001-every-op" / "npc-named.json"
         doc = json.loads(local.read_text(encoding="utf-8"))
         self.assertEqual(doc["format"], "datapiler-local/1")
@@ -400,6 +409,7 @@ class JobRunTest(RunnerBase):
             logbook.shutdown()
 
     def test_nothing_planted_reaches_the_ring_or_an_event(self):
+        self.put_tile()                                       # S75: make_map_overview needs one
         _, seq = logbook.lines_after(0, limit=0)
         self.run_job(fixture("job-files", "good-every-op.json"))
         lines, _ = logbook.lines_after(seq)

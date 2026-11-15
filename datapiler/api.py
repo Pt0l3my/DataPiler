@@ -295,7 +295,9 @@ class Api:
         for folder, default in ((p.local, None), (p.imported, "guided import")):
             if not folder.is_dir():
                 continue
-            for f in sorted(folder.rglob("*.json")):
+            # S75: the images a job makes on the PC (local only) are listed with the workspace files
+            found = list(folder.rglob("*.json")) + (list(folder.rglob("*.png")) if folder == p.local else [])
+            for f in sorted(found):
                 if f.is_file():
                     item = self._file(p.workspace, f, made_by, default)
                     if item:

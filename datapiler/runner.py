@@ -60,7 +60,7 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
+UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "make_map_overview": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
@@ -1583,6 +1583,8 @@ class Runner:
             return self._check_fields(ctx, i, o)
         if op == "read_map_tiles":
             return self._read_map_tiles(ctx, i, o)
+        if op == "make_map_overview":
+            return self._make_map_overview(ctx, i, o)
         if op == "load_maps":
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
@@ -1671,6 +1673,34 @@ class Runner:
             ctx.log.warn("op %s read_map_tiles: no exported map tile was found - export them from Smithbox's Texture "
                          "Viewer into a folder inside DataPiler's folder", i)
         return len(rows), n["found"]
+
+    def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S75: one PNG of a sheet's level of the exported map tiles, each in its most revealed variant, written to
+        workspace/local/<job>/<name>.png on the PC. Never shared; no path reaches the log."""
+        ctx.on_op(i, "running", 0, None, None)
+        try:
+            data, n = textures.overview(self.paths.root, o["sheet"], o["level"], rows_from=o.get("rows_from", "bottom"),
+                                        skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
+                                        progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        except ValueError as e:
+            raise _Fail(str(e)) from None
+        except OSError as e:
+            raise _Fail("a tile could not be read: %s" % logbook.why(e)) from None
+        try:
+            path = paths_mod.local_image(self.paths, "extract" if ctx.builtin else ctx.job.id, o["name"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(path, data)
+        except ValueError:
+            raise _Fail("not a file name DataPiler writes") from None
+        except OSError as e:
+            raise _Fail("the workspace image could not be written: %s" % logbook.why(e)) from None
+        name = o["name"] + ".png"
+        ctx.local.append(name)
+        ctx.log.info("workspace image %s written: %s tiles, %s by %s pixels, %s bytes (local, never shared)", own(name),
+                     logbook.n(n["tiles"]), logbook.n(n["width"]), logbook.n(n["height"]), logbook.n(len(data)))
+        return n["tiles"], n["tiles"]
 
     def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S67: one row per field the job names: its place in the job's list, whether the server's answer for the

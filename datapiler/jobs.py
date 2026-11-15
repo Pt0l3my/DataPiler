@@ -34,7 +34,7 @@ MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
 OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "join_names", "unused_names", "filter", "count", "distinct",
-       "write_local", "write_share")
+       "write_local", "write_share", "make_map_overview")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
 BUILTIN_ID_RX = re.compile(r"extract-[a-z][a-z0-9_]{0,55}")     # Extract's own jobs: extract-<row id>
@@ -77,6 +77,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "count": {"as": True, "rows": True, "by": False, "where": False},
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
+    "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
@@ -85,7 +86,7 @@ READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map
 # answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
 CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
 COMPUTES = ("join_names", "unused_names", "filter", "count", "distinct")
-WRITES = ("write_local", "write_share")
+WRITES = ("write_local", "write_share", "make_map_overview")
 
 # What read_placements and join_names make (build plan §4.6).
 PLACEMENT_COLUMNS: tuple[tuple[str, str], ...] = (("map", "int"), ("entityId", "int"), ("npcParamId", "int"),
@@ -807,6 +808,20 @@ class _Checker:
         if "columns" in o:
             self.columns_map(place + ".columns", o["columns"], tables, i, every=False, share=False)
 
+    def op_make_map_overview(self, place: str, i: int, o: dict) -> None:
+        # S75: one image of a sheet's level of the exported map tiles, in the workspace on the PC; never shared
+        name = self.file_name(place + ".name", o["name"], i) if "name" in o else None
+        if name is not None:
+            if name in self.local_names:
+                self.add(place + ".name", "`%s` is written twice by this job" % name, i)
+            self.local_names.add(name)
+        for key, lo, hi in (("sheet", 0, 99), ("level", 0, 9)):
+            v = o.get(key)
+            if key in o and (isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi):
+                self.add("%s.%s" % (place, key), "must be a whole number from %d to %d" % (lo, hi), i)
+        if "rows_from" in o and o["rows_from"] not in textures.ROWS_FROM:
+            self.add(place + ".rows_from", "must be bottom or top", i)
+
     def op_write_share(self, place: str, i: int, o: dict) -> None:
         if self.share_at is not None:
             self.add(place, "a job writes one share file at most - ops[%d] writes one already" % self.share_at, i)
@@ -930,6 +945,7 @@ _CHECKS = {
     "distinct": _Checker.op_distinct,
     "write_local": _Checker.op_write_local,
     "write_share": _Checker.op_write_share,
+    "make_map_overview": _Checker.op_make_map_overview,
 }
 
 
@@ -1149,6 +1165,9 @@ def _line(o: dict) -> str:
         return "workspace file `%s.json`: %s (local)" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
     if op == "write_share":
         return "share file `%s.json`: %s" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
+    if op == "make_map_overview":
+        return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each in its most revealed "
+                "variant (local, never shared)" % (o["name"], o["sheet"], o["level"]))
     return op
 
 

@@ -13,6 +13,14 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.25 - 2026-11-15
+
+- A new job operation, `make_map_overview` (DP27, S75): it lays the map tiles you exported from Smithbox out on their
+  grid, each tile in its most revealed variant, and writes one PNG of a sheet's level to the workspace
+  (`local/<job>/<name>.png`), on your PC only: it never goes into a share file. Up to 4,096 pixels a side (level 2 of
+  the base map at most). DataPiler reads the PNG tiles with its own code and needs no new library. Outputs lists the
+  image with the workspace files.
+
 ## 0.2.24 - 2026-11-15
 
 - Job cards can be put in your own order (DP26, S74): drag a card by its grip (⠿) above, below or between the others;

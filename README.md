@@ -184,6 +184,7 @@ normal Smithbox build, as its Texture Viewer is off in the OpenGL build. In the 
 in Tools > Data Export first, to a folder inside DataPiler's folder, with PNG as the file type. Then right-click the
 map tiles' container on the Map Tiles tab and export all its textures. A job with `read_map_tiles` then finds the
 files in any subfolder and records, for each tile, what its name says and its size: numbers only, never the image.
+A job with `make_map_overview` lays one sheet's level out as a single PNG in the workspace, on your PC only.
 
 ## What it will and won't do
 

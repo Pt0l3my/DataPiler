@@ -42,7 +42,9 @@ class PreviewTest(unittest.TestCase):
                          "counts the rows of placed",
                          "distinct model of placed"],
             "writes": ["workspace file `npc-named.json`: 3 tables (local)",
-                       "share file `every-op-counts.json`: 2 tables"],
+                       "share file `every-op-counts.json`: 2 tables",
+                       "workspace image `every-op-overview.png`: the exported map tiles of sheet 0, level 4, each in its "
+                       "most revealed variant (local, never shared)"],
         })
 
     def test_the_other_wordings(self):

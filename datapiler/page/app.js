@@ -185,20 +185,23 @@ function showTab(t) {
 const PILLS = {
   smithbox: { running: ["ok", "Smithbox running"], not_running: ["warn", "Smithbox not running"], not_found: ["err", "Smithbox not found"] },
   game: { closed: ["ok", "Game closed"], running: ["err", "Game running"], unknown: ["warn", "Game: not known"] },
-  link: { off: ["mute", "Server link off"], on: ["warn", "Server link on (this session)"], blocked: ["err", "Server link blocked"],
-          no_libs: ["mute", "Server link: no libraries"] },
+  // S94 (DP33): with its switch on, the link's chip says whether the link is established; never while the game runs
+  link: { off: ["mute", "Server link off"], no_libs: ["mute", "Server link: no libraries"],
+          waiting: ["warn", "Server link on: waiting for Smithbox"], connected: ["ok", "Server link connected"],
+          no_answer: ["err", "Server link on: no answer"], blocked: ["err", "Server link on: not used while the game runs"] },
 };
-function pill(id, kind, value) {
+function pill(id, kind, value, why) {
   const p = (PILLS[kind] || {})[value] || ["mute", kind];
   const e = $(id);
   e.className = "pill " + p[0];
   e.textContent = "● " + p[1];
+  e.title = why ? String(why) : "";
 }
 function paintTop(s) {
   $("ver").textContent = String(s.version || "");          // the full version, 0.2.8 not 0.2 (S56)
   pill("pSmithbox", "smithbox", s.pills.smithbox);
   pill("pGame", "game", s.pills.game);
-  pill("pLink", "link", s.pills.link);
+  pill("pLink", "link", s.pills.link, s.pills.link_why);
   $("block").hidden = !s.block;
   $("block").textContent = s.block || "";
 }
@@ -252,6 +255,9 @@ function cardFor(kind, body) {
 }
 const LINK_WORDS = { off: "Off", on: "On for this session", blocked: "Blocked - the game is running",
                      no_libs: "Off - the server link needs its libraries (grpcio and protobuf, and typing-extensions, which grpcio needs): restart DataPiler and answer Y" };
+// S94 (DP33): the line under it while the link is on, as the top bar's chip has it
+const SERVER_WORDS = { connected: [true, "Connected: Smithbox's server answers"], waiting: ["warn", "Waiting for Smithbox"],
+                       no_answer: [false, "No answer from Smithbox's server"] };
 function linkCard(l, session) {
   const out = [];
   const row = el("div", "check");
@@ -263,6 +269,13 @@ function linkCard(l, session) {
     add(row, el("span", "sub", parts.join(" · ")));
   }
   out.push(row);
+  const sv = l.state === "on" && l.server ? SERVER_WORDS[l.server.state] : null;
+  if (sv) {
+    const r = el("div", "check");
+    add(r, mark(sv[0]), el("span", null, sv[1]));
+    if (l.server.why) add(r, el("span", "sub", l.server.why));
+    out.push(r);
+  }
   if ((l.state === "off" || l.state === "no_libs") && l.would_call && l.would_call.length) {
     const w = el("div", "check");
     add(w, mark(null), el("span", null, "Switched on, it would call:"));

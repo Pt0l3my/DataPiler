@@ -29,7 +29,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   choice of (b). DP30 (a finished job's files packed into 7z to upload; finished jobs folded), the owner's request.
   DP31 (the server link switched on by itself after launch, a setting), the owner's request, built in 0.2.36.
   DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request; its drop box
-  rebuilt in 0.2.37, and DP30's jobs finished in the session left unfolded, both at the owner's word.
+  rebuilt in 0.2.37, and DP30's jobs finished in the session left unfolded, both at the owner's word. DP33 (the
+  server link's chip says whether the link is established), the owner's request, built in 0.2.38.
 - **Open.** None.
 
 ## DP1
@@ -611,3 +612,20 @@ checks where each file landed, the new version started, and the old one put back
   zone was a line with a Choose file button, shown only once GitHub's check had answered. Rebuilt in 0.2.37 (S93): a
   box titled "Drop a DataPiler update here" with an **Add file** button, in every state of the pop-up from the moment
   it opens; a file dropped anywhere on the pop-up counts, and it stops a check or a download under way.
+
+## DP33
+
+**The server link's chip says whether the link is established** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "I also noticed that server link shows only that its on or not, but it would be great if
+something would also shows that the server link is established."
+
+**Decision.** As asked, in 0.2.38 (S94). With the link's switch on, the top bar's chip says whether Smithbox's server
+answers: connected (green) once it answers; waiting for Smithbox (amber) while no Smithbox runs; no answer (red) while
+Smithbox runs but its server does not answer, or did not answer the link's last call. The chip's tooltip, and a line
+on the Server link card, say when the server last answered, or why it did not. While the game runs the link is not
+used (DP4), so the chip says so and claims no connection. Every rule of DP4 holds: the answer comes from the check
+DataPiler already makes (a connection to the server's port, closed at once, never while the game runs) and from the
+link's own read calls; no new call is made.
+
+**Owner's words.** As above.

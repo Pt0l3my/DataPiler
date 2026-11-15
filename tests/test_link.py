@@ -314,6 +314,26 @@ class AgainstTheFake(unittest.TestCase):
         self.assertIsNone(cm.exception.__cause__)
         calls = [d for t, d in self.events if t == "link.call"]
         self.assertEqual(calls[-1]["ok"], False)
+        self.assertEqual(calls[-1]["code"], "NOT_FOUND")               # S94: the server's own answer
+        self.assertNotIn("NOT_FOUND", link.NO_ANSWER)
+
+    def test_s94_a_call_the_server_gave_no_answer_to_names_its_code(self):
+        """DP33: the event names the code of a call Smithbox's server gave no answer to, so Status can tell it from
+        an error the server sent; a call refused because the game runs makes no call and no event."""
+        self.link.switch(True)
+        self.link.call_timeout = 5.0
+        self.assertEqual(self.link.list_params(), ["NpcParam", "TalkParam"])
+        self.fake.stop()
+        with self.assertRaises(link.LinkCallError) as cm:
+            self.link.list_params()
+        self.assertIn(cm.exception.code, link.NO_ANSWER)
+        calls = [d for t, d in self.events if t == "link.call"]
+        self.assertEqual((calls[0]["ok"], calls[0].get("code")), (True, None))
+        self.assertEqual((calls[-1]["ok"], calls[-1]["code"]), (False, cm.exception.code))
+        self.game.running = True
+        with self.assertRaises(link.LinkBlocked):
+            self.link.list_params()
+        self.assertEqual(len([d for t, d in self.events if t == "link.call"]), len(calls))   # refused: no call
 
     # ---- maps
 

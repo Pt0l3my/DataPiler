@@ -118,6 +118,16 @@ if the link has closed. It never does so after you switched the link off yoursel
 for the question whether Smithbox has your project open, so turn it on only if Smithbox always opens that project;
 the link's other rules stay as they are.
 
+The **Server link** chip in the top bar says whether the link is established, not only whether it is on. Off, it
+reads **Server link off**. On, it reads **Server link connected** (green) once Smithbox's server answers, **Server
+link on: waiting for Smithbox** (amber) while Smithbox is not running, and **Server link on: no answer** (red) while
+Smithbox runs but its server does not answer, or did not answer the link's last call. Hold the mouse over the chip to
+see when the server last answered, or why it did not (for example, that its switch in `Startup.json` is off); the
+Server link card on Status shows the same line. While the game runs the chip reads **Server link on: not used while
+the game runs**: the link makes no call and checks nothing then. DataPiler learns all this from the check it makes
+every few seconds while its page is open (a connection to the server's port, closed at once, with nothing sent) and
+from the link's own calls; it sends Smithbox nothing new.
+
 **Map jobs** need Smithbox's Visual Map Editor enabled in the project (Projects tab › Available Editors, then Update
 Project and a restart of Smithbox). While a job loads maps, keep Smithbox's window up, not minimised, with its Map
 Editor tab in front: Smithbox takes its load commands only then. The job card shows the maps loaded so far and a guess

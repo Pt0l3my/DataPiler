@@ -138,6 +138,26 @@ class Page02Test(unittest.TestCase):
         # the expansion's Yes and No from Detect are never the primary button when both are offered (C7)
         self.assertIn('"sm" + (list.length === 1 ? " pri" : "")', js)
 
+    def test_s94_the_link_chip_says_whether_the_link_is_established(self):
+        """DP33: a chip for every state Status gives, its reason in the chip's title, and the link card's line."""
+        js = self.files["app.js"]
+        pills = js[js.index("const PILLS = {"):js.index("function pill(")]
+        link = pills[pills.index("  link: {"):]
+        for state, words in (("off", '["mute", "Server link off"]'), ("no_libs", '["mute", "Server link: no libraries"]'),
+                             ("waiting", '["warn", "Server link on: waiting for Smithbox"]'),
+                             ("connected", '["ok", "Server link connected"]'),
+                             ("no_answer", '["err", "Server link on: no answer"]'),
+                             ("blocked", '["err", "Server link on: not used while the game runs"]')):
+            self.assertIn("%s: %s" % (state, words), link)
+        self.assertNotIn("(this session)", link)
+        self.assertIn('pill("pLink", "link", s.pills.link, s.pills.link_why);', js)
+        self.assertIn('e.title = why ? String(why) : "";', js)
+        card = js[js.index("function linkCard("):js.index("function paintStatus(")]
+        self.assertIn('const sv = l.state === "on" && l.server ? SERVER_WORDS[l.server.state] : null;', card)
+        words = js[js.index("const SERVER_WORDS = {"):js.index("function linkCard(")]
+        for state in ("connected", "waiting", "no_answer"):
+            self.assertIn(state + ": [", words)
+
     def test_only_the_pages_own_addresses(self):
         js = self.files["folders.js"]
         used = set(re.findall(r'api\("(/api/[a-z/-]+)"', js))

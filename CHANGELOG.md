@@ -13,6 +13,17 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.38 - 2026-11-15
+
+- Changed: the top bar's server link chip says whether the link is established, not only whether it is on (DP33,
+  S94). With the link on it reads **Server link connected** (green) once Smithbox's server answers, **Server link on:
+  waiting for Smithbox** (amber) while Smithbox is not running, and **Server link on: no answer** (red) while Smithbox
+  runs but its server does not answer, or did not answer the last call; the chip's tooltip says when the server last
+  answered, or why not. While the game runs it reads **Server link on: not used while the game runs** and claims no
+  connection. The Server link card on Status has the same line under its state. The answer comes from the check
+  Status already makes every few seconds (a connection to the server's port, closed at once, never while the game
+  runs) and from the link's own calls: nothing new is sent to Smithbox.
+
 ## 0.2.37 - 2026-11-15
 
 - Changed: the Update pop-up's drop zone is a box titled **Drop a DataPiler update here** with an **Add file** button,

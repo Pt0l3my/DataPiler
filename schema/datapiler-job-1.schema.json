@@ -41,13 +41,25 @@
             "$ref": "#/$defs/op_fetch_rows"
           },
           {
+            "$ref": "#/$defs/op_check_fields"
+          },
+          {
             "$ref": "#/$defs/op_load_maps"
           },
           {
             "$ref": "#/$defs/op_read_placements"
           },
           {
+            "$ref": "#/$defs/op_read_map_tiles"
+          },
+          {
+            "$ref": "#/$defs/op_check_map_tiles"
+          },
+          {
             "$ref": "#/$defs/op_join_names"
+          },
+          {
+            "$ref": "#/$defs/op_unused_names"
           },
           {
             "$ref": "#/$defs/op_filter"
@@ -63,6 +75,9 @@
           },
           {
             "$ref": "#/$defs/op_write_share"
+          },
+          {
+            "$ref": "#/$defs/op_make_map_overview"
           }
         ]
       }
@@ -94,7 +109,14 @@
       "maxItems": 2000,
       "uniqueItems": true,
       "items": {
-        "$ref": "#/$defs/map_id"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/map_id"
+          },
+          {
+            "$ref": "#/$defs/map_family"
+          }
+        ]
       }
     },
     "row_id": {
@@ -194,7 +216,7 @@
     },
     "op_fetch_rows": {
       "type": "object",
-      "description": "A param's rows through Smithbox's server (the vanilla bank), only the fields named, numbers only. Makes a table of the rows' id and fields.",
+      "description": "A param's rows through Smithbox's server (the vanilla bank), only the fields named, numbers only. Makes a table of the rows' id and fields. A field DataPiler does not list yet may be named when an earlier check_fields of the same job names it for the same param (DP24); it is read only if that check found it.",
       "additionalProperties": false,
       "required": [
         "op",
@@ -214,7 +236,15 @@
             "NpcParam",
             "TalkParam",
             "WorldMapPlaceNameParam",
-            "BonfireWarpParam"
+            "BonfireWarpParam",
+            "WorldMapPointParam",
+            "WorldMapPieceParam",
+            "WorldMapLegacyConvParam",
+            "MapNameTexParam",
+            "MapNameTexParam_m61",
+            "MapPieceTexParam",
+            "MapPieceTexParam_m61",
+            "MapGridCreateHeightLimitInfo"
           ]
         },
         "fields": {
@@ -223,13 +253,8 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": {
-            "enum": [
-              "id",
-              "msgId",
-              "nameId",
-              "npcType",
-              "teamType"
-            ]
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
           }
         },
         "ids": {
@@ -277,11 +302,19 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "nameId",
-                    "teamType",
-                    "npcType"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "nameId",
+                        "teamType",
+                        "npcType"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -303,9 +336,17 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id",
-                    "msgId"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "msgId"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -327,8 +368,25 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "worldMapPieceId",
+                        "textId",
+                        "areaNo",
+                        "gridXNo",
+                        "gridZNo",
+                        "posX",
+                        "posY",
+                        "posZ"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -350,8 +408,346 @@
             "properties": {
               "fields": {
                 "items": {
-                  "enum": [
-                    "id"
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "eventflagId",
+                        "bonfireEntityId",
+                        "bonfireSubCategorySortId",
+                        "bonfireSubCategoryId",
+                        "clearedEventFlagId",
+                        "iconId",
+                        "forbiddenIconId",
+                        "dispMinZoomStep",
+                        "selectMinZoomStep",
+                        "dispMask00",
+                        "dispMask01",
+                        "dispMask02",
+                        "areaNo",
+                        "gridXNo",
+                        "gridZNo",
+                        "posX",
+                        "posY",
+                        "posZ",
+                        "textId1",
+                        "textEnableFlagId1",
+                        "textDisableFlagId1",
+                        "altIconId"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapPointParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "eventFlagId",
+                        "distViewEventFlagId",
+                        "clearedEventFlagId",
+                        "iconId",
+                        "altIconId",
+                        "distViewIconId",
+                        "isAreaIcon",
+                        "bgmPlaceType",
+                        "angle",
+                        "areaNo",
+                        "gridXNo",
+                        "gridZNo",
+                        "posX",
+                        "posY",
+                        "posZ",
+                        "isOverrideDistViewMarkPos",
+                        "areaNo_forDistViewMark",
+                        "gridXNo_forDistViewMark",
+                        "gridZNo_forDistViewMark",
+                        "posX_forDistViewMark",
+                        "posY_forDistViewMark",
+                        "posZ_forDistViewMark",
+                        "distViewId",
+                        "dispMinZoomStep",
+                        "selectMinZoomStep",
+                        "entryFEType",
+                        "dispMask00",
+                        "dispMask01",
+                        "dispMask02",
+                        "textId1",
+                        "textType1"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapPieceParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "openEventFlagId",
+                        "openTravelAreaLeft",
+                        "openTravelAreaRight",
+                        "openTravelAreaTop",
+                        "openTravelAreaBottom",
+                        "acquisitionEventFlagId",
+                        "acquisitionEventScale",
+                        "acquisitionEventCenterX",
+                        "acquisitionEventCenterY",
+                        "acquisitionEventResScale",
+                        "acquisitionEventResOffsetX",
+                        "acquisitionEventResOffsetY"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "WorldMapLegacyConvParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id",
+                        "disableParam_NT",
+                        "srcAreaNo",
+                        "srcGridXNo",
+                        "srcGridZNo",
+                        "srcPosX",
+                        "srcPosY",
+                        "srcPosZ",
+                        "dstAreaNo",
+                        "dstGridXNo",
+                        "dstGridZNo",
+                        "dstPosX",
+                        "dstPosY",
+                        "dstPosZ",
+                        "isBasePoint"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapNameTexParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapNameTexParam_m61"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapPieceTexParam"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapPieceTexParam_m61"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "MapGridCreateHeightLimitInfo"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
                   ]
                 }
               }
@@ -360,9 +756,54 @@
         }
       ]
     },
+    "op_check_fields": {
+      "type": "object",
+      "description": "Whether a param's rows have the fields named, and their types, as Smithbox's server answers for its first row: never a value. Makes a table with one row per field named: field (its place in the list), present, type (0 absent; 1 s8, 2 u8, 3 s16, 4 u16, 5 s32, 6 u32, 7 f32, 8 angle32, 9 f64, 10 b32, 11 fixstr, 12 fixstrW, 13 dummy8, 99 another). A field is added to the fields fetch_rows reads only once this has verified it (P4). The table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "param",
+        "fields"
+      ],
+      "properties": {
+        "op": {
+          "const": "check_fields"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "param": {
+          "enum": [
+            "NpcParam",
+            "TalkParam",
+            "WorldMapPlaceNameParam",
+            "BonfireWarpParam",
+            "WorldMapPointParam",
+            "WorldMapPieceParam",
+            "WorldMapLegacyConvParam",
+            "MapNameTexParam",
+            "MapNameTexParam_m61",
+            "MapPieceTexParam",
+            "MapPieceTexParam_m61",
+            "MapGridCreateHeightLimitInfo"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+          }
+        }
+      }
+    },
     "op_load_maps": {
       "type": "object",
-      "description": "Loads maps in Smithbox (OpenResource, map resources only), ten at a time, asking above ten. Its view changes, not its data. \"all\" is not accepted in 0.1: no allowed call lists every map.",
+      "description": "Loads maps in Smithbox (OpenResource, map resources only), ten at a time, asking above ten and whenever a family (m10_*) is named. Its view changes, not its data. Map ids the project does not have are skipped. \"all\" is not accepted.",
       "additionalProperties": false,
       "required": [
         "op",
@@ -374,6 +815,12 @@
         },
         "maps": {
           "$ref": "#/$defs/map_list"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 900,
+          "description": "Seconds a map may take to load before it is skipped for now (default 10), stretched to three times the slowest load seen; skipped maps are asked for once more at the end."
         }
       }
     },
@@ -405,9 +852,55 @@
         }
       }
     },
+    "op_read_map_tiles": {
+      "type": "object",
+      "description": "The map tiles exported from Smithbox's Texture Viewer, found anywhere in DataPiler's folder (its environment, logs, update downloads and Deleted bin left out): one row per distinct tile and size, with sheet, level, x, y and code from the file's name, width and height from its header, and copies. No image is decoded. The table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as"
+      ],
+      "properties": {
+        "op": {
+          "const": "read_map_tiles"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        }
+      }
+    },
+    "op_check_map_tiles": {
+      "type": "object",
+      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "sheet",
+        "level"
+      ],
+      "properties": {
+        "op": {
+          "const": "check_map_tiles"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "sheet": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        }
+      }
+    },
     "op_join_names": {
       "type": "object",
-      "description": "Joins a table with the local text database by a name number (key, a column of whole numbers). Makes the table's columns, named (a flag) and name (local text: workspace files only).",
+      "description": "Joins a table with the local text database by a name number (key, a column of whole numbers). Makes the table's columns, named (a flag), layer (the earliest layer of the text holding the name: 0 the base game, 1 DLC 1, 2 DLC 2, -1 none) and name (local text: workspace files only).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -439,7 +932,7 @@
     },
     "op_filter": {
       "type": "object",
-      "description": "Keeps the rows where every condition holds and, with `ids`, whose row id is one of those listed (an explicit list of ids narrows a table for a share file, DP8). Needs `where`, `ids` or both; `key` names the column `ids` picks by (default: the table's row-id column, `id` from fetch_rows or `entityId` from read_placements; `npcParamId` also picks placements).",
+      "description": "Keeps the rows where every condition holds and, with `ids`, whose row id is one of those listed (an explicit list of ids narrows a table for a share file, DP8). Needs `where`, `ids`, `slots` or more than one; `slots: \"boss\"` keeps placements in boss slots (entity ids ending 800 to 899); `key` names the column `ids` picks by (default: the table's row-id column, `id` from fetch_rows or `entityId` from read_placements; `npcParamId` also picks placements).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -470,6 +963,10 @@
         },
         "key": {
           "$ref": "#/$defs/column"
+        },
+        "slots": {
+          "const": "boss",
+          "description": "Keeps placements whose entity id ends 800 to 899, the slots FromSoftware's maps give their bosses by habit; picks rows for a purpose (DP8), from a table of read_placements that keeps entityId."
         }
       },
       "anyOf": [
@@ -481,6 +978,11 @@
         {
           "required": [
             "ids"
+          ]
+        },
+        {
+          "required": [
+            "slots"
           ]
         }
       ],
@@ -622,9 +1124,113 @@
               "named_only",
               "vanilla_rows",
               "loaded_maps_only",
-              "summary"
+              "summary",
+              "map_coords"
             ]
           }
+        }
+      }
+    },
+    "map_family": {
+      "type": "string",
+      "pattern": "^m[0-9]{2}_\\*$",
+      "description": "A family of maps by area, as m10_*: every map of the Smithbox project whose id starts m10_ (0.2.3)."
+    },
+    "op_unused_names": {
+      "type": "object",
+      "description": "The entries of a text set that no row of a table names in its key column: nameId, layer and name (local text). Narrowed from the start (DP8: the names the game sets elsewhere, boss bars among them); check 6 measures it against the set's entries.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "rows",
+        "key",
+        "text"
+      ],
+      "properties": {
+        "op": {
+          "const": "unused_names"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "rows": {
+          "$ref": "#/$defs/table"
+        },
+        "key": {
+          "$ref": "#/$defs/column"
+        },
+        "text": {
+          "enum": [
+            "character_names",
+            "place_names"
+          ]
+        }
+      }
+    },
+    "op_make_map_overview": {
+      "type": "object",
+      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side. variant: revealed (default; each of the tile's widest revealed variants laid over its base variant where it differs, as the game shows every piece found), base (the base variant alone) or code (the file of one code, given as code, where it was exported, and the base elsewhere). check (default true): a revealed variant that matches the sheet's reference level (the coarsest with six tiles a side or more; the reference itself against its nearest level) by less than min_match per mille (default 700) is left out as another image's, and the widest variants inside it are tried instead. shrink (1, 2, 4 or 8; default 1) makes each tile that many times smaller, so that levels 0 and 1 fit. labels (default false): each tile's border, its x and y, and the codes laid (in hex, a score after each) or left out (a minus before).",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name",
+        "sheet",
+        "level"
+      ],
+      "properties": {
+        "op": {
+          "const": "make_map_overview"
+        },
+        "name": {
+          "$ref": "#/$defs/file_name"
+        },
+        "sheet": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "rows_from": {
+          "enum": [
+            "bottom",
+            "top"
+          ]
+        },
+        "variant": {
+          "enum": [
+            "revealed",
+            "base",
+            "code"
+          ]
+        },
+        "code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "check": {
+          "type": "boolean"
+        },
+        "min_match": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "labels": {
+          "type": "boolean"
+        },
+        "shrink": {
+          "enum": [
+            1,
+            2,
+            4,
+            8
+          ]
         }
       }
     }

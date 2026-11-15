@@ -23,15 +23,18 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Collection, Mapping
 
-from . import VERSION, fields, fileio, guard, paths
+from . import VERSION, fields, fileio, guard, paths, textures
 from .link import MAP_RX
+
+# A family of maps by area, as `m10_*`: every map of the project whose id starts `m10_` (S45).
+MAP_FAMILY_RX = re.compile(r"m\d{2}_\*")
 
 FORMAT = "datapiler-job/1"
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
-OPS = ("fetch_rows", "load_maps", "read_placements", "join_names", "filter", "count", "distinct",
-       "write_local", "write_share")
+OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles", "join_names", "unused_names", "filter", "count", "distinct",
+       "write_local", "write_share", "make_map_overview")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
 BUILTIN_ID_RX = re.compile(r"extract-[a-z][a-z0-9_]{0,55}")     # Extract's own jobs: extract-<row id>
@@ -64,19 +67,28 @@ INT_LIMIT = 2 ** 63
 TOP_KEYS: dict[str, bool] = {"format": True, "id": True, "title": True, "ops": True, "needs": False}
 ARGS: dict[str, dict[str, bool]] = {
     "fetch_rows": {"as": True, "param": True, "fields": True, "ids": False},
-    "load_maps": {"maps": True},
+    "check_fields": {"as": True, "param": True, "fields": True},
+    "load_maps": {"maps": True, "timeout": False},
     "read_placements": {"as": True, "maps": True},
+    "read_map_tiles": {"as": True},
+    "check_map_tiles": {"as": True, "sheet": True, "level": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
-    "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False},
+    "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False, "slots": False},
+    "unused_names": {"as": True, "rows": True, "key": True, "text": True},
     "count": {"as": True, "rows": True, "by": False, "where": False},
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
+    "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False, "code": False,
+                          "check": False, "min_match": False, "labels": False, "shrink": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
-LINK_OPS = ("fetch_rows", "load_maps", "read_placements")
-READS = ("fetch_rows", "load_maps", "read_placements")
-COMPUTES = ("join_names", "filter", "count", "distinct")
-WRITES = ("write_local", "write_share")
+LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
+READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles")
+# What check_fields makes (S67): one row per field the job names, by its place in the list - whether the server's
+# answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
+CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
+COMPUTES = ("join_names", "unused_names", "filter", "count", "distinct")
+WRITES = ("write_local", "write_share", "make_map_overview")
 
 # What read_placements and join_names make (build plan §4.6).
 PLACEMENT_COLUMNS: tuple[tuple[str, str], ...] = (("map", "int"), ("entityId", "int"), ("npcParamId", "int"),
@@ -85,12 +97,18 @@ PLACEMENT_COLUMNS: tuple[tuple[str, str], ...] = (("map", "int"), ("entityId", "
 # text only. `layer` is the earliest layer that holds the name: 0 the base game, 1 DLC 1, 2 DLC 2, -1 none (S43).
 MADE_COLUMNS = ("named", "layer", "count")
 JOIN_COLUMNS: tuple[tuple[str, str], ...] = (("named", "bool"), ("layer", "int"), ("name", "text_local"))
+# What unused_names makes (S47): each entry of a text set that no row of a table names, with its layer; `name` local.
+UNUSED_COLUMNS: tuple[tuple[str, str], ...] = (("nameId", "int"), ("layer", "int"), ("name", "text_local"))
+# filter's `slots: "boss"` (S46): placements whose entity id ends 800 to 899, the slots FromSoftware's maps give
+# their bosses by habit (a lead, WHY§34).
+BOSS_SLOTS = (800, 899)
 # Each source's row-id column (the id column of DP8 and check 6), and the columns `ids` may pick rows by.
-ID_COLUMN = {"fetch_rows": "id", "read_placements": "entityId"}
-PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParamId")}
+ID_COLUMN = {"fetch_rows": "id", "read_placements": "entityId", "unused_names": "nameId"}
+PICK_COLUMNS = {"fetch_rows": ("id",), "read_placements": ("entityId", "npcParamId"), "unused_names": ("nameId",)}
 # The placements' columns that hold other tables' ids (fields.REFERENCES holds the params'): a count of raw placements
 # by one of them stays raw (DP8, S18; build plan §10, P15).
 PLACEMENT_REFERENCES = ("npcParamId", "talkId", "model")
+MAP_COORDS = "map_coords"      # DP21's label: a share file of the map tables' rows, for research (S69)
 DP8_RULE = ("a share file holds ids and numbers only for rows a job picked for a purpose (DP8): keep the named rows "
             "(a filter on named after join_names), pick an explicit list of ids (a filter with ids), or count them by "
             "columns that hold no ids")
@@ -155,8 +173,9 @@ class Job:
     ops: tuple[dict, ...]
     needs: str | None
     uses_link: bool               # any fetch_rows, load_maps or read_placements
-    maps: int | None              # how many maps load_maps names; None for "all"
+    maps: int | None              # how many maps load_maps names by id; None for "all"
     share_name: str | None
+    map_families: tuple[str, ...] = ()   # the families load_maps names (`m10_*`), counted only at run time (S45)
     lineage: Mapping[str, Lineage] = field(default_factory=dict, compare=False)   # every table's (DP8)
 
 
@@ -270,6 +289,9 @@ class _Checker:
         self.share_name: str | None = None
         self.job_id: str | None = None
         self.maps: set[str] = set()
+        self.families: set[str] = set()
+        self.source_param: dict[int, str] = {}      # ops[i] -> the param its fetch_rows reads (DP21)
+        self.checked: dict[str, set[str]] = {}       # param -> the fields an earlier check_fields names (DP24)
 
     def add(self, where: str, text: str, op: int | None = None) -> None:
         if len(self.refusals) >= _MAX_REFUSALS:
@@ -428,14 +450,15 @@ class _Checker:
                             "maps by id", i)
             return None
         if not isinstance(v, list) or not 1 <= len(v) <= MAX_MAPS:
-            self.add(place, "must be a list of 1 to 2,000 map ids%s" % (", or \"all\"" if all_ok else ""), i)
+            self.add(place, "must be a list of 1 to 2,000 map ids or families (m10_*)%s"
+                     % (", or \"all\"" if all_ok else ""), i)
             return None
         out: list[str] = []
         for j, m in enumerate(v):
             p = "%s[%d]" % (place, j)
-            if not isinstance(m, str) or not MAP_RX.fullmatch(m):
-                self.add(p, _named(m, "is not a map id of the form m00_00_00_00",
-                                   "not a map id of the form m00_00_00_00"), i)
+            if not isinstance(m, str) or not (MAP_RX.fullmatch(m) or MAP_FAMILY_RX.fullmatch(m)):
+                self.add(p, _named(m, "is not a map id of the form m00_00_00_00, nor a family of the form m00_*",
+                                   "not a map id of the form m00_00_00_00, nor a family of the form m00_*"), i)
                 return None
             if m in out:
                 self.add(p, "`%s` is named twice" % m, i)
@@ -488,7 +511,8 @@ class _Checker:
                 for j, f in enumerate(fl):
                     p = "%s.fields[%d]" % (place, j)
                     if not isinstance(f, str) or not FIELD_RX.fullmatch(f) or \
-                            (known is not None and f not in fields.PARAMS[known]):
+                            (known is not None and f not in fields.PARAMS[known]
+                             and f not in self.checked.get(known, ())):
                         self.add(p, _named(f, "is not a field DataPiler reads (ids and numbers only)",
                                            "not a field DataPiler reads (ids and numbers only)"), i)
                         ok = False
@@ -498,12 +522,47 @@ class _Checker:
                     else:
                         seen.append(f)
                 if ok and known is not None:
-                    cols = [("id", "int")] + [(f, fields.PARAMS[known][f]) for f in seen if f != "id"]
+                    # DP24 (S72): a field an earlier check_fields names takes its type at run time; "number" here.
+                    cols = [("id", "int")] + [(f, fields.PARAMS[known].get(f, "number")) for f in seen if f != "id"]
         if "ids" in o:
             self.ids(place + ".ids", o["ids"], i)
+        if known is not None:
+            self.source_param[i] = known
+        unlisted = tuple(f for f in (fl if isinstance(fl, list) else [])
+                         if isinstance(f, str) and known is not None and f not in fields.PARAMS[known])
         if as_ is not None:
             self.tables[as_] = cols
-            self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()))
+            # A field not yet listed might hold ids: a count by it stays raw (DP8), as by a listed reference.
+            self.lineage[as_] = _source_lineage("fetch_rows", i, fields.REFERENCES.get(known or "", ()) + unlisted)
+
+    def op_check_fields(self, place: str, i: int, o: dict) -> None:
+        # S67: which of the fields named the server's answer has, and their types; never a value. Any field name may
+        # be named here, as this is how a field is verified before fields.PARAMS lists it (build plan §10, P4).
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        param = o.get("param")
+        if "param" in o and not (isinstance(param, str) and param in fields.PARAMS):
+            self.add(place + ".param", _named(param, "is not a param DataPiler reads (%s)" % _PARAM_LIST,
+                                              "not a param DataPiler reads (%s)" % _PARAM_LIST), i)
+        fl = o.get("fields")
+        if "fields" in o:
+            if not isinstance(fl, list) or not 1 <= len(fl) <= MAX_FIELDS:
+                self.add(place + ".fields", "must be a list of 1 to %d field names" % MAX_FIELDS, i)
+            else:
+                seen: set[str] = set()
+                for j, f in enumerate(fl):
+                    p = "%s.fields[%d]" % (place, j)
+                    if not isinstance(f, str) or not FIELD_RX.fullmatch(f):
+                        self.add(p, "must be a field name (a letter, then letters, digits or _)", i)
+                    elif f in seen:
+                        self.add(p, "`%s` is named twice" % f, i)
+                    else:
+                        seen.add(f)
+                if isinstance(param, str) and param in fields.PARAMS:
+                    self.checked.setdefault(param, set()).update(seen)
+        if as_ is not None:
+            self.tables[as_] = list(CHECK_COLUMNS)
+            # Holds no row of the game's tables, no id and no value: what a field is, never what it holds.
+            self.lineage[as_] = Lineage("aggregate", None, "check_fields", None, (), False, False, "")
 
     def ids(self, place: str, v: object, i: int) -> None:
         if isinstance(v, list):
@@ -532,10 +591,13 @@ class _Checker:
         self.add(place, "must be a list of 1 to 65,535 row ids, or {\"from\": first, \"to\": last}", i)
 
     def op_load_maps(self, place: str, i: int, o: dict) -> None:
+        if "timeout" in o and not (_is_int(o["timeout"], 5, 900)):
+            self.add(place + ".timeout", "must be a whole number of seconds from 5 to 900", i)
         if "maps" in o:
             maps = self.map_list(place + ".maps", o["maps"], i, all_ok=LOAD_ALL_MAPS)
             if isinstance(maps, list):
-                self.maps.update(maps)
+                self.maps.update(m for m in maps if MAP_RX.fullmatch(m))
+                self.families.update(m for m in maps if MAP_FAMILY_RX.fullmatch(m))
 
     def op_read_placements(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
@@ -544,6 +606,29 @@ class _Checker:
         if as_ is not None:
             self.tables[as_] = list(PLACEMENT_COLUMNS)
             self.lineage[as_] = _source_lineage("read_placements", i, PLACEMENT_REFERENCES)
+
+    def op_read_map_tiles(self, place: str, i: int, o: dict) -> None:
+        # S73 (DP25): the map tiles exported from Smithbox, anywhere in DataPiler's folder: numbers from their names
+        # and their sizes from their headers. No game table's rows and no image: what files are, never what they hold.
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        if as_ is not None:
+            self.tables[as_] = list(textures.COLUMNS)
+            self.lineage[as_] = Lineage("aggregate", None, "read_map_tiles", None, (), False, False, "")
+
+    def op_check_map_tiles(self, place: str, i: int, o: dict) -> None:
+        # S78: what the exported tiles of one sheet's level are and how each matches the next level: numbers only,
+        # measured on the PC; no image leaves it.
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        self.sheet_level(place, o, i)
+        if as_ is not None:
+            self.tables[as_] = list(textures.TILE_CHECK_COLUMNS)
+            self.lineage[as_] = Lineage("aggregate", None, "check_map_tiles", None, (), False, False, "")
+
+    def sheet_level(self, place: str, o: dict, i: int) -> None:
+        for key, lo, hi in (("sheet", 0, 99), ("level", 0, 9)):
+            v = o.get(key)
+            if key in o and (isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi):
+                self.add("%s.%s" % (place, key), "must be a whole number from %d to %d" % (lo, hi), i)
 
     def op_join_names(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
@@ -567,11 +652,34 @@ class _Checker:
             self.tables[as_] = (list(cols) + list(JOIN_COLUMNS)) if ok and cols else None
             self.lineage[as_] = _after_join(self.lineage.get(r[0]), i) if ok and cols and r is not None else None
 
+    def op_unused_names(self, place: str, i: int, o: dict) -> None:
+        """The entries of a text set that no row of a table names in its key column (S47): a pick for a purpose,
+        the names the game sets elsewhere (boss bars among them), so the table is narrowed from the start, measured by
+        check 6 against the set's entries."""
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
+        cols = r[1] if r is not None else None
+        ok = r is not None and cols is not None
+        if "key" in o:
+            table = r[0] if r is not None else "its table"
+            if self.column(place + ".key", o["key"], table, cols, i, ("int",),
+                           "the key is a column of whole numbers") is None:
+                ok = False
+        t = o.get("text")
+        if "text" in o and t not in TEXTS:
+            self.add(place + ".text", _named(t, "is not a text set DataPiler has (%s)" % ", ".join(TEXTS),
+                                             "not a text set DataPiler has (%s)" % ", ".join(TEXTS)), i)
+            ok = False
+        if as_ is not None:
+            self.tables[as_] = list(UNUSED_COLUMNS) if ok else None
+            self.lineage[as_] = Lineage("narrowed", i, "unused_names", "nameId", ("nameId",), True, False, "", ()) \
+                if ok else None
+
     def op_filter(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
         r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
-        if "where" not in o and "ids" not in o:
-            self.add(place, "a filter needs `where`, `ids` or both", i)
+        if "where" not in o and "ids" not in o and "slots" not in o:
+            self.add(place, "a filter needs `where`, `ids`, `slots` or more than one", i)
         if "where" in o:
             self.where(place + ".where", o["where"], r[0] if r else "its table", r[1] if r else None, i)
         parent = self.lineage.get(r[0]) if r is not None else None
@@ -580,6 +688,15 @@ class _Checker:
             self.add(place + ".key", "`key` names the column `ids` picks by - give `ids` too", i)
         if "ids" in o:
             picked = self.pick(place, o, r, parent, i)
+        if "slots" in o:
+            if o["slots"] != "boss":
+                self.add(place + ".slots", "the only slots a filter knows are \"boss\"", i)
+            elif parent is None or parent.source_op != "read_placements" or r is None or r[1] is None or \
+                    "entityId" not in [c for c, _ in r[1]]:
+                self.add(place + ".slots", "boss slots pick placements by their entity id: filter a table of "
+                                           "read_placements that keeps `entityId`", i)
+            else:
+                picked = True
         if as_ is not None:
             self.tables[as_] = list(r[1]) if r is not None and r[1] is not None else None
             if parent is not None and r is not None and r[1] is not None:
@@ -708,6 +825,33 @@ class _Checker:
         if "columns" in o:
             self.columns_map(place + ".columns", o["columns"], tables, i, every=False, share=False)
 
+    def op_make_map_overview(self, place: str, i: int, o: dict) -> None:
+        # S75: one image of a sheet's level of the exported map tiles, in the workspace on the PC; never shared
+        name = self.file_name(place + ".name", o["name"], i) if "name" in o else None
+        if name is not None:
+            if name in self.local_names:
+                self.add(place + ".name", "`%s` is written twice by this job" % name, i)
+            self.local_names.add(name)
+        self.sheet_level(place, o, i)
+        if "rows_from" in o and o["rows_from"] not in textures.ROWS_FROM:
+            self.add(place + ".rows_from", "must be bottom or top", i)
+        if "variant" in o and o["variant"] not in textures.VARIANTS:
+            self.add(place + ".variant", "must be revealed, base or code", i)
+        code = o.get("code")
+        if "code" in o and (isinstance(code, bool) or not isinstance(code, int) or not 0 <= code <= 0xFFFFFFFF):
+            self.add(place + ".code", "must be a whole number from 0 to 4294967295", i)
+        if (o.get("variant") == "code") != ("code" in o):
+            self.add(place + ".code", "is given with variant code, and only then", i)
+        for key in ("check", "labels"):
+            if key in o and not isinstance(o[key], bool):
+                self.add("%s.%s" % (place, key), "must be true or false", i)
+        mm = o.get("min_match")
+        if "min_match" in o and (isinstance(mm, bool) or not isinstance(mm, int) or not 0 <= mm <= 1000):
+            self.add(place + ".min_match", "must be a whole number from 0 to 1000", i)
+        sh = o.get("shrink")
+        if "shrink" in o and (isinstance(sh, bool) or sh not in textures.SHRINKS):
+            self.add(place + ".shrink", "must be 1, 2, 4 or 8", i)
+
     def op_write_share(self, place: str, i: int, o: dict) -> None:
         if self.share_at is not None:
             self.add(place, "a job writes one share file at most - ops[%d] writes one already" % self.share_at, i)
@@ -723,9 +867,12 @@ class _Checker:
             elif self.share_at == i:
                 self.share_name = name
         tables = self.table_list(place + ".tables", o["tables"], i, MAX_SHARE_TABLES) if "tables" in o else None
+        map_coords = isinstance(o.get("notes"), list) and MAP_COORDS in o["notes"]
         for j, (t, _) in enumerate(tables or []):
             lin = self.lineage.get(t)
             if lin is not None and lin.kind == "raw":
+                if map_coords and _map_rows(lin, self.source_param):
+                    continue                             # DP21: a map table's rows, for research, never committed
                 self.add("%s.tables[%d]" % (place, j), "`%s` %s - %s" % (t, lin.how, DP8_RULE), i)
         if "columns" in o:
             self.columns_map(place + ".columns", o["columns"], tables, i, every=True, share=True)
@@ -751,6 +898,13 @@ class _Checker:
 def _source_lineage(op: str, i: int, refs: tuple[str, ...]) -> Lineage:
     return Lineage("raw", i, op, ID_COLUMN[op], PICK_COLUMNS[op], True, False,
                    "comes straight from %s (ops[%d])" % (op, i), tuple(refs))
+
+
+def _map_rows(lin: Lineage, source_param: Mapping[int, str]) -> bool:
+    """DP21 (S69): rows of one of the game's map tables, as fetch_rows read them, or a filter of them that keeps one
+    row per row read. Such a table may go into a share file that carries the label `map_coords`."""
+    return (lin.source_op == "fetch_rows" and lin.per_row and lin.source is not None
+            and source_param.get(lin.source) in fields.MAP_PARAMS)
 
 
 def _from(parent: Lineage) -> str:
@@ -810,14 +964,19 @@ def _after_count(parent: Lineage, i: int, by: list[str]) -> Lineage:
 # The closed set: each operation's own check (a fixed table, never a name looked up from the job).
 _CHECKS = {
     "fetch_rows": _Checker.op_fetch_rows,
+    "check_fields": _Checker.op_check_fields,
     "load_maps": _Checker.op_load_maps,
     "read_placements": _Checker.op_read_placements,
+    "read_map_tiles": _Checker.op_read_map_tiles,
+    "check_map_tiles": _Checker.op_check_map_tiles,
     "join_names": _Checker.op_join_names,
+    "unused_names": _Checker.op_unused_names,
     "filter": _Checker.op_filter,
     "count": _Checker.op_count,
     "distinct": _Checker.op_distinct,
     "write_local": _Checker.op_write_local,
     "write_share": _Checker.op_write_share,
+    "make_map_overview": _Checker.op_make_map_overview,
 }
 
 
@@ -950,7 +1109,7 @@ def check(raw: bytes, *, known_ids: Collection[str], share_names: Mapping[str, s
     lineage = {t: lin for t, lin in c.lineage.items() if lin is not None}
     return Job(id=job_id, title=title, sha256=sha, ops=plain_ops, needs=needs if "needs" in doc else None,
                uses_link=any(o["op"] in LINK_OPS for o in plain_ops), maps=len(c.maps), share_name=c.share_name,
-               lineage=lineage)
+               map_families=tuple(sorted(c.families)), lineage=lineage)
 
 
 def canonical_sha256(ops: object) -> str:
@@ -998,11 +1157,23 @@ def _line(o: dict) -> str:
         elif isinstance(ids, list):
             s += " - " + _plural(len(set(ids)), "row", "rows")
         return s
+    if op == "check_fields":
+        return "%s: whether its rows have %s, and their types - no values" % (
+            o["param"], _plural(len(o["fields"]), "field named", "fields named"))
     if op == "load_maps":
-        return "loads %s in Smithbox - its view changes, not its data" % _plural(len(o["maps"]), "map", "maps")
+        s = "loads %s in Smithbox - its view changes, not its data" % _maps_words(o["maps"])
+        return s + (", %d s a map before skipping it" % o["timeout"] if o.get("timeout") is not None else "")
     if op == "read_placements":
-        of = "the loaded maps" if o["maps"] == "all" else _plural(len(o["maps"]), "map", "maps")
+        of = "the loaded maps" if o["maps"] == "all" else _maps_words(o["maps"])
         return "placed characters of %s: entity, row, dialogue and model ids" % of
+    if op == "read_map_tiles":
+        return ("the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, row, code "
+                "and size - no image is opened beyond its size")
+    if op == "check_map_tiles":
+        return ("the exported map tiles of sheet %d, level %d, measured on the PC: for each, its folder's number, how much "
+                "differs from its base and how well it matches the sheet's reference level - numbers only" % (o["sheet"], o["level"]))
+    if op == "unused_names":
+        return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
         return "join %s with %s - local" % (o["rows"], TEXT_WORDS[o["text"]])
     if op == "filter":
@@ -1010,6 +1181,8 @@ def _line(o: dict) -> str:
         if o.get("ids") is not None:
             parts.append("whose %s is one of %s listed" % (o.get("key") or "row id",
                                                           _plural(len(set(o["ids"])), "id", "ids")))
+        if o.get("slots") == "boss":
+            parts.append("whose entity id is a boss slot (ending %d to %d)" % BOSS_SLOTS)
         if o.get("where"):
             parts.append("where %s" % conditions(o["where"]))
         return "keeps the rows of %s %s" % (o["rows"], " and ".join(parts))
@@ -1026,7 +1199,29 @@ def _line(o: dict) -> str:
         return "workspace file `%s.json`: %s (local)" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
     if op == "write_share":
         return "share file `%s.json`: %s" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
+    if op == "make_map_overview":
+        if o.get("variant") == "base":
+            look = "in its base variant"
+        elif o.get("variant") == "code":
+            look = "in its code %X variant where exported" % o["code"]
+        elif o.get("check", True):
+            look = "with every piece revealed, from variants that match the sheet's reference level"
+        else:
+            look = "with every piece revealed"
+        extra = (", shrunk %d times" % o["shrink"] if o.get("shrink", 1) > 1 else "") + (", labelled" if o.get("labels") else "")
+        return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each %s%s (local, never shared)"
+                % (o["name"], o["sheet"], o["level"], look, extra))
     return op
+
+
+def _maps_words(maps: list) -> str:
+    """"3 maps", "the maps of m10_* and m11_*", or "the maps of m10_* and 2 maps"."""
+    ids = [m for m in maps if not MAP_FAMILY_RX.fullmatch(m)]
+    fams = [m for m in maps if MAP_FAMILY_RX.fullmatch(m)]
+    if not fams:
+        return _plural(len(ids), "map", "maps")
+    s = "the maps of " + _and(fams)
+    return s + (" and " + _plural(len(ids), "map", "maps") if ids else "")
 
 
 def preview(job: Job) -> dict[str, list[str]]:
@@ -1045,11 +1240,20 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
     for o in job.ops:
         op = o["op"]
         if op == "fetch_rows":
-            tables[o["as"]] = [("id", "int")] + [(f, fields.PARAMS[o["param"]][f]) for f in o["fields"] if f != "id"]
+            tables[o["as"]] = [("id", "int")] + [(f, fields.PARAMS[o["param"]].get(f, "number"))
+                                                 for f in o["fields"] if f != "id"]
+        elif op == "check_fields":
+            tables[o["as"]] = list(CHECK_COLUMNS)
         elif op == "read_placements":
             tables[o["as"]] = list(PLACEMENT_COLUMNS)
+        elif op == "read_map_tiles":
+            tables[o["as"]] = list(textures.COLUMNS)
+        elif op == "check_map_tiles":
+            tables[o["as"]] = list(textures.TILE_CHECK_COLUMNS)
         elif op == "join_names":
             tables[o["as"]] = tables[o["rows"]] + list(JOIN_COLUMNS)
+        elif op == "unused_names":
+            tables[o["as"]] = list(UNUSED_COLUMNS)
         elif op == "filter":
             tables[o["as"]] = list(tables[o["rows"]])
         elif op == "count":

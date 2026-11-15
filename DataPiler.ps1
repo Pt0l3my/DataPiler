@@ -614,8 +614,8 @@ try {
     if ($Handed -or $Answered) {
         # the new script, or the old one after R, has said its own last words; or the owner pressed Enter at R
     } elseif ($Code -eq 0) {
-        Write-Line 'DataPiler has stopped - this window closes in 5 s' Green
-        [System.Threading.Thread]::Sleep(5000)
+        # Quit on the page quits everything (S50): this window closes at once, and the page closes its tab.
+        Write-Line 'DataPiler has stopped' Green
     } elseif ($Code -eq 3) {
         Write-Line 'DataPiler is running already - its page opens' Yellow
         Open-RunningPage

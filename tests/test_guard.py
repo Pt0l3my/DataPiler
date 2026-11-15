@@ -48,6 +48,10 @@ class GuardTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.share = root / "share"
         self.share.mkdir()
+        self.sets = mock.patch.dict(textdb.TEXT_SETS, {
+            "character_names": (("item", 9001), ("item_dlc01", 9001), ("item_dlc02", 9001)),
+            "place_names": (("item", 9002), ("item_dlc01", 9002), ("item_dlc02", 9002))})
+        self.sets.start()          # DP18: check 3 compares with the name sets' texts, so the invented ones sit there
         self.db = textdb.TextDB(root / "work" / "textdb.sqlite")
         self.db.import_export({"Name": "item", "FmgWrappers": [{"Name": "Invented", "ID": 9001, "Fmg": {
             "Entries": [{"ID": 9000000 + i, "Text": t} for i, t in enumerate(TEXTS)]}}]},
@@ -64,6 +68,7 @@ class GuardTest(unittest.TestCase):
         self.unsub()
         self.guard.close()
         self.db.close()
+        self.sets.stop()
         self.tmp.cleanup()
 
     # ---- helpers
@@ -335,8 +340,9 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(self.guard.check_labels(), [])
         self.plant_label()
         self.assertEqual(self.guard.check_labels(), [guard.LABELS.index("summary")])
+        added = len(guard.LABELS)
         with mock.patch.object(guard, "LABELS", guard.LABELS + ("loaded/maps",)):
-            self.assertEqual(self.guard.check_labels(), [guard.LABELS.index("summary"), 4])
+            self.assertEqual(self.guard.check_labels(), [guard.LABELS.index("summary"), added])
 
     def test_labels_are_rechecked_when_the_text_database_changes(self):
         with mock.patch.object(self.guard, "check_labels", wraps=self.guard.check_labels) as spy:
@@ -353,6 +359,18 @@ class GuardTest(unittest.TestCase):
             "Entries": [{"ID": 9100000, "Text": "An invented blade, named for the arrows its maker counted in rows."}]}}]},
             container="item", language="engus", sha256="1" * 64)
         self.assertEqual(self.failing(self.doc(notes=())), {})
+
+    def test_s68_check_fields_columns_against_ordinary_words(self):
+        """Found on the owner's PC (en-0015, 0.2.18; settled S68): check_fields's column `field` sits inside ordinary
+        words of the game's text, and was refused as a column name. Its three columns are fixed words now."""
+        words = ["Battlefield", "Omnipresent", "Archetype", "Fieldstone"]
+        self.db.import_export({"Name": "item", "FmgWrappers": [{"Name": "Invented", "ID": 9001, "Fmg": {
+            "Entries": [{"ID": 9300000 + i, "Text": w} for i, w in enumerate(words)]}}]},
+            container="item", language="engus", sha256="4" * 64)
+        data = self.doc(tables=[{"name": "fields_points", "columns": [("field", "int"), ("present", "bool"),
+                                                                      ("type", "int")],
+                                 "rows": [[0, True, 7], [1, False, 0]]}])
+        self.assertEqual(self.failing(data), {})
 
     def test_ordinary_words_that_hold_a_key_or_a_fixed_word(self):
         """One-word texts that hold the format's keys (rows, name, tables, type, provenance's names, wrappers) or
@@ -379,7 +397,7 @@ class GuardTest(unittest.TestCase):
         fixed = guard.fixed_words()
         for w in ("named_only", "summary", "int", "number", "bool", "label", "enum:source", "server", "guided",
                   "id", "nameId", "teamType", "npcType", "msgId", "map", "entityId", "npcParamId", "talkId", "model",
-                  "named", "count", "owner", guard.SHARE_FORMAT):
+                  "named", "count", "owner", "field", "present", "type", guard.SHARE_FORMAT):
             self.assertIn(w, fixed, w)
         self.assertNotIn("name", fixed)          # join_names's local text never reaches a share file
         self.assertNotIn("per_team", fixed)

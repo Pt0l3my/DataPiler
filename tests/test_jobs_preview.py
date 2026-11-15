@@ -28,17 +28,25 @@ class PreviewTest(unittest.TestCase):
     def test_every_op(self):
         self.assertEqual(jobs.preview(load("good-every-op.json")), {
             "reads": ["NpcParam rows: id, nameId, teamType, npcType - rows 9000000 to 9000099",
+                      "NpcParam: whether its rows have 2 fields named, and their types - no values",
                       "TalkParam rows: id, msgId - 3 rows",
                       "loads 2 maps in Smithbox - its view changes, not its data",
-                      "placed characters of 2 maps: entity, row, dialogue and model ids"],
+                      "placed characters of 2 maps: entity, row, dialogue and model ids",
+                      "the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, "
+                      "row, code and size - no image is opened beyond its size",
+                      "the exported map tiles of sheet 0, level 4, measured on the PC: for each, its folder's number, "
+                      "how much differs from its base and how well it matches the sheet's reference level - numbers only"],
             "computes": ["join npc with the character names - local",
+                         "the entries of the character names that no row of npc names by nameId - local",
                          "keeps the rows of npc_named where teamType >= 6 and teamType <= 30 and npcType in 3 values "
                          "and named is not false",
                          "counts the rows of npc_kept per teamType and named, where nameId > -1",
                          "counts the rows of placed",
                          "distinct model of placed"],
-            "writes": ["workspace file `npc-named.json`: 2 tables (local)",
-                       "share file `every-op-counts.json`: 2 tables"],
+            "writes": ["workspace file `npc-named.json`: 3 tables (local)",
+                       "share file `every-op-counts.json`: 2 tables",
+                       "workspace image `every-op-overview.png`: the exported map tiles of sheet 0, level 4, each with "
+                       "every piece revealed, from variants that match the sheet's reference level, labelled (local, never shared)"],
         })
 
     def test_the_other_wordings(self):

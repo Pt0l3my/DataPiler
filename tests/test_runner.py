@@ -16,7 +16,7 @@ from unittest import mock
 
 from dataclasses import replace
 
-from datapiler import catalogue, events, guard, link, logbook, paths, runner, textdb
+from datapiler import catalogue, events, guard, jobs, link, logbook, paths, runner, textdb, textures
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -45,14 +45,20 @@ class FakeLink:
         self.state = "on"
         self.calls: list[tuple] = []
         self.npc = {9000000 + i: {"nameId": (9000000, 9000001, 9000004, -1)[i % 4], "teamType": (0, 6)[i % 2],
-                                  "npcType": i % 3} for i in range(20)}
+                                  "npcType": i % 3, "hitHeight": 1.5 + i / 10, "isGhost": bool(i % 2)}
+                    for i in range(20)}
         self.talk = {9000000 + i: {"msgId": 9500000 + i if i % 2 == 0 else -1} for i in range(10)}
         self.loaded = ["m99_00_00_00", "m99_00_00_01"]
-        self.all_maps: list[str] | None = None
+        self.every_map: list[str] | None = None   # every map of the project, when a test sets it
+        self.extra_placements: list[tuple[int, int]] = []   # (entity id, row) added to each map's placements
+        self.map_extra: dict[str, list[tuple[int, int]]] = {}   # DP23: (entity id, row) added to one map's
         self.fail: Exception | None = None
         self.drop_at: int | None = None          # the link goes off after this many rows, once
         self.started = threading.Event()
         self.proceed: threading.Event | None = None
+        self.crash_on_read: int | None = None    # S63: the Nth placements read finds Smithbox gone (UNAVAILABLE)
+        self.reads = 0
+        self.capped = None
 
     def _check(self):
         if self.state == "off":
@@ -61,12 +67,24 @@ class FakeLink:
             raise link.LinkBlocked("the game is running")
 
     def _table(self, param):
+        if param == "WorldMapPlaceNameParam":   # invented coordinates (S69)
+            return {9100000 + i: {"disableParam_NT": 0, "worldMapPieceId": i, "textId": -1, "areaNo": 60,
+                                  "gridXNo": 40 + i, "gridZNo": 36, "posX": 1.5 * i, "posY": 0.0, "posZ": -2.0}
+                    for i in range(4)}
         return {"NpcParam": self.npc, "TalkParam": self.talk}.get(param, {9000000: {}, 9000001: {}})
 
     def list_param_rows(self, param):
         self._check()
         self.calls.append(("ListParamRows", param))
         return sorted(self._table(param))
+
+    def field_types(self, param):
+        self._check()
+        self.calls.append(("FieldTypes", param))
+        if param != "NpcParam":
+            return {}
+        return {"nameId": "s32", "teamType": "u8", "npcType": "u8", "hitHeight": "f32", "isGhost": "b32",
+                "epithet": "fixstrW", "oddField": "s128"}
 
     def get_param_rows(self, param, row_ids, fields, *, cancel=None, progress=None):
         out = []
@@ -97,25 +115,48 @@ class FakeLink:
         return list(self.loaded)
 
     def map_ids(self):
-        return self.all_maps
+        return self.every_map
 
-    def open_maps(self, map_ids, *, cancel=None, progress=None):
+    def all_maps(self):
+        self._check()
+        if self.every_map is not None:
+            return list(self.every_map)
+        return sorted(set(self.loaded) | {"m99_00_00_%02d" % i for i in range(15)})
+
+    def is_loaded(self, map_id):
+        self._check()
+        return map_id in self.loaded
+
+    def open_maps(self, map_ids, *, cancel=None, progress=None, timeout=None, first_timeout=None, on_loaded=None,
+                  session_cap=None):
         self._check()
         self.calls.append(("OpenResource", tuple(map_ids)))
+        self.capped = None
         for k, m in enumerate(map_ids):
             if m not in self.loaded:
+                if session_cap is not None and len(self.loaded) >= session_cap:
+                    self.capped = (len(self.loaded), len(map_ids) - k)
+                    return k
                 self.loaded.append(m)
+                if on_loaded is not None:
+                    on_loaded(m)
             if progress is not None:
                 progress(k + 1, len(map_ids))
         return len(map_ids)
 
     def placements(self, map_id):
         self._check()
+        self.reads += 1
+        if self.crash_on_read is not None and self.reads >= self.crash_on_read:
+            self.loaded = []                              # Smithbox is gone, and its loaded maps with it
+            raise link.LinkCallError("BatchGetObjects", "UNAVAILABLE")
         if map_id not in self.loaded:
             raise link.LinkError("the map %s is not loaded in Smithbox" % map_id)
         self.calls.append(("BatchGetObjects", map_id))
         return [link.Placement(map=link.map_key(map_id), entity_id=9001000 + i, npc_param_id=9000000 + i,
-                               talk_id=9000000 + i, model=9990 + i % 3) for i in range(3)]
+                               talk_id=9000000 + i, model=9990 + i % 3) for i in range(3)] + \
+            [link.Placement(map=link.map_key(map_id), entity_id=e, npc_param_id=r, talk_id=-1, model=9999)
+             for e, r in self.extra_placements + self.map_extra.get(map_id, [])]
 
 
 def wait_for(pred, timeout: float = 6.0) -> bool:
@@ -165,6 +206,11 @@ class RunnerBase(unittest.TestCase):
 
     def card(self, jid: str, r: runner.Runner | None = None) -> dict:
         return next(c for c in (r or self.r).cards() if c["id"] == jid)
+
+    def put_tile(self) -> None:
+        d = self.p.root / "exports"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "MENU_MapTile_M00_L4_00_00_00000000.png").write_bytes(textures.png_encode(2, 2, bytes([9, 9, 9, 255]) * 4))
 
     def run_job(self, raw: bytes, *, state: str = "done") -> dict:
         card, again = self.r.add("job.json", raw)
@@ -222,9 +268,132 @@ class JobRunTest(RunnerBase):
         self.assertEqual(card["result"]["failed"], None)
         self.assertEqual(self.r.made_by()["roster-counts.json"], "en-0007-roster-counts")
 
+    def test_dp21_a_map_tables_rows_whole_with_its_label(self):
+        ops = [{"op": "fetch_rows", "as": "place", "param": "WorldMapPlaceNameParam",
+                "fields": ["id", "areaNo", "gridXNo", "gridZNo", "posX", "posY", "posZ", "worldMapPieceId"]},
+               {"op": "write_share", "name": "map-coords", "tables": ["place"],
+                "columns": {"place": ["id", "areaNo", "gridXNo", "gridZNo", "posX", "posY", "posZ", "worldMapPieceId"]},
+                "notes": ["map_coords", "vanilla_rows"]}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0069-coords", "title": "Coords (invented)",
+                          "ops": ops}).encode()
+        card = self.run_job(raw)
+        doc = json.loads((self.p.share / "map-coords.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(doc["tables"][0]["rows"]), 4)
+        self.assertEqual(doc["tables"][0]["rows"][1], [9100001, 60, 41, 36, 1.5, 0.0, -2.0, 1])
+        self.assertEqual(doc["notes"], ["map_coords", "vanilla_rows"])
+        self.assertEqual(card["state"], "done")
+
+    def test_dp24_a_field_checked_in_the_same_job_is_read_with_the_servers_type(self):
+        ops = [{"op": "check_fields", "as": "fc", "param": "NpcParam", "fields": ["hitHeight", "isGhost"]},
+               {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "hitHeight", "isGhost"],
+                "ids": [9000000, 9000001]},
+               {"op": "filter", "as": "picked", "rows": "npc", "ids": [9000000, 9000001]},
+               {"op": "write_share", "name": "checked-read", "tables": ["picked"],
+                "columns": {"picked": ["id", "hitHeight", "isGhost"]}}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0072-checked", "title": "Checked (invented)",
+                          "ops": ops}).encode()
+        self.run_job(raw)
+        doc = json.loads((self.p.share / "checked-read.json").read_text(encoding="utf-8"))
+        self.assertEqual([c["type"] for c in doc["tables"][0]["columns"]], ["int", "number", "bool"])
+        self.assertEqual(doc["tables"][0]["rows"], [[9000000, 1.5, False], [9000001, 1.6, True]])
+
+    def test_dp24_a_field_the_check_did_not_find_stops_the_job(self):
+        ops = [{"op": "check_fields", "as": "fc", "param": "NpcParam", "fields": ["noSuchField"]},
+               {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "noSuchField"]}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0072-absent", "title": "Absent (invented)",
+                          "ops": ops}).encode()
+        card = self.run_job(raw, state="failed")
+        self.assertEqual(card["result"]["failed"]["op"], 1)
+        self.assertIn("not in the server's answer", card["result"]["failed"]["why"])
+        self.assertFalse(any(c[0] == "GetParamRows" for c in self.link.calls))
+
+    def test_s74_the_owners_order_of_the_cards_is_kept(self):
+        def raw(jid):
+            return json.dumps({"format": "datapiler-job/1", "id": jid, "title": "Order (invented)",
+                               "ops": [{"op": "read_map_tiles", "as": "t_x"}]}).encode()
+        for jid in ("test-0074-a", "test-0074-b", "test-0074-c"):
+            self.r.add(jid + ".json", raw(jid))
+        self.assertEqual({c["id"]: c["pos"] for c in self.r.cards()},
+                         {"test-0074-a": None, "test-0074-b": None, "test-0074-c": None})
+        self.assertEqual(self.r.set_order(["test-0074-c", "test-0074-a"]), {"ok": True})
+        pos = {c["id"]: c["pos"] for c in self.r.cards()}
+        self.assertEqual(pos["test-0074-c"], 0)
+        self.assertEqual(pos["test-0074-a"], 1)
+        self.assertEqual(pos["test-0074-b"], 2)              # left out: after the ones named
+        again = self.new_runner()
+        again.load_folder()
+        self.assertEqual({c["id"]: c["pos"] for c in again.cards()}, pos)
+        for bad in (["test-0074-a", "test-0074-a"], ["test-0000-none"], "test-0074-a"):
+            with self.assertRaises(ValueError):
+                self.r.set_order(bad)
+        self.r.add("test-0074-d.json", raw("test-0074-d"))
+        self.assertIsNone(self.card("test-0074-d")["pos"])   # newer than the order: shown first, newest first
+
+    def test_s73_map_tiles_anywhere_in_the_folder_go_to_a_share_file(self):
+        import struct as _st
+        d = self.p.root / "exports" / "71_maptile"
+        d.mkdir(parents=True, exist_ok=True)
+        head = b"\x89PNG\r\n\x1a\n" + _st.pack(">I", 13) + b"IHDR" + _st.pack(">II", 256, 256)
+        for x in range(3):
+            (d / ("MENU_MapTile_M00_L0_%02d_00_00000000.png" % x)).write_bytes(head)
+        ops = [{"op": "read_map_tiles", "as": "t_tiles"},
+               {"op": "count", "as": "t_levels", "rows": "t_tiles", "by": ["sheet", "level"]},
+               {"op": "write_share", "name": "map-tiles", "tables": ["t_tiles", "t_levels"],
+                "columns": {"t_tiles": [c for c, _ in textures.COLUMNS], "t_levels": ["sheet", "level", "count"]}}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0073-tiles", "title": "Tiles (invented)",
+                          "ops": ops}).encode()
+        self.run_job(raw)
+        doc = json.loads((self.p.share / "map-tiles.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["tables"][0]["rows"], [[0, 0, x, 0, 0, 256, 256, 1] for x in range(3)])
+        self.assertEqual(doc["tables"][1]["rows"], [[0, 0, 3]])
+        self.assertNotIn("exports", json.dumps(doc))
+
+    def test_s78_a_tile_check_goes_to_a_share_file_and_a_labelled_overview_is_written(self):
+        d = self.p.root / "exports" / "71_maptile"
+        d.mkdir(parents=True, exist_ok=True)
+        for x in range(2):
+            for code in (0, 1):
+                px = bytes([20 + 40 * x + code, 9, 9, 255]) * (64 * 64)
+                (d / ("MENU_MapTile_M00_L2_%02d_00_%08X.png" % (x, code))).write_bytes(textures.png_encode(64, 64, px))
+        (d / "MENU_MapTile_M00_L3_00_00_00000000.png").write_bytes(
+            textures.png_encode(64, 64, bytes([30, 9, 9, 255]) * (64 * 64)))
+        cols = [c for c, _ in textures.TILE_CHECK_COLUMNS]
+        ops = [{"op": "check_map_tiles", "as": "t_check", "sheet": 0, "level": 2},
+               {"op": "write_share", "name": "map-tile-check", "tables": ["t_check"], "columns": {"t_check": cols}},
+               {"op": "make_map_overview", "name": "tiles-l2", "sheet": 0, "level": 2, "labels": True}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0078-check", "title": "Tile check (invented)",
+                          "ops": ops}).encode()
+        card = self.run_job(raw)
+        self.assertEqual(card["ops"][0]["done"], 4)
+        doc = json.loads((self.p.share / "map-tile-check.json").read_text(encoding="utf-8"))
+        rows = doc["tables"][0]["rows"]
+        self.assertEqual([r[:5] for r in rows], [[0, 0, 0, 1, 1], [0, 0, 1, 1, 1], [1, 0, 0, 1, 1], [1, 0, 1, 1, 1]])
+        self.assertEqual({r[7] for r in rows}, {3})             # measured against level 3 (flat tiles: no score)
+        self.assertNotIn("exports", json.dumps(doc))
+        self.assertTrue(paths.local_image(self.p, "test-0078-check", "tiles-l2").is_file())
+
+    def test_check_fields_gives_numbers_only_and_may_be_shared(self):
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0067-check", "title": "Fields (invented)", "ops": [
+            {"op": "check_fields", "as": "fc", "param": "NpcParam",
+             "fields": ["nameId", "hitHeight", "isGhost", "epithet", "oddField", "noSuch"]},
+            {"op": "write_share", "name": "fields-check", "tables": ["fc"],
+             "columns": {"fc": ["field", "present", "type"]}}]}).encode()
+        card = self.run_job(raw)
+        self.assertEqual(card["ops"][0]["done"], 5)
+        self.assertEqual(card["ops"][0]["of"], 6)
+        doc = json.loads((self.p.share / "fields-check.json").read_text(encoding="utf-8"))
+        self.assertEqual(doc["tables"][0]["rows"], [[0, True, 5], [1, True, 7], [2, True, 10], [3, True, 12],
+                                                    [4, True, 99], [5, False, 0]])
+        self.assertNotIn("nameId", json.dumps(doc["tables"]))
+        self.assertIn(("FieldTypes", "NpcParam"), self.link.calls)
+
     def test_every_op_and_the_local_file(self):
+        self.put_tile()                                       # S75: make_map_overview needs one
         card = self.run_job(fixture("job-files", "good-every-op.json"))
-        self.assertEqual(card["result"]["local"], ["npc-named.json"])
+        self.assertEqual(card["result"]["local"], ["npc-named.json", "every-op-overview.png"])
+        img = self.p.local / "test-0001-every-op" / "every-op-overview.png"
+        self.assertEqual(textures.png_decode(img.read_bytes())[:2], (2, 2))     # S75: one 2-pixel tile
+        self.assertFalse(any(n.endswith(".png") for n in os.listdir(self.p.share)))
         local = self.p.local / "test-0001-every-op" / "npc-named.json"
         doc = json.loads(local.read_text(encoding="utf-8"))
         self.assertEqual(doc["format"], "datapiler-local/1")
@@ -264,6 +433,7 @@ class JobRunTest(RunnerBase):
             logbook.shutdown()
 
     def test_nothing_planted_reaches_the_ring_or_an_event(self):
+        self.put_tile()                                       # S75: make_map_overview needs one
         _, seq = logbook.lines_after(0, limit=0)
         self.run_job(fixture("job-files", "good-every-op.json"))
         lines, _ = logbook.lines_after(seq)
@@ -367,6 +537,9 @@ class FailureTest(RunnerBase):
         self.assertEqual(self.share_files(), [])
 
     def test_a_guard_failure(self):
+        self.sets.stop()             # DP18: check 3 sees the name sets' texts only, so the planted one is in a set
+        self.sets = mock.patch.dict(textdb.TEXT_SETS, dict(SETS, place_names=(("item", 9002), ("item_dlc02", 9005))))
+        self.sets.start()
         self.db.import_export({"Name": "item_dlc02", "FmgWrappers": [{"Name": "Invented", "ID": 9005, "Fmg": {
             "Entries": [{"ID": 9000200, "Text": "per_team"}]}}]}, container="item_dlc02", language="engus",
             sha256="1" * 64)
@@ -754,7 +927,7 @@ class ExtractTest(RunnerBase):
             self.assertEqual(rows["place_names"]["grey"], "the text container of these names is not confirmed yet")
 
     def test_the_map_question_above_ten(self):
-        self.link.all_maps = ["m99_00_00_%02d" % i for i in range(12)]
+        self.link.every_map = ["m99_00_00_%02d" % i for i in range(12)]
         out = self.r.run_extract(["map_placements"], load_maps=True)
         self.assertEqual(out["ok"], False)
         self.assertEqual(out["ask"]["maps"], 12)
@@ -762,7 +935,7 @@ class ExtractTest(RunnerBase):
         self.assertEqual(self.link.calls, [])
         self.assertEqual(self.r.run_extract(["map_placements"], load_maps=True, confirm_maps=12), {"ok": True})
         self.assertTrue(wait_for(lambda: self.r.extract_state()["rows"][3]["state"] == "done"))
-        self.assertIn(("OpenResource", tuple(self.link.all_maps)), self.link.calls)
+        self.assertIn(("OpenResource", tuple(self.link.every_map)), self.link.calls)
         row = self.r.extract_state()["rows"][3]
         self.assertEqual((row["id"], row["result"]["count"], row["result"]["unit"]), ("map_placements", 36,
                                                                                        "placements"))
@@ -811,3 +984,224 @@ class ExtractTest(RunnerBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BossesTest(RunnerBase):
+    """0.2.3: the names no row uses (S47), map families (S45) and boss slots (S46)."""
+
+    def test_unused_names_shares_the_names_no_row_uses(self):
+        entries = [{"ID": n, "Text": "Invented %d" % k} for k, n in enumerate((9000000, 9000001, 9000004, 9000777,
+                                                                                 9000888))]
+        self.db.import_export({"Name": "item", "FmgWrappers": [{"Name": "Invented", "ID": 9001, "Fmg": {
+            "Name": "Invented", "Entries": entries}}]}, container="item", language="engus", sha256="1" * 64)
+        doc = {"format": jobs.FORMAT, "id": "en-0099-unused", "title": "Unused names", "ops": [
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"]},
+            {"op": "unused_names", "as": "unused", "rows": "npc", "key": "nameId", "text": "character_names"},
+            {"op": "write_local", "name": "unused-local", "tables": ["unused"]},
+            {"op": "write_share", "name": "unused", "tables": ["unused"], "columns": {"unused": ["nameId", "layer"]}}]}
+        card = self.run_job(json.dumps(doc).encode())
+        with open(os.path.join(self.p.share, "unused.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["tables"][0]["rows"], [[9000777, 0], [9000888, 0]])
+        self.assertEqual(card["ops"][1]["done"], 2)
+        text = json.dumps(data)
+        self.assertNotIn("Invented", text)                    # names stay local
+
+    def test_unused_names_over_half_the_set_is_shared_whole(self):
+        doc = {"format": jobs.FORMAT, "id": "en-0098-unused", "title": "Unused names", "ops": [
+            {"op": "fetch_rows", "as": "npc", "param": "NpcParam", "fields": ["id", "nameId"], "ids": [9000003]},
+            {"op": "unused_names", "as": "unused", "rows": "npc", "key": "nameId", "text": "character_names"},
+            {"op": "write_share", "name": "unused", "tables": ["unused"], "columns": {"unused": ["nameId"]}}]}
+        self.run_job(json.dumps(doc).encode())      # DP17: numbers only, not held to check 6's half
+        with open(os.path.join(self.p.share, "unused.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["tables"][0]["rows"], [[9000000], [9000001], [9000004]])
+
+    def test_boss_slots_from_map_families(self):
+        self.link.every_map = ["m99_00_00_00", "m99_00_00_01", "m99_00_00_02", "m98_00_00_00"]
+        self.link.extra_placements = [(9000800, 9000003), (9000950, 9000002)]
+        doc = {"format": jobs.FORMAT, "id": "en-0097-bosses", "title": "Boss slots", "ops": [
+            {"op": "load_maps", "maps": ["m99_*"]},
+            {"op": "read_placements", "as": "placed", "maps": ["m99_*"]},
+            {"op": "filter", "as": "bosses", "rows": "placed", "slots": "boss"},
+            {"op": "write_share", "name": "bosses", "tables": ["bosses"],
+             "columns": {"bosses": ["map", "entityId", "npcParamId"]}}]}
+        card, _ = self.r.add("job.json", json.dumps(doc).encode())
+        out = self.r.act(card["id"], "start")
+        self.assertFalse(out["ok"])
+        self.assertIn("m99_*", out["ask"]["text"])
+        self.assertEqual(self.r.act(card["id"], "start", confirm_maps=out["ask"]["maps"]), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"), self.card(card["id"]))
+        self.assertIn(("OpenResource", ("m99_00_00_00", "m99_00_00_01", "m99_00_00_02")), self.link.calls)
+        with open(os.path.join(self.p.share, "bosses.json"), encoding="utf-8") as f:
+            rows = json.load(f)["tables"][0]["rows"]
+        self.assertEqual(sorted(r[1] for r in rows), [9000800] * 3)
+        self.assertEqual({r[2] for r in rows}, {9000003})
+
+
+class ProgressTest(RunnerBase):
+    """0.2.12 (S63): the maps a job has read are kept as it reads them, so a crash costs only the map in hand, and a
+    job pauses when Smithbox holds MAPS_PER_SESSION maps."""
+
+    MAPS = ["m99_00_00_%02d" % i for i in range(5)]
+
+    def doc(self) -> bytes:
+        return json.dumps({"format": jobs.FORMAT, "id": "en-0096-progress", "title": "Kept maps", "ops": [
+            {"op": "load_maps", "maps": self.MAPS},
+            {"op": "read_placements", "as": "placed", "maps": self.MAPS},
+            {"op": "count", "as": "per_map", "rows": "placed", "by": ["map"]},
+            {"op": "write_share", "name": "per-map", "tables": ["per_map"], "columns": {"per_map": ["map", "count"]}}]}
+        ).encode()
+
+    def progress_file(self, card_id: str) -> Path:
+        return Path(self.p.jobs) / card_id / runner.MAPS_FILE
+
+    def again(self, card_id: str, state: str = "done", what: str = "resume") -> dict:
+        self.assertEqual(self.r.act(card_id, what), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card_id)["state"] == state), self.card(card_id))
+        return self.card(card_id)
+
+    def per_map(self) -> list:
+        with open(os.path.join(self.p.share, "per-map.json"), encoding="utf-8") as f:
+            return json.load(f)["tables"][0]["rows"]
+
+    def test_a_crash_keeps_the_maps_read_and_start_again_goes_on(self):
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 3
+        card = self.run_job(self.doc(), state="failed")
+        self.assertIn("UNAVAILABLE", card["result"]["failed"]["why"])
+        kept = runner._MapProgress(self.progress_file(card["id"]), {}).path.read_text("ascii").splitlines()
+        self.assertEqual(len(kept), 3)                       # the header and the two maps read before the crash
+        # S66: the card says what is kept and where Resume picks up
+        self.assertEqual(card["result"]["kept"], {"maps": 2, "of": 5, "next": "m99_00_00_02", "next_n": 3})
+        self.link.crash_on_read = None
+        self.link.calls = []
+        card = self.again(card["id"])
+        self.assertEqual([c for c in self.link.calls if c[0] == "OpenResource"],
+                         [("OpenResource", tuple(self.MAPS[2:]))])
+        self.assertEqual(sorted(c[1] for c in self.link.calls if c[0] == "BatchGetObjects"), self.MAPS[2:])
+        self.assertEqual([r[1] for r in self.per_map()], [3] * 5)
+        self.assertFalse(self.progress_file(card["id"]).exists())   # done: nothing left to resume
+
+    def test_a_job_pauses_when_smithbox_holds_enough_maps(self):
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        with mock.patch.object(runner, "MAPS_PER_SESSION", 2):
+            card = self.run_job(self.doc(), state="failed")
+            why = card["result"]["failed"]["why"]
+            self.assertIn("paused", why)
+            self.assertIn("2 of 5 maps are read and kept", why)
+            self.link.loaded = []                             # the owner restarts Smithbox
+            card = self.again(card["id"], state="failed")
+            self.assertIn("4 of 5 maps are read and kept", card["result"]["failed"]["why"])
+            self.link.loaded = []
+            self.again(card["id"])
+        self.assertEqual([r[1] for r in self.per_map()], [3] * 5)
+
+    def test_start_again_begins_from_the_beginning(self):
+        # S66: Start again drops what was kept; only Resume goes on from it
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 3
+        card = self.run_job(self.doc(), state="failed")
+        self.assertTrue(self.progress_file(card["id"]).exists())
+        self.link.crash_on_read = None
+        self.link.loaded = []
+        self.link.calls = []
+        self.again(card["id"], what="start")
+        self.assertEqual([c for c in self.link.calls if c[0] == "OpenResource"], [("OpenResource", tuple(self.MAPS))])
+        self.assertEqual(len([c for c in self.link.calls if c[0] == "BatchGetObjects"]), 5)
+
+    def test_a_run_before_the_summary_shows_its_count(self):
+        # a job stopped by 0.2.12 or 0.2.13 has kept maps but no summary on its card
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 4
+        card = self.run_job(self.doc(), state="failed")
+        with self.r._lock:
+            self.r._cards[card["id"]].result.pop("kept")
+        self.assertEqual(self.card(card["id"])["result"]["kept"], {"maps": 3, "of": None, "next": None, "next_n": None})
+        self.progress_file(card["id"]).unlink()
+        self.assertIsNone(self.card(card["id"])["result"]["kept"])
+
+    def test_a_kept_file_of_another_job_or_game_is_dropped(self):
+        self.link.every_map = list(self.MAPS)
+        self.link.loaded = []
+        self.link.crash_on_read = 2
+        card = self.run_job(self.doc(), state="failed")
+        f = self.progress_file(card["id"])
+        lines = f.read_text("ascii").splitlines()
+        header = json.loads(lines[0])
+        header["game_version"] = "0.0.0.1-changed"
+        f.write_text("\n".join([json.dumps(header)] + lines[1:]) + "\n", "ascii")
+        self.link.crash_on_read = None
+        self.link.loaded = []
+        self.link.calls = []
+        self.again(card["id"])
+        self.assertEqual([c for c in self.link.calls if c[0] == "OpenResource"], [("OpenResource", tuple(self.MAPS))])
+
+    def test_a_line_cut_short_ends_what_is_kept(self):
+        f = Path(self.tmp.name) / "maps.jsonl"
+        progress = runner._MapProgress(f, {"job_sha256": "a" * 64})
+        progress.add("m99_00_00_01", [(link.map_key("m99_00_00_01"), 9001000, 9000000, 9000000, 9990)])
+        progress.add("m99_00_00_02", [])
+        with open(f, "ab") as out:
+            out.write(b'{"map": "m99_00_00_03", "rows": [[99')
+        self.assertEqual(sorted(progress.load()), ["m99_00_00_01", "m99_00_00_02"])
+        with open(f, "ab") as out:
+            out.write(b'\n{"map": "m99_00_00_04", "rows": [[1, 2, 3, 4, 5]]}\n')   # rows of another map: refused
+        self.assertEqual(sorted(progress.load()), ["m99_00_00_01", "m99_00_00_02"])
+        self.assertEqual(runner._MapProgress(f, {"job_sha256": "b" * 64}).load(), {})
+        self.assertFalse(f.exists())
+
+
+class BuildTest(RunnerBase):
+    """DP20 (S64): with the setting on, a map job waits while Smithbox runs as its Vulkan build."""
+
+    def doc(self) -> bytes:
+        return json.dumps({"format": jobs.FORMAT, "id": "en-0095-build", "title": "Build", "ops": [
+            {"op": "load_maps", "maps": ["m99_00_00_03"]},
+            {"op": "read_placements", "as": "placed", "maps": ["m99_00_00_03"]},
+            {"op": "count", "as": "per_map", "rows": "placed", "by": ["map"]},
+            {"op": "write_share", "name": "build", "tables": ["per_map"], "columns": {"per_map": ["map", "count"]}}]}
+        ).encode()
+
+    def setUp(self):
+        super().setUp()
+        self.gl = True
+        self.builds = ["Smithbox.Vulkan.exe"]
+        self.r = runner.Runner(lambda: self.p, self.link, self.db, self.guard, lambda: self.provenance(),
+                               lambda: GameRunning(self.game_running, None), lambda: "engus",
+                               map_opengl=lambda: self.gl)
+        self.runners.append(self.r)
+        self.seen = mock.patch.object(runner.smithbox_mod, "seen", lambda: [
+            runner.smithbox_mod.Running(n, None, None, None) for n in self.builds])
+        self.seen.start()
+        self.addCleanup(self.seen.stop)
+
+    def test_a_map_job_waits_for_the_opengl_build(self):
+        card, _ = self.r.add("job.json", self.doc())
+        self.assertEqual(self.r.act(card["id"], "start"), {"ok": True})
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "waiting"), self.card(card["id"]))
+        self.assertIn("Smithbox.OpenGL.exe", self.card(card["id"])["wait"])
+        self.assertNotIn(("OpenResource", ("m99_00_00_03",)), self.link.calls)
+        self.builds = ["Smithbox.OpenGL.exe"]                   # the owner starts the OpenGL build
+        self.assertTrue(wait_for(lambda: self.card(card["id"])["state"] == "done"), self.card(card["id"]))
+        self.assertIn(("OpenResource", ("m99_00_00_03",)), self.link.calls)
+
+    def test_with_the_setting_off_or_no_smithbox_seen_it_runs(self):
+        self.gl = False
+        self.run_job(self.doc())
+        self.gl = True
+        self.builds = []
+        self.r.act(self.r.cards()[0]["id"], "start")
+        self.assertTrue(wait_for(lambda: self.r.cards()[0]["state"] == "done"), self.r.cards()[0])
+
+
+class CardsTest(RunnerBase):
+    def test_each_card_carries_when_it_was_added(self):
+        # S54: the page sorts the newest first by `added`, so every card must carry it.
+        self.r.add("a.json", fixture("job-files", "good-example.json"))
+        cards = self.r.cards()
+        self.assertTrue(cards and all(isinstance(c.get("added"), (int, float)) for c in cards))
+

@@ -85,6 +85,14 @@ tr.off td { opacity: .5; }
 .drop .dsub { margin-top: 6px; font-size: 12px; }
 .jobcard { background: var(--card2); border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
 .jhead { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.jobcard.folded > :not(.jhead) { display: none; }
+.jhead .fold { padding: 0 6px; min-width: 24px; }
+.jhead .jgrip { padding: 0 6px; min-width: 24px; cursor: grab; color: var(--mute); }
+.jhead .jgrip:active { cursor: grabbing; }
+.jobcard.dragging { opacity: .45; }
+.jlocal { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dropline { height: 3px; margin: -6.5px 0 3.5px; border-radius: 2px; background: var(--acc); pointer-events: none; }
+.jprog { font-size: 12px; color: var(--mute); }
 .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
 .cols3 b { display: block; color: var(--mute); font-size: 11.5px; font-weight: 600; margin-bottom: 3px; }
 .cols3 ul { margin: 0; padding-left: 16px; }
@@ -94,7 +102,15 @@ tr.off td { opacity: .5; }
 .oplines { margin-top: 8px; font-size: 12px; }
 .oplines div { padding: 1px 0; }
 .result { margin-top: 8px; }
+.result .kept { margin-top: 6px; color: var(--ok); }
 .result .bad { color: var(--err); }
+/* DP23: a game update, the changes it brought, and two versions compared */
+.update { margin-top: 8px; color: var(--warn); }
+.result .changes { margin-top: 6px; }
+.vpick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.vpick select { background: var(--card2); border: 1px solid var(--edge); color: var(--text); border-radius: 6px; padding: 4px 6px; }
+.vreport .vtable { margin-top: 8px; }
+.vreport .mono { font-size: 12px; overflow-wrap: anywhere; }
 
 /* Outputs */
 .files { list-style: none; padding: 0; margin: 0; }
@@ -194,6 +210,11 @@ button.linklike:hover { color: var(--text); }
 .ov .mf { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--edge); flex-wrap: wrap; }
 .ov .mf:empty { display: none; }
 .ov .mf .left { margin-right: auto; }
+/* DP22: the pop-up of a removal, and the Deleted tab */
+.typedrow { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.typedrow input { flex: 1; min-width: 160px; background: var(--card2); border: 1px solid var(--edge); color: var(--text);
+                  border-radius: 6px; padding: 5px 8px; font: 12px Consolas, monospace; }
+td.acts { white-space: nowrap; }
 .x { margin-left: auto; background: none; border: none; color: var(--mute); font-size: 16px; padding: 0 4px; }
 .x:hover { color: var(--text); }
 @media (max-width: 720px) { .cols3 { grid-template-columns: 1fr; } .form { grid-template-columns: 1fr; } .bar { width: 80px; }

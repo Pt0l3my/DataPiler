@@ -16,8 +16,45 @@ FIELD_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 PARAMS: dict[str, dict[str, str]] = {
     "NpcParam": {"id": "int", "nameId": "int", "teamType": "int", "npcType": "int"},
     "TalkParam": {"id": "int", "msgId": "int"},
-    "WorldMapPlaceNameParam": {"id": "int"},     # more once verified (§10, P4)
-    "BonfireWarpParam": {"id": "int"},           # likewise
+    "WorldMapPlaceNameParam": {
+        "id": "int", "disableParam_NT": "int", "worldMapPieceId": "int", "textId": "int", "areaNo": "int",
+        "gridXNo": "int", "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number"
+    },
+    "BonfireWarpParam": {
+        "id": "int", "disableParam_NT": "int", "eventflagId": "int", "bonfireEntityId": "int",
+        "bonfireSubCategorySortId": "int", "bonfireSubCategoryId": "int", "clearedEventFlagId": "int",
+        "iconId": "int", "forbiddenIconId": "int", "dispMinZoomStep": "int", "selectMinZoomStep": "int",
+        "dispMask00": "int", "dispMask01": "int", "dispMask02": "int", "areaNo": "int", "gridXNo": "int",
+        "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number", "textId1": "int",
+        "textEnableFlagId1": "int", "textDisableFlagId1": "int", "altIconId": "int"
+    },
+    "WorldMapPointParam": {
+        "id": "int", "disableParam_NT": "int", "eventFlagId": "int", "distViewEventFlagId": "int",
+        "clearedEventFlagId": "int", "iconId": "int", "altIconId": "int", "distViewIconId": "int",
+        "isAreaIcon": "int", "bgmPlaceType": "int", "angle": "number", "areaNo": "int", "gridXNo": "int",
+        "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number", "isOverrideDistViewMarkPos": "int",
+        "areaNo_forDistViewMark": "int", "gridXNo_forDistViewMark": "int", "gridZNo_forDistViewMark": "int",
+        "posX_forDistViewMark": "number", "posY_forDistViewMark": "number", "posZ_forDistViewMark": "number",
+        "distViewId": "int", "dispMinZoomStep": "int", "selectMinZoomStep": "int", "entryFEType": "int",
+        "dispMask00": "int", "dispMask01": "int", "dispMask02": "int", "textId1": "int", "textType1": "int"
+    },
+    "WorldMapPieceParam": {
+        "id": "int", "disableParam_NT": "int", "openEventFlagId": "int", "openTravelAreaLeft": "number",
+        "openTravelAreaRight": "number", "openTravelAreaTop": "number", "openTravelAreaBottom": "number",
+        "acquisitionEventFlagId": "int", "acquisitionEventScale": "number", "acquisitionEventCenterX": "number",
+        "acquisitionEventCenterY": "number", "acquisitionEventResScale": "number",
+        "acquisitionEventResOffsetX": "number", "acquisitionEventResOffsetY": "number"
+    },
+    "WorldMapLegacyConvParam": {
+        "id": "int", "disableParam_NT": "int", "srcAreaNo": "int", "srcGridXNo": "int", "srcGridZNo": "int",
+        "srcPosX": "number", "srcPosY": "number", "srcPosZ": "number", "dstAreaNo": "int", "dstGridXNo": "int",
+        "dstGridZNo": "int", "dstPosX": "number", "dstPosY": "number", "dstPosZ": "number", "isBasePoint": "int"
+    },
+    "MapNameTexParam": {"id": "int"},                   # fields read after a same-job check (S72, DP24)
+    "MapNameTexParam_m61": {"id": "int"},               # fields read after a same-job check (S72, DP24)
+    "MapPieceTexParam": {"id": "int"},                  # fields read after a same-job check (S72, DP24)
+    "MapPieceTexParam_m61": {"id": "int"},              # fields read after a same-job check (S72, DP24)
+    "MapGridCreateHeightLimitInfo": {"id": "int"},      # fields read after a same-job check (S72, DP24)
 }
 
 # The fields that hold ids of other tables' rows (a name number, a message id), each param's apart from its own row id.
@@ -27,9 +64,53 @@ PARAMS: dict[str, dict[str, str]] = {
 REFERENCES: dict[str, tuple[str, ...]] = {
     "NpcParam": ("nameId",),
     "TalkParam": ("msgId",),
-    "WorldMapPlaceNameParam": (),
-    "BonfireWarpParam": (),
+    "WorldMapPlaceNameParam": ("worldMapPieceId", "textId"),
+    "BonfireWarpParam": ("eventflagId", "bonfireEntityId", "bonfireSubCategoryId", "clearedEventFlagId", "iconId", "forbiddenIconId", "textId1", "textEnableFlagId1", "textDisableFlagId1", "altIconId"),
+    "WorldMapPointParam": ("eventFlagId", "distViewEventFlagId", "clearedEventFlagId", "iconId", "altIconId", "distViewIconId", "distViewId", "textId1"),
+    "WorldMapPieceParam": ("openEventFlagId", "acquisitionEventFlagId"),
+    "WorldMapLegacyConvParam": (),
+    "MapNameTexParam": (),
+    "MapNameTexParam_m61": (),
+    "MapPieceTexParam": (),
+    "MapPieceTexParam_m61": (),
+    "MapGridCreateHeightLimitInfo": (),
 }
+
+# The game's map tables (S69, DP21): their fields above were verified on the owner's PC by check_fields (en-0015,
+# 2026-11-14: 91 of 91, each of the type Smithbox's definition gives). By DP21 a job may share their rows whole, for
+# research only, when its write_share carries the label `map_coords`; a share file holding them is never committed.
+MAP_PARAMS = ("BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam", "WorldMapPieceParam",
+              "WorldMapLegacyConvParam", "MapNameTexParam", "MapNameTexParam_m61", "MapPieceTexParam",
+              "MapPieceTexParam_m61", "MapGridCreateHeightLimitInfo")
+
+# S72 (DP24): the column type a field read after a check_fields of the same job gets, from the type the server named.
+# A text type is never read.
+_INT_DEF = frozenset(("s8", "u8", "s16", "u16", "s32", "u32"))
+_NUM_DEF = frozenset(("f32", "angle32", "f64"))
+
+
+def checked_type(def_type: str | None) -> str | None:
+    """"int", "number" or "bool" for a field check_fields found, by the server's type; None for absent or text."""
+    if def_type in _INT_DEF:
+        return "int"
+    if def_type in _NUM_DEF:
+        return "number"
+    if def_type == "b32":
+        return "bool"
+    return None
+
+# check_fields (S67): a field's type as the server names it, as a number of ours, so a share file holds numbers only.
+# 0: the server's answer has no such field; 99: a type not listed here.
+TYPE_CODES: dict[str, int] = {"s8": 1, "u8": 2, "s16": 3, "u16": 4, "s32": 5, "u32": 6, "f32": 7, "angle32": 8,
+                              "f64": 9, "b32": 10, "fixstr": 11, "fixstrW": 12, "dummy8": 13}
+TYPE_OTHER = 99
+
+
+def type_code(def_type: str | None) -> int:
+    """The number check_fields writes for a field's type: 0 when the field is absent."""
+    if def_type is None:
+        return 0
+    return TYPE_CODES.get(def_type, TYPE_OTHER)
 
 
 def field_type(param: str, field: str) -> str | None:

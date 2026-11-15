@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from .textdb import TextDB
 
 SHARE_FORMAT = "datapiler-share/1"
-LABELS: tuple[str, ...] = ("named_only", "vanilla_rows", "loaded_maps_only", "summary")   # ours; snake_case ASCII
+LABELS: tuple[str, ...] = ("named_only", "vanilla_rows", "loaded_maps_only", "summary", "map_coords")   # ours; snake_case ASCII
 ENUMS: dict[str, tuple[str, ...]] = {"source": ("server", "guided")}
 MAX_BYTES = 4 * 1024 * 1024
 MAX_VALUES = 200_000
@@ -182,7 +182,7 @@ def _cell_ok(t: str, v: object) -> bool:
 def fixed_words() -> frozenset[str]:
     """DataPiler's fixed words, which check 3 skips where a value is exactly one of them (S6, S20): the labels, the
     column types and enum values, the column names its operations make (fields.PARAMS's fields, the placements'
-    columns, `named` and `count`), the expansion's source and the format constant. Each is a word of DataPiler's
+    columns, `named` and `count`, and check_fields's `field`, `present` and `type`), the expansion's source and the format constant. Each is a word of DataPiler's
     own code, never one read from the game or a job; table names, job ids and every other value stay checked."""
     from . import jobs     # jobs imports this module: its columns are read here, at the check
 
@@ -194,6 +194,10 @@ def fixed_words() -> frozenset[str]:
         words.update(flds)
     words.update(c for c, _ in jobs.PLACEMENT_COLUMNS)
     words.update(jobs.MADE_COLUMNS)
+    words.update(c for c, _ in jobs.CHECK_COLUMNS)      # S68: check_fields's columns, `field`, `present`, `type`
+    from . import textures
+    words.update(c for c, _ in textures.COLUMNS)         # S73: read_map_tiles's columns
+    words.update(c for c, _ in textures.TILE_CHECK_COLUMNS)  # S78: check_map_tiles's columns
     return frozenset(words)
 
 
@@ -649,6 +653,44 @@ def record_counts(path: Path, file_name: str, sha256: str, coverage: Mapping[str
         files = _read_counts(path)
         files.pop(file_name, None)
         files[file_name] = {"sha256": sha256, "tables": tables}
+        while len(files) > COUNTS_MAX_FILES:
+            files.pop(next(iter(files)))
+        doc = {"format": COUNTS_FORMAT, "files": files}
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        fileio.write_atomic(Path(path), (json.dumps(doc, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+
+
+def counts_entry(path: Path, file_name: str) -> dict | None:
+    """DP22: a share file's kept record as it is stored ({"sha256", "tables"}), for the Deleted bin to hold while the
+    file is there; None when there is none. Never raises."""
+    try:
+        with _counts_lock:
+            entry = _read_counts(path).get(file_name)
+        return json.loads(json.dumps(entry)) if isinstance(entry, dict) else None
+    except Exception:
+        return None
+
+
+def forget_counts(path: Path, file_name: str) -> None:
+    """DP22: drop a share file's record, once the file is in the Deleted bin. Atomic. Raises OSError."""
+    with _counts_lock:
+        files = _read_counts(path)
+        if files.pop(file_name, None) is None:
+            return
+        doc = {"format": COUNTS_FORMAT, "files": files}
+        fileio.write_atomic(Path(path), (json.dumps(doc, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+
+
+def put_counts(path: Path, file_name: str, entry: dict) -> None:
+    """DP22: a record counts_entry gave, back with its share file from the Deleted bin, as it was. Atomic. Raises
+    OSError, or ValueError for a record not of that shape."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str) or \
+            not HEX64_RX.fullmatch(entry["sha256"]) or not isinstance(entry.get("tables"), dict):
+        raise ValueError("not row counts DataPiler keeps")
+    with _counts_lock:
+        files = _read_counts(path)
+        files.pop(file_name, None)
+        files[file_name] = {"sha256": entry["sha256"], "tables": entry["tables"]}
         while len(files) > COUNTS_MAX_FILES:
             files.pop(next(iter(files)))
         doc = {"format": COUNTS_FORMAT, "files": files}

@@ -2,7 +2,8 @@
 
 It holds the texts of Smithbox's text exports, which may be game text: it stays in the workspace and never leaves the
 PC. Its texts serve two ends only: `join_names` (the names, for workspace files) and the guard's check 3, which keeps
-every one of them out of share files and shared log lines. Nothing here logs or returns a text but `names()`.
+every one of them out of share files and shared log lines. Nothing here logs or returns a text but `names()`, and
+`take()`, which hands an import's rows to the Deleted bin in the workspace (DP22).
 
 Check 3 compares a string with the texts twice: case-folded as it is, and in a normalised form (`normalise`: accents
 dropped, case-folded, and every run of spaces, `_`, `-` and other signs one space), against the texts normalised the
@@ -20,6 +21,7 @@ import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from . import events, logbook
 
@@ -171,24 +173,90 @@ class TextDB:
                     continue
                 rows.append((container, language, wid, wname, int(e["ID"]), text))
         with self._lock:
-            db = self._conn()
-            with db:
-                db.execute("DELETE FROM entries WHERE container = ? AND language = ?", (container, language))
-                db.executemany("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?)", rows)
-                kept = db.execute("SELECT COUNT(*) FROM entries WHERE container = ? AND language = ?",
-                                  (container, language)).fetchone()[0]
-                db.execute("INSERT OR REPLACE INTO imports (container, language, wrappers, entries, sha256, at, "
-                           "skipped) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (container, language, wrappers, kept, sha256, time.time(), skipped))
-            self._index = None
-            self._nindex = None
+            kept = self._write(container, language, rows, wrappers=wrappers, sha256=sha256, at=time.time(),
+                               skipped=skipped)
             total_containers, total_entries = self._totals()
         events.emit("textdb.changed", containers=total_containers, entries=total_entries)
         return ImportResult(container, language, wrappers, int(kept), skipped)
 
+    def _write(self, container: str, language: str, rows: list[tuple], *, wrappers: int, sha256: str, at: float,
+               skipped: int) -> int:
+        """The one write of an import, for import_export and put_back (DP22): that container's entries for that
+        language replaced by rows, and its record. Under self._lock. Returns the entries kept."""
+        db = self._conn()
+        with db:
+            db.execute("DELETE FROM entries WHERE container = ? AND language = ?", (container, language))
+            db.executemany("INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?)", rows)
+            kept = db.execute("SELECT COUNT(*) FROM entries WHERE container = ? AND language = ?",
+                              (container, language)).fetchone()[0]
+            db.execute("INSERT OR REPLACE INTO imports (container, language, wrappers, entries, sha256, at, "
+                       "skipped) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (container, language, wrappers, kept, sha256, at, skipped))
+        self._index = None
+        self._nindex = None
+        return int(kept)
+
+    def take(self, container: str, language: str, keep: Callable[[dict], object]) -> object | None:
+        """DP22: take one import out, as remove() does, after keep(dump) has kept it (the Deleted bin); keep's answer,
+        or None when there is no such import. dump is {"record": {"wrappers", "entries", "sha256", "at",
+        "skipped"}, "rows": [[wrapper_id, wrapper_name, entry_id, text], ...]}: all put_back needs to put it back as
+        it was. When keep raises, nothing is taken out. Emits textdb.changed."""
+        with self._lock:
+            db = self._conn()
+            rec = db.execute("SELECT wrappers, entries, sha256, at, skipped FROM imports WHERE container = ? AND "
+                             "language = ?", (container, language)).fetchone()
+            if rec is None:
+                return None
+            rows = db.execute("SELECT wrapper_id, wrapper_name, entry_id, text FROM entries WHERE container = ? AND "
+                              "language = ? ORDER BY wrapper_id, wrapper_name, entry_id",
+                              (container, language)).fetchall()
+            dump = {"record": {"wrappers": int(rec[0]), "entries": int(rec[1]), "sha256": rec[2], "at": float(rec[3]),
+                               "skipped": int(rec[4] or 0)},
+                    "rows": [[int(w), wn, int(i), t] for w, wn, i, t in rows]}
+            answer = keep(dump)
+            with db:
+                db.execute("DELETE FROM imports WHERE container = ? AND language = ?", (container, language))
+                db.execute("DELETE FROM entries WHERE container = ? AND language = ?", (container, language))
+            self._index = None
+            self._nindex = None
+            total_containers, total_entries = self._totals()
+        events.emit("textdb.changed", containers=total_containers, entries=total_entries)
+        return answer
+
+    def put_back(self, container: str, language: str, dump: dict) -> bool:
+        """DP22: an import take() kept, back as it was (its rows, its record, its sha256 and its time), through the
+        write imports use. False, and nothing written, when the database holds that container in that language now.
+        ValueError for a dump not of take's shape. Emits textdb.changed."""
+        rec = dump.get("record") if isinstance(dump, dict) else None
+        raw = dump.get("rows") if isinstance(dump, dict) else None
+        if not isinstance(rec, dict) or not isinstance(raw, list):
+            raise ValueError("not an import the Deleted bin kept")
+
+        def whole(v: object) -> bool:
+            return isinstance(v, int) and not isinstance(v, bool)
+
+        if not (whole(rec.get("wrappers")) and whole(rec.get("skipped")) and isinstance(rec.get("sha256"), str)
+                and isinstance(rec.get("at"), (int, float)) and not isinstance(rec.get("at"), bool)):
+            raise ValueError("not an import the Deleted bin kept")
+        rows = []
+        for r in raw:
+            if not (isinstance(r, list) and len(r) == 4 and whole(r[0]) and isinstance(r[1], str) and whole(r[2])
+                    and isinstance(r[3], str)):
+                raise ValueError("not an import the Deleted bin kept")
+            rows.append((container, language, r[0], r[1], r[2], r[3]))
+        with self._lock:
+            if self.has(container, language):
+                return False
+            self._write(container, language, rows, wrappers=rec["wrappers"], sha256=rec["sha256"],
+                        at=float(rec["at"]), skipped=rec["skipped"])
+            total_containers, total_entries = self._totals()
+        events.emit("textdb.changed", containers=total_containers, entries=total_entries)
+        return True
+
     def remove(self, container: str, language: str) -> bool:
-        """Take one import out (the Imported tab's Remove, S41): its entries and its record. The export file in
-        workspace/imported/ stays. False when there was no such import. Emits textdb.changed."""
+        """Take one import out: its entries and its record, erased. The export file in workspace/imported/ stays.
+        False when there was no such import. Emits textdb.changed. Since DP22 the Imported tab's Remove (S41) goes
+        through take() and the Deleted bin instead."""
         with self._lock:
             db = self._conn()
             with db:
@@ -298,19 +366,27 @@ class TextDB:
             out.setdefault(i, t)
         return out
 
+    def _check_texts(self) -> list[str]:
+        """The texts check 3 compares with (DP18, settled S49): those of the name sets DataPiler uses (TEXT_SETS), the
+        only texts it ever writes anywhere; not every text imported, whose ordinary words collide with our own."""
+        pairs = sorted({(c, int(w)) for set_pairs in TEXT_SETS.values() for c, w in set_pairs})
+        if not pairs:
+            return []
+        where = " OR ".join("(container = ? AND wrapper_id = ?)" for _ in pairs)
+        args = [x for pair in pairs for x in pair]
+        return [t for (t,) in self._conn().execute("SELECT DISTINCT text FROM entries WHERE " + where, args).fetchall()]
+
     def _idx(self) -> _Index:
         with self._lock:
             if self._index is None:
-                texts = [t for (t,) in self._conn().execute("SELECT DISTINCT text FROM entries").fetchall()]
-                self._index = _Index(texts)
+                self._index = _Index(self._check_texts())
             return self._index
 
     def _nidx(self) -> _Index:
         """The texts normalised (`normalise`), built when first needed after each import."""
         with self._lock:
             if self._nindex is None:
-                texts = [t for (t,) in self._conn().execute("SELECT DISTINCT text FROM entries").fetchall()]
-                self._nindex = _Index([n for n in (normalise(t) for t in texts) if n])
+                self._nindex = _Index([n for n in (normalise(t) for t in self._check_texts()) if n])
             return self._nindex
 
     def text_hit(self, s: str) -> bool:

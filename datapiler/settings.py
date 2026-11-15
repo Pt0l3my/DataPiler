@@ -48,6 +48,7 @@ class Settings:
     log_max_mb: int = 2
     log_keep: int = 5
     mask_paths: bool = False            # DP14: the page draws the log's masks in place of paths (S35)
+    map_opengl: bool = True             # DP20: map jobs run on Smithbox's OpenGL build only (S64)
     recent: dict = field(default_factory=_no_recent, compare=True, hash=False)   # key -> tuple, newest first
 
     def as_dict(self) -> dict:
@@ -117,6 +118,7 @@ _LABEL = {
     "workspace_dir": "the workspace", "share_dir": "the share folder", "language": "the text language",
     "port": "the page's port", "log_max_mb": "the log's size", "log_keep": "the number of log files kept",
     "expansion": "whether the expansion is installed", "mask_paths": "Mask paths on this page",
+    "map_opengl": "Map jobs on Smithbox's OpenGL build only",
     "recent": "the folders used before",
 }
 
@@ -172,6 +174,10 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
     if not isinstance(mask, bool):
         raise SettingsError("mask_paths", "Mask paths on this page must be on or off")
     vals["mask_paths"] = mask
+    gl = raw.get("map_opengl", d.map_opengl)
+    if not isinstance(gl, bool):
+        raise SettingsError("map_opengl", "Map jobs on Smithbox's OpenGL build only must be on or off")
+    vals["map_opengl"] = gl
     vals["recent"] = _recent(raw.get("recent", None))
     s = Settings(**vals)  # type: ignore[arg-type]
 

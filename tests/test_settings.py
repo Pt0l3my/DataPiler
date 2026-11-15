@@ -36,7 +36,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(s, Settings())
         self.assertEqual(s.as_dict(), {"smithbox_dir": "", "game_dir": "", "project_dir": "", "workspace_dir": "workspace",
                                        "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
-                                       "log_max_mb": 2, "log_keep": 5, "mask_paths": False,
+                                       "log_max_mb": 2, "log_keep": 5, "mask_paths": False, "map_opengl": True,
                                        "recent": {"smithbox_dir": [], "game_dir": [], "project_dir": []}})
 
     def test_the_expansion_is_the_owners_statement(self):

@@ -54,8 +54,11 @@ def _talk_row(rid: int, index: int) -> pb.GetParamRowResponse:
                                   values=values, row_index=index)
 
 
-def _parts(map_id: str) -> list[tuple[pb.PrimaryKey, dict[str, pb.PropertyValue]]]:
-    """Three placed characters and one map piece per map; the last character's model is not of the form c0000."""
+def _parts(map_id: str, empty: frozenset[str] = frozenset()) -> list[tuple[pb.PrimaryKey, dict[str, pb.PropertyValue]]]:
+    """Three placed characters and one map piece per map; the last character's model is not of the form c0000. A map
+    in `empty` holds nothing, as some of the open world's tiles do (WHY§50)."""
+    if map_id in empty:
+        return []
     m = int(map_id[-2:])
     out = []
     for j, model in enumerate(("c9990", "c9991", "Ostrel Vanehollow")):
@@ -68,6 +71,8 @@ def _parts(map_id: str) -> list[tuple[pb.PrimaryKey, dict[str, pb.PropertyValue]
             "ModelName": pb.PropertyValue(string_value=model),
             "Name": pb.PropertyValue(string_value=PLANTED[j]),
         }
+        if m == 14 and j == 2:
+            del props["TalkID"]          # as a part without dialogue: Smithbox leaves the property out (S60)
         out.append((key, props))
     piece = pb.PrimaryKey(file=MAP_FILE % map_id, namespace=common.KEY_NAMESPACE_MAP_PART, index=0,
                           str_id="Brannoc of the Pale Ford piece")
@@ -107,6 +112,14 @@ class FakeSoapstone:
         self.pending: dict[str, int] = {}
         self.max_pending = 0
         self.load_after = load_after
+        self.fail_maps = False          # True: map searches fail on the server's side
+        self.no_map_editor = False      # True: no map is listed, as when the project has no Visual Map Editor
+        self.busy = 0                   # looks during which Smithbox still finishes a loaded map, refusing loads
+        self.busy_after_load = 0
+        self.refused = 0                # loads refused while another ran
+        self.broken: set[str] = set()     # maps that never load
+        self.empty: set[str] = set()      # maps that load with nothing in them (S62)
+        self.fail_file_keys = False       # True: a file-key BatchGetObjects fails on the server's side
         self.list_params_extra = ("Bad Name!", "x" * 70)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         served = (
@@ -182,11 +195,14 @@ class FakeSoapstone:
 
     def _look_at_maps(self) -> set[str]:
         with self.lock:
+            if self.busy:
+                self.busy -= 1
             for m in list(self.pending):
                 self.pending[m] += 1
                 if self.pending[m] >= self.load_after:
                     del self.pending[m]
                     self.loaded.add(m)
+                    self.busy = self.busy_after_load
             return set(self.loaded)
 
     def search_objects(self, request, context):
@@ -194,21 +210,32 @@ class FakeSoapstone:
         if res.type != common.EDITOR_RESOURCE_TYPE_MAP:
             return pb.SearchObjectsResponse()
         loaded = self._look_at_maps()
+        if not request.HasField("search"):
+            # As SoapstoneLib does: CheckNonNull(request.Search) throws, and the client sees UNKNOWN (S51).
+            context.abort(grpc.StatusCode.UNKNOWN, "Exception was thrown by handler.")
+        if self.fail_maps:
+            context.abort(grpc.StatusCode.UNKNOWN, "Exception was thrown by handler.")
+        if self.no_map_editor:
+            return pb.SearchObjectsResponse()
         if request.result_type.category == pb.PRIMARY_KEY_CATEGORY_FILE:
-            maps = sorted(loaded) if res.name == "" else [res.name] if res.name in loaded else []
+            # As Smithbox 2.2.6 does: a file search lists every map of the bank, loaded or not (S44).
+            maps = sorted(MAPS) if res.name == "" else [res.name] if res.name in MAPS else []
             return pb.SearchObjectsResponse(results=[pb.GameObject(key=pb.PrimaryKey(file=MAP_FILE % m))
                                                      for m in maps])
         if res.name not in loaded:
             return pb.SearchObjectsResponse()
         out = []
-        for key, props in _parts(res.name):
+        limit = request.options.max_results if request.HasField("options") else 0
+        for key, props in _parts(res.name, frozenset(self.empty)):
             if _matches(props, request.search):
                 out.append(pb.GameObject(key=key, properties=[
                     pb.GameProperty(key=p.key, value=props[p.key]) for p in request.properties if p.key in props]))
+                if limit and len(out) >= limit:
+                    break
         return pb.SearchObjectsResponse(results=out)
 
     def _object(self, map_id: str, key: pb.PrimaryKey, wanted) -> pb.GameObject | None:
-        for k, props in _parts(map_id):
+        for k, props in _parts(map_id, frozenset(self.empty)):
             if k == key:
                 return pb.GameObject(key=k, properties=[
                     pb.GameProperty(key=p.key, value=props[p.key]) for p in wanted if p.key in props])
@@ -219,10 +246,24 @@ class FakeSoapstone:
         return pb.GetObjectResponse(result=obj) if obj is not None else pb.GetObjectResponse()
 
     def batch_get_objects(self, request, context):
-        if request.resource.name not in self._look_at_maps():
-            return pb.BatchGetObjectsResponse()
-        out = [self._object(request.resource.name, k, request.properties) for k in request.keys]
-        return pb.BatchGetObjectsResponse(results=[o for o in out if o is not None])
+        # As Smithbox 2.2.6 does (GetObjects, S62): each key is answered only while its map is loaded and the resource
+        # names that map or none; a map's file key (no id) gets the file object, an entry key the entry.
+        loaded = self._look_at_maps()
+        if self.fail_file_keys and any(not k.str_id for k in request.keys):
+            context.abort(grpc.StatusCode.UNKNOWN, "Exception was thrown by handler.")
+        out = []
+        for k in request.keys:
+            m = k.file[len("map/mapstudio/"):-len(".msb")] if k.file.startswith("map/mapstudio/") and \
+                k.file.endswith(".msb") else None
+            if m is None or m not in loaded or request.resource.name not in ("", m):
+                continue
+            if not k.str_id:
+                out.append(pb.GameObject(key=pb.PrimaryKey(file=k.file)))
+            else:
+                o = self._object(m, k, request.properties)
+                if o is not None:
+                    out.append(o)
+        return pb.BatchGetObjectsResponse(results=out)
 
     def open_resource(self, request, context):
         res = request.resource
@@ -230,6 +271,13 @@ class FakeSoapstone:
             context.abort(grpc.StatusCode.NOT_FOUND, "no such resource: Ostrel Vanehollow")
         with self.lock:
             if res.name not in self.loaded and res.name not in self.pending:
+                if res.name in self.broken:
+                    # A map whose load fails in Smithbox every time it is asked for (S57).
+                    return pb.OpenResourceResponse()
+                if self.pending or self.busy:
+                    # As Smithbox 2.2.6 does: a load while another runs is refused ("map already loading", S53).
+                    self.refused += 1
+                    return pb.OpenResourceResponse()
                 self.pending[res.name] = 0
             self.max_pending = max(self.max_pending, len(self.pending))
         return pb.OpenResourceResponse()

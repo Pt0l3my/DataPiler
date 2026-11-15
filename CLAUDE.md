@@ -39,6 +39,9 @@ Smithbox, for EldenNet's research (EldenNet O54 to O57). Its decisions are in [d
 
 ## Working rules
 
+- The shared reasoning log is EldenNet's `docs/REASONING.md` (`wp show WHY§n` in the EldenNet checkout): read its
+  index at the start of a session and after a switch of model, and add DataPiler's findings to it, tagged `#datapiler`.
+
 - Work on a topic branch (`design/`, `feat/`, `fix/`, `docs/`, `test/`, `chore/`), never directly on `main` unless the
   owner asks. Open a pull request only when asked.
 - Ask the owner, with a recommendation, about anything the design leaves open, as a DP entry marked Open.

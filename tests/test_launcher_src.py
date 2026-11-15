@@ -185,13 +185,30 @@ class ResourceScript(unittest.TestCase):
         line = next(l.strip() for l in read(LICENSE).splitlines() if l.startswith("Copyright"))
         self.assertEqual(self.value("LegalCopyright"), line)
 
-    def test_no_icon_and_the_manifest(self):
-        self.assertNotRegex(self.rc, r"\bICON\b")
-        self.assertNotRegex(self.rc, r"\.ico\b")
+    def test_the_icon_and_the_manifest(self):
+        # S65: our own icon since 0.2.14 (P11 kept 0.1 without one)
         self.assertRegex(self.rc, r'(?m)^1 24 "app\.manifest"$')
+        self.assertRegex(self.rc, r'(?m)^1 ICON "app\.ico"$')
+        self.assertEqual(len(re.findall(r"\bICON\b", self.rc)), 1)
 
-    def test_no_icon_file_in_the_folder(self):
-        self.assertEqual(sorted(os.listdir(SRC)), ["app.manifest", "app.rc", "launcher.cpp"])
+    def test_the_files_in_the_folder(self):
+        self.assertEqual(sorted(os.listdir(SRC)), ["app.ico", "app.manifest", "app.rc", "launcher.cpp"])
+
+    def test_the_icon_holds_eight_sizes_as_png(self):
+        with open(os.path.join(SRC, "app.ico"), "rb") as f:
+            data = f.read()
+        reserved, kind, count = struct.unpack("<HHH", data[:6])
+        self.assertEqual((reserved, kind, count), (0, 1, 8))
+        sizes = []
+        for i in range(count):
+            w, h, _c, _r, planes, bits, size, off = struct.unpack("<BBBBHHII", data[6 + 16 * i:22 + 16 * i])
+            png = data[off:off + size]
+            self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+            pw, ph = struct.unpack(">II", png[16:24])
+            self.assertEqual((pw, ph), ((w or 256), (h or 256)))
+            self.assertEqual((planes, bits), (1, 32))
+            sizes.append(pw)
+        self.assertEqual(sorted(sizes), [16, 20, 24, 32, 48, 64, 128, 256])
 
 
 def build_md_commands() -> list[list[str]]:
@@ -242,7 +259,7 @@ class Build(unittest.TestCase):
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.dir = cls._tmp.name
-        for name in ("launcher.cpp", "app.rc", "app.manifest"):
+        for name in ("launcher.cpp", "app.rc", "app.manifest", "app.ico"):
             shutil.copy(os.path.join(SRC, name), cls.dir)
         cls.exe = os.path.join(cls.dir, "DataPiler.exe")
         for cmd in build_md_commands():
@@ -265,6 +282,14 @@ class Build(unittest.TestCase):
             data = f.read()
         self.assertIn(("%d.%d.%d.%d" % version4()).encode("utf-16-le"), data)
         self.assertIn(b'level="asInvoker"', data)
+
+    def test_the_icon_is_inside(self):
+        with open(self.exe, "rb") as f:
+            data = f.read()
+        with open(os.path.join(SRC, "app.ico"), "rb") as f:
+            ico = f.read()
+        size, off = struct.unpack("<II", ico[14:22])          # the first image, 256 px
+        self.assertIn(ico[off:off + size], data)
 
     def test_the_same_bytes_twice(self):
         again = os.path.join(self.dir, "again.exe")

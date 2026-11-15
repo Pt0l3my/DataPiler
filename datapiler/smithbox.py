@@ -59,6 +59,31 @@ def startup_json() -> Path | None:
     return Path(base) / "Smithbox" / "Configuration" / "Startup.json"
 
 
+# DP19 (the owner's request, 2026-11-14): before a map job, two of Smithbox's preferences are read from its
+# Configuration.json, read only, and nothing else of it is kept or logged (it also holds folders of the owner's).
+PREFS_MAX = 8 * 1024 * 1024
+MAP_PREFS = {"rendering": "Viewport_Enable_Rendering", "skip_havok": "MapEditor_SkipHavokLoad"}
+
+
+def map_prefs(startup: Path | None = None) -> dict[str, bool | None] | None:
+    """{"rendering": ..., "skip_havok": ...} from Configuration.json beside Startup.json, each a bool or None when
+    missing; None when the file cannot be read. As Smithbox last saved them: it saves them when it closes (CFG.cs,
+    Smithbox.cs at 2.2.6), so a change made since may not show yet. Only the two values leave this function."""
+    path = startup if startup is not None else startup_json()
+    if path is None:
+        return None
+    try:
+        data = fileio.read_limited(Path(path).parent / "Configuration.json", PREFS_MAX)
+        doc = json.loads(data.decode("utf-8-sig"))
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    out = {k: (doc.get(v) if isinstance(doc.get(v), bool) else None) for k, v in MAP_PREFS.items()}
+    del doc, data
+    return out
+
+
 def _find(doc: object, depth: int = 0) -> object:
     if isinstance(doc, dict):
         if SWITCH_KEY in doc:

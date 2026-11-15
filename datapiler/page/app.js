@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 const JOB_MAX = 256 * 1024;
-const TABS = ["status", "extract", "imported", "jobs", "outputs", "terminal", "settings"];
+const TABS = ["status", "extract", "imported", "jobs", "outputs", "deleted", "terminal", "settings"];
 const SOURCES = ["app", "page", "smithbox", "link", "extract", "job", "guard", "textdb", "env", "update", "folders"];
 const ROW_UNIT = { rows: "rows", maps: "maps", entries: "entries" };
 
@@ -15,6 +15,7 @@ let ST = null, CAT = null, GONE = false, FAILS = 0, TAB = "status", HOLD = false
 let OUT_REV = -1, VIEW = null, SETTINGS = null;
 let PICK = new Set(), BUNDLE = null, LAST_ROWS = [];
 let JOBS_KEY = "", ROWS_KEY = "", CARDS_KEY = "";
+let DRAG = null, DROPLINE = null, REFOCUS = null;   // S74: the job card being dragged, the drop marker, the grip to refocus
 const TERM = { last: 0, lines: [], paused: false, level: "INFO", srcs: new Set() };
 
 function api(path, body) {
@@ -123,6 +124,46 @@ function overlay(title, opts) {
   setTimeout(() => { if (open && !box.contains(document.activeElement)) first().focus(); }, 0);
   return handle;
 }
+// DP22: the pop-up of a removal and of the Deleted bin, in the one overlay. ask is the API's {title, text, word,
+// button}: with word DELETE it holds a text box, and its button stays disabled until DELETE is typed in. Resolves with
+// the confirmation to send, or null when it is closed without one.
+function askRemove(ask) {
+  return new Promise((resolve) => {
+    let answer = null;
+    const h = overlay(ask.title || "Are you sure?", { onClose: () => resolve(answer) });
+    add(h.body, el("div", null, ask.text));
+    const typed = ask.word === "DELETE";
+    const go = el("button", "pri", ask.button || "Move to the Deleted bin");
+    let box = null;
+    if (typed) {
+      box = el("input", "typed");
+      box.type = "text"; box.spellcheck = false; box.autocomplete = "off"; box.placeholder = "DELETE";
+      box.setAttribute("aria-label", "Type DELETE to go on");
+      add(h.body, add(el("div", "typedrow"), el("span", "mute", "Type DELETE to go on:"), box));
+      go.disabled = true;
+      box.addEventListener("input", () => { go.disabled = box.value !== "DELETE"; });
+      // Enter goes on; its default is stopped, or it would press the button that gets the focus back as it closes
+      box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!go.disabled) go.click(); } });
+    }
+    const no = el("button", null, "Cancel");
+    no.addEventListener("click", () => h.close());
+    go.addEventListener("click", () => { if (go.disabled) return; answer = typed ? box.value : ask.word; h.close(); });
+    add(h.foot, no, go);
+  });
+}
+// Posts the request; while the API asks for a confirmation (DP22), shows the pop-up and posts it again with the answer.
+// Resolves with the API's last answer, or {ok: false, cancelled: true} when the pop-up was closed; an answer to a
+// confirmed request carries what was typed in as `confirmed`, for a request that has to be sent again.
+function confirmed(path, body) {
+  return api(path, body).then((r) => {
+    if (!r || r.ok || !r.ask || !r.ask.word) return r;
+    return askRemove(r.ask).then((c) => c == null ? { ok: false, cancelled: true }
+      : confirmed(path, Object.assign({}, body, { confirm: c })).then((x) => {
+        if (x && typeof x === "object" && x.confirmed == null) x.confirmed = c;
+        return x;
+      }));
+  });
+}
 // While on, poll()'s failures never show "DataPiler has stopped" (an update's restart; until the page reloads), and
 // poll() and pollTerm() ask nothing: the app is down or about to be, and only the Update... pop-up's probe asks.
 function holdHeartbeat(on) { HOLD = !!on; if (HOLD) FAILS = 0; }
@@ -135,6 +176,7 @@ function showTab(t) {
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("on", s.id === "t-" + t));
   if (t === "outputs") loadOutputs();
   if (t === "imported") loadImported();
+  if (t === "deleted") loadBin();
   if (t === "settings") loadSettings();
   if (t === "terminal") { paintTerm(); scrollEnd(); }
 }
@@ -153,7 +195,7 @@ function pill(id, kind, value) {
   e.textContent = "● " + p[1];
 }
 function paintTop(s) {
-  $("ver").textContent = String(s.version || "").split(".").slice(0, 2).join(".");
+  $("ver").textContent = String(s.version || "");          // the full version, 0.2.8 not 0.2 (S56)
   pill("pSmithbox", "smithbox", s.pills.smithbox);
   pill("pGame", "game", s.pills.game);
   pill("pLink", "link", s.pills.link);
@@ -356,24 +398,149 @@ function listCol(title, items) {
 }
 function opLine(o) {
   const parts = ["op " + o.n + " " + o.op + ": " + o.state];
-  if (o.of) parts.push(fmtN(o.done) + " of " + fmtN(o.of) + (o.unit ? " " + o.unit : ""));
+  if (o.of) parts.push(fmtN(o.done) + " of " + fmtN(o.of) + (o.unit ? " " + o.unit : "") + " (" + Math.floor(100 * o.done / o.of) + "%)");
   else if (o.done) parts.push(fmtN(o.done) + (o.unit ? " " + o.unit : ""));
-  if (o.secs != null) parts.push(Number(o.secs).toFixed(1) + " s");
+  if (o.secs != null) parts.push(o.secs >= 120 ? Math.floor(o.secs / 60) + " min " + Math.round(o.secs % 60) + " s" : Number(o.secs).toFixed(1) + " s");
+  if (o.state === "running" && o.of && o.done < o.of && o.done > 0 && o.secs > 0) {
+    const left = (o.of - o.done) * (o.secs / o.done);   // S52: a rough guess from the pace so far
+    parts.push("about " + (left >= 120 ? Math.round(left / 60) + " min" : Math.round(left) + " s") + " left");
+  }
   return el("div", null, parts.join(" · "));
 }
-function jobAct(j, what, confirm) {
-  api("/api/jobs/act", { id: j.id, what: what, confirm_maps: confirm == null ? null : confirm }).then((r) => {
-    if (r.ok) { poll(); return; }
-    if (r.ask && window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps);
+// S66: what a stopped run kept, which Resume job goes on from; none for a job that is running, queued or done.
+function keptOf(j) {
+  if (!j.result || !j.result.kept || ["failed", "cancelled", "stopped"].indexOf(j.state) < 0) return null;
+  return j.result.kept.maps > 0 ? j.result.kept : null;
+}
+function keptNote(k) {
+  let t = "Saved progress: " + fmtN(k.maps) + (k.of ? " of " + fmtN(k.of) : "") + " maps read and kept from the last run. ";
+  if (k.next) t += "Resume job picks up at map " + fmtN(k.next_n) + (k.of ? " of " + fmtN(k.of) : "") + " (" + k.next + ").";
+  else if (k.of && k.maps >= k.of) t += "Every map is read: Resume job goes on with the steps after them.";
+  else t += "Resume job goes on from there.";
+  return t;
+}
+function jobAct(j, what, confirm, word) {
+  const body = { id: j.id, what: what, confirm_maps: confirm == null ? null : confirm };
+  if (word) body.confirm = word;
+  // DP22: Remove asks in the page's pop-up (DELETE typed in when the job holds saved progress); the job goes to the bin.
+  // A run that would move saved map progress to the bin (Start again; Resume job or Update data with progress of
+  // another version) asks for DELETE in the same pop-up: the API says when.
+  (what === "cancel" ? api("/api/jobs/act", body) : confirmed("/api/jobs/act", body)).then((r) => {
+    if (r.ok) { if (what === "remove") note("Moved to the Deleted bin: " + j.id + ".", true); poll(); return; }
+    if (r.cancelled) return;
+    if (r.ask && !r.ask.word) { if (window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps, r.confirmed || word); return; }
+    if (r.error) note(r.error);
   }).catch((e) => note(e.message));
 }
+// DP23: a job's kept versions, any two compared (local only: nothing of it reaches a share file)
+const IDS_SHOWN = 60;
+function idList(ids) {
+  if (!ids || !ids.length) return null;
+  const t = ids.slice(0, IDS_SHOWN).map((x) => typeof x === "number" ? String(x) : x).join(", ");
+  return t + (ids.length > IDS_SHOWN ? " and " + fmtN(ids.length - IDS_SHOWN) + " more" : "");
+}
+function paintReport(box, rep) {
+  clear(box);
+  add(box, el("div", "mute", "From " + rep.from.label + " to " + rep.to.label + ". Ids are row ids for params and map ids for maps; the report is local only."));
+  (rep.tables || []).forEach((t) => {
+    const d = el("div", "vtable");
+    add(d, el("div", null, t.line));
+    [["Added", t.added], ["Changed", t.changed], ["Removed", t.removed], ["Not read", t.not_read]].forEach((x) => {
+      const ids = idList(x[1]);
+      if (ids) add(d, el("div", "mono mute", x[0] + ": " + ids));
+    });
+    add(box, d);
+  });
+  if (!(rep.tables || []).length) add(box, el("div", "mute", "Neither version kept a read of this job."));
+}
+function openCompare(j) {
+  api("/api/versions?job=" + encodeURIComponent(j.id)).then((r) => {
+    const vs = r.versions || [];
+    const h = overlay("Compare versions: " + j.id, { wide: true });
+    if (vs.length < 2) { add(h.body, el("div", "mute", "This job has kept reads of one version so far: run it on another to compare.")); return; }
+    const pick = (at) => {
+      const s = el("select");
+      vs.forEach((v, k) => { const o = el("option", null, v.label + " - since " + v.since); o.value = v.id; if (k === at) o.selected = true; add(s, o); });
+      return s;
+    };
+    const a = pick(vs.length - 2), b = pick(vs.length - 1), out = el("div", "vreport");
+    const go = el("button", "pri", "Compare");
+    go.addEventListener("click", () => {
+      if (a.value === b.value) { clear(out); add(out, el("div", "mute", "Pick two different versions.")); return; }
+      api("/api/versions/compare?job=" + encodeURIComponent(j.id) + "&a=" + encodeURIComponent(a.value) + "&b=" + encodeURIComponent(b.value))
+        .then((rep) => paintReport(out, rep)).catch((e) => { clear(out); add(out, el("div", "bad", e.message)); });
+    });
+    add(h.body, add(el("div", "vpick"), el("span", "mute", "From"), a, el("span", "mute", "to"), b, go), out);
+    const close = el("button", null, "Close");
+    close.addEventListener("click", () => h.close());
+    add(h.foot, close);
+    go.click();
+  }).catch((e) => note(e.message));
+}
+// S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
+function foldKey(j) { return String(j.sha256 || j.id || ""); }
+function folded() { try { return new Set(JSON.parse(store.get("dp.jobs.folded") || "[]")); } catch (e) { return new Set(); } }
+function setFolded(key, on) {
+  const s = folded();
+  if (on) s.add(key); else s.delete(key);
+  store.set("dp.jobs.folded", JSON.stringify([...s].slice(-200)));
+}
+// S54: where the job is, as a step of its ops and a share of the whole, for every state that has ops.
+function jobProgress(j) {
+  const ops = j.ops || [];
+  if (!ops.length || ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped"].indexOf(j.state) < 0) return null;
+  const n = ops.length;
+  const done = ops.filter((o) => o.state === "done").length;
+  const cur = ops.find((o) => o.state === "running" || o.state === "failed") || null;
+  let frac = done;
+  if (cur && cur.state === "running" && cur.of) frac += Math.min(1, cur.done / cur.of);
+  const pct = Math.floor(100 * frac / n);
+  if (j.state === "done") return "all " + n + " steps done (100%)";
+  if (cur) return "step " + (cur.n + 1) + " of " + n + " (" + cur.op + ") · " + pct + "%";
+  return done + " of " + n + " steps done · " + pct + "%";
+}
 function jobCard(j) {
-  const c = el("div", "jobcard");
+  const key = foldKey(j);
+  const c = el("div", "jobcard" + (folded().has(key) ? " folded" : ""));
+  c.dataset.jid = j.id;
   const head = el("div", "jhead");
+  // S74: drag the grip to move the card above, below or between others; or focus it and use the arrow keys
+  const grip = el("button", "jgrip", "⠿");
+  grip.title = "Drag to move this job up or down; or focus it and press the up or down arrow";
+  grip.setAttribute("aria-label", "Move the job " + (j.title || j.id) + ": drag, or use the up and down arrows");
+  grip.addEventListener("mousedown", () => { c.draggable = true; });
+  grip.addEventListener("mouseup", () => { if (!DRAG) c.draggable = false; });
+  grip.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); moveJob(j.id, e.key === "ArrowUp" ? -1 : 1); }
+  });
+  c.addEventListener("dragstart", (e) => {
+    DRAG = j.id;
+    c.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", j.id);
+  });
+  c.addEventListener("dragend", () => {
+    c.draggable = false;
+    c.classList.remove("dragging");
+    showDrop(null);
+    if (DRAG) { DRAG = null; JOBS_KEY = ""; if (ST) paintJobs(ST); }
+  });
+  add(head, grip);
+  const fold = el("button", "fold", folded().has(key) ? "▸" : "▾");
+  fold.title = "Fold or unfold this job";
+  fold.addEventListener("click", () => {
+    const on = !c.classList.contains("folded");
+    c.classList.toggle("folded", on);
+    fold.textContent = on ? "▸" : "▾";
+    setFolded(key, on);
+  });
+  add(head, fold);
   add(head, el("b", null, j.title || j.id || "a job file"));
   if (j.id) add(head, el("span", "pill mute", j.id));
   if (j.format) add(head, el("span", "pill mute", j.format));
   add(head, jobPill(j));
+  const prog = jobProgress(j);
+  if (prog) add(head, el("span", "jprog", prog));
   if (j.sha256) add(head, el("span", "mono mute", "sha256 " + short(j.sha256)));
   add(c, head);
   if (j.preview && j.state !== "refused") {
@@ -401,31 +568,110 @@ function jobCard(j) {
       show.addEventListener("click", () => { showTab("outputs"); openShare(sh.name); });
       add(res, add(line, show));
     }
-    if (j.result.local && j.result.local.length) add(res, el("div", null, "Workspace: " + j.result.local.join(", ")));
+    if (j.result.local && j.result.local.length) {
+      // S76: the job's own workspace folder, where its files and images are
+      const row = el("div", "jlocal");
+      add(row, el("span", null, "Workspace: " + j.result.local.join(", ")));
+      const ob = el("button", "sm", "Open folder");
+      ob.title = "Open this job's folder in the workspace (Windows)";
+      ob.addEventListener("click", () => api("/api/open", { area: "job", job: j.id }).then((r) => { if (!r.ok) note(r.error || "Not opened."); }).catch((e) => note(e.message)));
+      add(row, ob);
+      add(res, row);
+    }
     if (j.result.failed) {
       const f = j.result.failed;
       let t = "Failed at op " + f.op + ": " + f.why;
       if (f.check != null) t += " (check " + f.check + (f.where ? " at " + f.where : "") + ")";
       add(res, el("div", "bad", t));
     }
+    if (keptOf(j)) add(res, el("div", "kept", keptNote(keptOf(j))));
+    // DP23: what changed since the last version, and where the change report is kept
+    const ch = j.result.changes;
+    if (ch) {
+      const d = el("div", "changes");
+      add(d, el("div", null, "Changes since " + ch.from + ":"));
+      (ch.lines || []).forEach((t) => add(d, el("div", null, t)));
+      if (ch.report) add(d, el("div", "mute", "Change report (workspace, local only): " + ch.report));
+      add(res, d);
+    }
     add(c, res);
   }
+  if (j.update) add(c, el("div", "update", j.update.text + ". Update data reads the data again and compares it with the last run's."));
   const act = el("div", "actions");
   const canStart = ["checked", "cancelled", "stopped", "failed", "done"].indexOf(j.state) >= 0;
   const canCancel = ["queued", "waiting", "running"].indexOf(j.state) >= 0;
-  if (canStart) { const b = el("button", "pri", j.state === "checked" ? "Start" : "Start again"); b.addEventListener("click", () => jobAct(j, "start")); add(act, b); }
+  const kept = keptOf(j);
+  if (canStart && j.update) { const b = el("button", kept ? null : "pri", "Update data"); b.addEventListener("click", () => jobAct(j, "update")); add(act, b); }
+  if (canStart && kept) { const b = el("button", "pri", "Resume job"); b.addEventListener("click", () => jobAct(j, "resume")); add(act, b); }
+  if (canStart) {
+    const b = el("button", kept || j.update ? null : "pri", j.state === "checked" ? "Start" : "Start again");
+    b.addEventListener("click", () => {
+      // S66: starting again from the beginning is asked first. With saved progress, which it moves to the Deleted
+      // bin, the API asks instead, in the page's pop-up with DELETE typed in (the owner's rule of 2026-11-14).
+      if (j.state !== "checked" && !kept && !window.confirm("Start this job again from the beginning?")) return;
+      jobAct(j, "start");
+    });
+    add(act, b);
+  }
+  if (j.versions >= 2) { const b = el("button", null, "Compare versions…"); b.addEventListener("click", () => openCompare(j)); add(act, b); }
   if (canCancel) { const b = el("button", null, "Cancel"); b.addEventListener("click", () => jobAct(j, "cancel")); add(act, b); }
   if (!canCancel) { const b = el("button", null, "Remove"); b.addEventListener("click", () => jobAct(j, "remove")); add(act, b); }
   add(c, act);
   return c;
 }
+function jobOrder(list) {
+  // S74: the owner's order (pos, first on top); cards added since it was set come first, newest first (S54)
+  return list.slice().sort((a, b) => {
+    const pa = a.pos == null ? -1 : a.pos, pb = b.pos == null ? -1 : b.pos;
+    if (pa === -1 && pb === -1) return (Number(b.added) || 0) - (Number(a.added) || 0);
+    if (pa === -1) return -1;
+    if (pb === -1) return 1;
+    return pa - pb;
+  });
+}
 function paintJobs(s) {
+  if (DRAG) return;                                          // never redrawn under a drag
   const key = JSON.stringify(s.jobs);
   if (key === JOBS_KEY) return;
   JOBS_KEY = key;
   const box = clear($("jobs"));
   if (!s.jobs.length) { add(box, el("div", "mute", "No job files yet.")); return; }
-  s.jobs.forEach((j) => add(box, jobCard(j)));
+  jobOrder(s.jobs).forEach((j) => add(box, jobCard(j)));
+  if (REFOCUS) {
+    const g = box.querySelector('.jobcard[data-jid="' + CSS.escape(REFOCUS) + '"] .jgrip');
+    REFOCUS = null;
+    if (g) g.focus();
+  }
+}
+function cardIds() { return Array.prototype.map.call($("jobs").querySelectorAll(".jobcard"), (c) => c.dataset.jid); }
+function saveOrder(ids) {
+  // shown at once; the server keeps it in jobs/order.json
+  if (ST) { ST.jobs.forEach((j) => { j.pos = ids.indexOf(j.id); }); JOBS_KEY = ""; paintJobs(ST); }
+  api("/api/jobs/order", { ids: ids }).then((r) => {
+    if (!r.ok) note(r.error || "The order was not saved.");
+  }).catch((e) => { note(e.message); JOBS_KEY = ""; poll(); });
+}
+function moveJob(id, by) {
+  const ids = cardIds(), k = ids.indexOf(id), to = k + by;
+  if (k < 0 || to < 0 || to >= ids.length) return;
+  ids.splice(k, 1); ids.splice(to, 0, id);
+  REFOCUS = id;
+  saveOrder(ids);
+}
+function dropAt(y) {
+  // before the first card whose middle is below the pointer, or after the last
+  const cards = Array.prototype.slice.call($("jobs").querySelectorAll(".jobcard"));
+  for (let k = 0; k < cards.length; k++) {
+    const r = cards[k].getBoundingClientRect();
+    if (y < r.top + r.height / 2) return { index: k, card: cards[k], before: true };
+  }
+  return { index: cards.length, card: cards[cards.length - 1], before: false };
+}
+function showDrop(t) {
+  if (!DROPLINE) DROPLINE = el("div", "dropline");
+  if (!t || !t.card) { DROPLINE.remove(); return; }
+  if (t.before) t.card.parentNode.insertBefore(DROPLINE, t.card);
+  else t.card.parentNode.insertBefore(DROPLINE, t.card.nextSibling);
 }
 function addFiles(files) {
   Array.prototype.forEach.call(files, (f) => {
@@ -452,7 +698,23 @@ function fileItem(f, area) {
   if (f.made_by) add(li, el("span", "pill mute", f.made_by));
   if (area === "share" && f.ok === false) add(li, el("span", "pill err", "fails check " + f.failed));
   if (area === "share") { const b = el("button", "sm", "Show"); b.addEventListener("click", () => openShare(f.name)); add(li, b); }
+  // DP22: a share file, and what jobs, Extract and the guided import wrote in the workspace, go to the Deleted bin
+  if (area === "share" || /^(local|imported)\//.test(f.name)) {
+    const d = el("button", "sm", "Delete…");
+    d.title = "Move it to the Deleted bin, once you type DELETE; Restore there puts it back";
+    d.addEventListener("click", () => removeOutput(area, f.name));
+    add(li, d);
+  }
   return li;
+}
+function removeOutput(area, name) {
+  confirmed("/api/outputs/remove", { area: area, name: name }).then((r) => {
+    if (r.cancelled) return;
+    if (!r.ok) { note(r.error || "Not moved to the Deleted bin."); return; }
+    note("Moved to the Deleted bin: " + name + ".", true);
+    if (VIEW === name) { VIEW = null; $("viewer").hidden = true; $("copyPath").disabled = true; }
+    loadOutputs();
+  }).catch((e) => note(e.message));
 }
 function loadImported() {
   return api("/api/imported").then((r) => {
@@ -467,9 +729,10 @@ function loadImported() {
       [c.container, lang, fmtN(c.wrappers), fmtN(c.entries), fmtN(c.skipped), holds || "-", c.imported].forEach((v) => add(tr, el("td", null, String(v))));
       const b = el("button", null, "Remove");
       b.addEventListener("click", () => {
-        if (!window.confirm("Remove the import " + c.container + " (" + c.language + ") from the text database? Jobs stop using its texts until you import it again.")) return;
-        api("/api/imported/remove", { container: c.container, language: c.language }).then((x) => {
-          if (!x.ok) note(x.error || "Not removed"); else { note("Removed " + c.container, true); loadImported(); }
+        // DP22: the import goes to the Deleted bin, once DELETE is typed in the pop-up the API asks for
+        confirmed("/api/imported/remove", { container: c.container, language: c.language }).then((x) => {
+          if (x.cancelled) return;
+          if (!x.ok) note(x.error || "Not removed"); else { note("Moved to the Deleted bin: " + c.container + " (" + c.language + ").", true); loadImported(); }
         }).catch((e) => note(e.message));
       });
       add(tr, add(el("td"), b));
@@ -491,6 +754,51 @@ function loadOutputs() {
     $("shareBad").hidden = !bad.length;
     if (VIEW && !o.share.some((f) => f.name === VIEW)) { VIEW = null; $("viewer").hidden = true; $("copyPath").disabled = true; }
   }).catch(() => {});
+}
+// ---- the Deleted bin (DP22): what a removal moved out, until it is erased
+function loadBin() {
+  return api("/api/bin").then((r) => {
+    const items = r.items || [];
+    $("binSum").textContent = items.length ? items.length + (items.length === 1 ? " item, " : " items, ") + fmtSize(r.size) + "." : "The bin is empty.";
+    const tb = clear($("binRows"));
+    items.forEach((it) => {
+      const tr = el("tr");
+      [it.what, it.name, it.from, it.when, fmtSize(it.size)].forEach((v, k) => add(tr, el("td", k === 1 || k === 2 ? "mono" : null, String(v))));
+      const rs = el("button", "sm", "Restore");
+      rs.title = "Put it back where it came from";
+      rs.addEventListener("click", () => binRestore(it));
+      const er = el("button", "sm", "Erase…");
+      er.title = "Erase it for good, once you type DELETE";
+      er.addEventListener("click", () => binErase(it));
+      add(tr, add(el("td", "acts"), rs, " ", er));
+      add(tb, tr);
+    });
+    if (!items.length) add(tb, add(el("tr"), el("td", "mute", "Nothing here.")));
+    $("binEmpty").disabled = !items.length;
+  }).catch(() => {});
+}
+function binRestore(it) {
+  api("/api/bin/restore", { id: it.id }).then((r) => {
+    if (!r.ok) { note(r.error || "Not restored."); return; }
+    note("Restored: " + it.name + ".", true);
+    loadBin(); poll();
+  }).catch((e) => note(e.message));
+}
+function binErase(it) {
+  confirmed("/api/bin/erase", { id: it.id }).then((r) => {
+    if (r.cancelled) return;
+    if (!r.ok) { note(r.error || "Not erased."); return; }
+    note("Erased for good: " + it.name + ".", true);
+    loadBin();
+  }).catch((e) => note(e.message));
+}
+function binEmpty() {
+  confirmed("/api/bin/empty", {}).then((r) => {
+    if (r.cancelled) return;
+    if (!r.ok) { note(r.error || "The bin was not emptied."); return; }
+    note("The Deleted bin is empty: " + r.erased + (r.erased === 1 ? " item" : " items") + " erased for good.", true);
+    loadBin();
+  }).catch((e) => note(e.message));
 }
 function openShare(name) {
   api("/api/share?name=" + encodeURIComponent(name)).then((v) => {
@@ -559,8 +867,11 @@ function copyForSharing() {
   const levels = Object.keys(LV).filter((k) => LV[k] >= LV[TERM.level]);
   const sources = TERM.srcs.size ? [...TERM.srcs] : SOURCES.slice();
   api("/api/log/share", { after: vis[0].seq - 1, upto: vis[vis.length - 1].seq, levels: levels, sources: sources }).then((r) => {
-    if (r.ok) copyText(r.text, "The lines, checked for sharing,");
-    else note("Not copied: line " + r.refused.line + " fails check " + r.refused.check + (r.refused.check === 3 ? " (a text the text database holds)" : " (a path, a name or an address)") + ".");
+    if (!r.ok) { note("Not copied."); return; }
+    const lo = r.left_out || {}, n3 = lo["3"] || 0, n4 = lo["4"] || 0;
+    if (!r.text) { note("Not copied: every line fails a check (" + (n3 ? n3 + " a name the text database holds" : "") + (n3 && n4 ? ", " : "") + (n4 ? n4 + " a path, a name or an address" : "") + ")."); return; }
+    copyText(r.text, "The lines, checked for sharing,");
+    if (n3 || n4) note("Left out: " + (n3 ? n3 + (n3 === 1 ? " line" : " lines") + " holding a name the text database holds" : "") + (n3 && n4 ? "; " : "") + (n4 ? n4 + (n4 === 1 ? " line" : " lines") + " holding a path, a name or an address" : "") + ".");
   }).catch((e) => note(e.message));
 }
 
@@ -616,6 +927,9 @@ function saveSettings() {
 
 // ---- polling and the heartbeat: three failures in a row show "DataPiler has stopped"
 function gone() { GONE = true; $("gone").classList.add("on"); }
+// Quit closes the tab too (S50). A browser closes a tab its script did not open only while the tab has a single page
+// in its history, as the one the launcher opens does; where it refuses, the tab says DataPiler has stopped.
+function closeTab() { setTimeout(() => { try { window.close(); } catch (e) { /* the browser refused */ } }, 400); }
 function poll() {
   if (GONE || HOLD) return Promise.resolve();
   return api("/api/state").then((s) => {
@@ -625,7 +939,12 @@ function poll() {
     paintStatus(s);
     paintExtract(s);
     paintJobs(s);
-    if (s.outputs_rev !== OUT_REV) { OUT_REV = s.outputs_rev; if (TAB === "outputs") loadOutputs(); if (TAB === "imported") loadImported(); }
+    if (s.outputs_rev !== OUT_REV) {
+      OUT_REV = s.outputs_rev;
+      if (TAB === "outputs") loadOutputs();
+      if (TAB === "imported") loadImported();
+      if (TAB === "deleted") loadBin();
+    }
     if (TAB === "settings") paintSession(s.session);
     if (!CAT) loadCatalogue();
   }).catch(() => { FAILS += 1; if (FAILS >= 3 && !HOLD) gone(); });
@@ -636,7 +955,7 @@ $("tabs").addEventListener("click", (e) => { const b = e.target.closest("button[
 $("quit").addEventListener("click", () => {
   if (!window.confirm("Quit DataPiler? Its page and its window close.")) return;
   const quit = (cancel) => api("/api/quit", { cancel_running: cancel }).then((r) => {
-    if (r.ok) { gone(); return; }
+    if (r.ok) { gone(); closeTab(); return; }
     if (r.ask && window.confirm(r.ask.text)) quit(true);
   }).catch((e) => note(e.message));
   quit(false);
@@ -644,6 +963,28 @@ $("quit").addEventListener("click", () => {
 $("run").addEventListener("click", () => runRows([...PICK], $("loadMaps").checked, null));
 $("cancel").addEventListener("click", () => api("/api/extract/cancel", {}).then(poll).catch((e) => note(e.message)));
 $("pick").addEventListener("click", (e) => { e.stopPropagation(); $("file").click(); });
+$("jobs").addEventListener("dragover", (e) => {
+  if (!DRAG) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  showDrop(dropAt(e.clientY));
+});
+$("jobs").addEventListener("drop", (e) => {
+  if (!DRAG) return;
+  e.preventDefault();
+  const t = dropAt(e.clientY), ids = cardIds(), id = DRAG, from = ids.indexOf(id);
+  showDrop(null);
+  DRAG = null;
+  if (from < 0) return;
+  let at = t.index;
+  if (from < at) at -= 1;
+  if (at === from) { JOBS_KEY = ""; if (ST) paintJobs(ST); return; }
+  ids.splice(from, 1); ids.splice(at, 0, id);
+  saveOrder(ids);
+});
+$("jobs").addEventListener("dragleave", (e) => { if (!$("jobs").contains(e.relatedTarget)) showDrop(null); });
+$("foldAll").addEventListener("click", () => { if (ST) { ST.jobs.forEach((j) => setFolded(foldKey(j), true)); JOBS_KEY = ""; paintJobs(ST); } });
+$("unfoldAll").addEventListener("click", () => { if (ST) { ST.jobs.forEach((j) => setFolded(foldKey(j), false)); JOBS_KEY = ""; paintJobs(ST); } });
 $("drop").addEventListener("click", () => $("file").click());
 $("file").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
 ["dragenter", "dragover"].forEach((t) => $("drop").addEventListener(t, (e) => { e.preventDefault(); $("drop").classList.add("over"); }));
@@ -653,6 +994,7 @@ window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", (e) => e.preventDefault());
 $("openWork").addEventListener("click", () => api("/api/open", { area: "workspace" }).then((r) => { if (!r.ok) note(r.error); }).catch((e) => note(e.message)));
 $("openShare").addEventListener("click", () => api("/api/open", { area: "share" }).then((r) => { if (!r.ok) note(r.error); }).catch((e) => note(e.message)));
+$("binEmpty").addEventListener("click", binEmpty);
 $("copyPath").addEventListener("click", () => {
   if (!VIEW) return;
   api("/api/copy-path", { name: VIEW }).then((r) => { if (r.ok) note("The file's path is on the clipboard.", true); else note(r.error); }).catch((e) => note(e.message));

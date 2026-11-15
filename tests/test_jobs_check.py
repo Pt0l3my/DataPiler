@@ -12,7 +12,7 @@ from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
-OPS_LIST = "fetch_rows, load_maps, read_placements, join_names, filter, count, distinct, write_local, write_share"
+OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview"
 
 # Each bad fixture gives exactly one refusal: (where, text).
 EXPECTED = {
@@ -220,7 +220,7 @@ class LineageTest(unittest.TestCase):
 
     def test_ids_rules(self):
         self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc"}, share("f")])[0],
-                         ("ops[1]", "a filter needs `where`, `ids` or both"))
+                         ("ops[1]", "a filter needs `where`, `ids`, `slots` or more than one"))
         self.assertEqual(self.refused_at([NPC, {"op": "filter", "as": "f", "rows": "npc", "key": "id",
                                                 "where": {"teamType": 1}},
                                           {"op": "count", "as": "c", "rows": "f"}, share("c", cols={"c": ["count"]})]),
@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.3", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.30", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -444,3 +444,122 @@ class RefusedCardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BossOpsTest(unittest.TestCase):
+    """0.2.3: unused_names (S47), map families (S45) and boss slots (S46)."""
+
+    def refused_at(self, ops: list) -> list:
+        return [(r.where, r.text) for r in refusals(job(ops))]
+
+    def test_unused_names_is_narrowed_and_shareable(self):
+        un = {"op": "unused_names", "as": "un", "rows": "npc", "key": "nameId", "text": "character_names"}
+        j = check(job([NPC, un, share("un", cols={"un": ["nameId", "layer"]})]))
+        self.assertEqual(j.lineage["un"].kind, "narrowed")
+        self.assertEqual(jobs.columns_of(j)["un"], list(jobs.UNUSED_COLUMNS))
+        self.assertEqual(self.refused_at([NPC, dict(un, text="weapon_names"), share("un", cols={"un": ["nameId"]})])[0][0],
+                         "ops[1].text")
+        self.assertEqual(self.refused_at([NPC, dict(un, key="nope"), share("un", cols={"un": ["nameId"]})])[0][0],
+                         "ops[1].key")
+
+    def test_map_families(self):
+        j = check(job([{"op": "load_maps", "maps": ["m10_*", "m11_00_00_00"]},
+                       {"op": "read_placements", "as": "placed", "maps": ["m10_*"]},
+                       {"op": "count", "as": "c", "rows": "placed"}, share("c", cols={"c": ["count"]})]))
+        self.assertEqual((j.maps, j.map_families), (1, ("m10_*",)))
+        self.assertEqual(jobs.preview(j)["reads"][0],
+                         "loads the maps of m10_* and 1 map in Smithbox - its view changes, not its data")
+        for bad in ("m1_*", "m10*", "m10_00_*", "*"):
+            self.assertEqual(self.refused_at([{"op": "load_maps", "maps": [bad]}])[0][0], "ops[0].maps[0]")
+
+    def test_boss_slots(self):
+        slots = {"op": "filter", "as": "b", "rows": "placed", "slots": "boss"}
+        j = check(job([PLACED, slots, share("b", cols={"b": ["map", "entityId", "npcParamId"]})]))
+        self.assertEqual(j.lineage["b"].kind, "narrowed")
+        self.assertIn("boss slot", jobs.preview(j)["computes"][0])
+        self.assertEqual(self.refused_at([PLACED, dict(slots, slots="all"), share("b", cols={"b": ["map"]})])[0][0],
+                         "ops[1].slots")
+        self.assertEqual(self.refused_at([NPC, dict(slots, rows="npc"), share("b")])[0][0], "ops[1].slots")
+
+
+class CheckFieldsTest(unittest.TestCase):
+    """S67: check_fields names any field of a param DataPiler reads, never a value; its table may be shared."""
+
+    CHECK = {"op": "check_fields", "as": "fc", "param": "WorldMapPointParam", "fields": ["posX", "areaNo", "iconId"]}
+
+    def test_it_passes_and_its_table_may_be_shared(self):
+        doc = job([self.CHECK, {"op": "write_share", "name": "map-fields", "tables": ["fc"],
+                                "columns": {"fc": ["field", "present", "type"]}}])
+        j = check(doc)
+        self.assertEqual(j.lineage["fc"].kind, "aggregate")
+        self.assertTrue(j.uses_link)
+        self.assertEqual(jobs.columns_of(j)["fc"], [("field", "int"), ("present", "bool"), ("type", "int")])
+
+    def test_its_refusals(self):
+        bad = [dict(self.CHECK, param="ShopLineupParam"), dict(self.CHECK, fields=["pos X"]),
+               dict(self.CHECK, fields=["posX", "posX"]), dict(self.CHECK, fields=["f%d" % k for k in range(33)]),
+               dict(self.CHECK, fields=[])]
+        wheres = [[r.where for r in refusals(job([o]))] for o in bad]
+        self.assertEqual(wheres, [["ops[0].param"], ["ops[0].fields[0]"], ["ops[0].fields[1]"], ["ops[0].fields"],
+                                  ["ops[0].fields"]])
+
+    def test_fetch_rows_still_reads_only_the_listed_fields(self):
+        o = {"op": "fetch_rows", "as": "pts", "param": "WorldMapPointParam", "fields": ["id", "textEnableFlagId1"]}
+        self.assertEqual([r.where for r in refusals(job([o]))], ["ops[0].fields[1]"])
+        self.assertTrue(check(job([dict(o, fields=["id"])])).uses_link)
+
+
+class MapCoordsTest(unittest.TestCase):
+    """DP21 (S69): a map table's rows may be shared whole with the label `map_coords`; nothing else is."""
+
+    PTS = {"op": "fetch_rows", "as": "pts", "param": "WorldMapPointParam", "fields": ["id", "areaNo", "posX", "posZ"]}
+
+    def share(self, table: str, notes: list) -> dict:
+        return {"op": "write_share", "name": "map-coords", "tables": [table],
+                "columns": {table: ["areaNo"]}, "notes": notes}
+
+    def test_with_the_label(self):
+        check(job([self.PTS, self.share("pts", ["map_coords"])]))
+        flt = {"op": "filter", "as": "pts2", "rows": "pts", "where": {"areaNo": {"eq": 60}}}
+        check(job([self.PTS, flt, self.share("pts2", ["map_coords", "vanilla_rows"])]))
+
+    def test_without_it_or_for_other_tables(self):
+        self.assertEqual([r.where for r in refusals(job([self.PTS, self.share("pts", [])]))], ["ops[1].tables[0]"])
+        npc = dict(NPC, as_="x")
+        self.assertEqual([r.where for r in refusals(job([NPC, {"op": "write_share", "name": "map-coords",
+                                                               "tables": ["npc"], "columns": {"npc": ["teamType"]},
+                                                               "notes": ["map_coords"]}]))], ["ops[1].tables[0]"])
+        cnt = {"op": "distinct", "as": "areas", "rows": "pts", "by": ["areaNo"]}
+        self.assertEqual([r.where for r in refusals(job([self.PTS, cnt, self.share("areas", ["map_coords"])]))],
+                         ["ops[2].tables[0]"])
+
+    def test_the_verified_fields(self):
+        from datapiler import fields
+        self.assertEqual(len(fields.PARAMS["WorldMapPointParam"]), 33)
+        self.assertEqual(fields.PARAMS["WorldMapPieceParam"]["openTravelAreaLeft"], "number")
+        self.assertIn("textId", fields.REFERENCES["WorldMapPlaceNameParam"])
+        self.assertEqual(set(fields.MAP_PARAMS), {"BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam",
+                                                  "WorldMapPieceParam", "WorldMapLegacyConvParam", "MapNameTexParam",
+                                                  "MapNameTexParam_m61", "MapPieceTexParam", "MapPieceTexParam_m61",
+                                                  "MapGridCreateHeightLimitInfo"})
+
+
+class SameJobCheckTest(unittest.TestCase):
+    """DP24 (S72): fetch_rows may name a field DataPiler does not list yet when an earlier check_fields of the same
+    job names it for the same param."""
+
+    def test_after_a_check_of_the_same_param(self):
+        chk = {"op": "check_fields", "as": "fc", "param": "MapNameTexParam", "fields": ["srcR", "mapNameId"]}
+        rd = {"op": "fetch_rows", "as": "tex", "param": "MapNameTexParam", "fields": ["id", "srcR", "mapNameId"]}
+        j = check(job([chk, rd]))
+        self.assertIn("mapNameId", j.lineage["tex"].refs)      # an unlisted field counts as one holding ids
+        self.assertEqual(jobs.columns_of(j)["tex"], [("id", "int"), ("srcR", "number"), ("mapNameId", "number")])
+
+    def test_refused_without_one_or_for_another_param_or_after(self):
+        chk = {"op": "check_fields", "as": "fc", "param": "MapPieceTexParam", "fields": ["srcR"]}
+        rd = {"op": "fetch_rows", "as": "tex", "param": "MapNameTexParam", "fields": ["id", "srcR"]}
+        self.assertEqual([r.where for r in refusals(job([rd]))], ["ops[0].fields[1]"])
+        self.assertEqual([r.where for r in refusals(job([chk, rd]))], ["ops[1].fields[1]"])
+        chk2 = dict(chk, param="MapNameTexParam")
+        self.assertEqual([r.where for r in refusals(job([rd, chk2]))], ["ops[0].fields[1]"])
+

@@ -14,6 +14,16 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   button) and DP12 (folder detection and a picker), the last two asked of the PandorumLLM session. DP13 (design
   0002 adopted, with Smithbox found from its running process) and DP14 (masking paths on the page). DP15 (Smithbox
   seen by its process at all times).
+- **2026-11-09.** DP16 (an Imported tab).
+- **2026-11-14.** DP17 (the name numbers no row uses, shared whole) and DP18 (check 3 compares with the names only;
+  Copy for sharing leaves failing lines out). DP19 (two of Smithbox's preferences read before a map job). DP20
+  (map jobs on Smithbox's OpenGL build, a setting). DP21 (the map tables' coordinates in share files, for
+  research: decided the same day).
+- **2026-11-14.** DP22 (nothing collected is lost: a Deleted bin, confirmations) and DP23 (game updates: every
+  version's data kept, re-read and compare), both decided the same day, as recommended.
+- **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended. DP25 (exported textures
+  read anywhere in DataPiler's folder), the owner's request. DP26 (job cards in the owner's own order), the owner's
+  request. DP27 (an overview image made on the PC), the owner's choice.
 - **Open.** None.
 
 ## DP1
@@ -251,3 +261,227 @@ right away"
 **Owner's words.** "we could also add extracted data/entries that are available, because currently nothing let's the
 user know that for example item_dlc2 has been added and is available for jobs to work with. so we could add a imported
 containers tab."
+
+## DP17
+
+**Sharing the name numbers no row uses, beyond half the set** · *2026-11-14 · Decided by the owner, as recommended*
+
+**Question.** Job en-0006 found 269 of the 483 character-name entries named by no NpcParam row, 56% of the set. Bosses
+whose rows carry name 0 take their bar names from among them (EldenNet WHY§33, WHY§36), so the list is what EldenNet's
+boss bios bind by. Check 6 (DP8) refuses a share file whose tables carry more than half of their source, so the list
+cannot be shared whole. The list holds numbers only: which name numbers exist, and their layers, never a text.
+**Options:** (a) **an exception for this kind of list**: a table made by `unused_names` (numbers and layers only) is not
+held to the half, as it numbers names, not rows of a game table; (b) split it by layer into two jobs, each under half,
+which sidesteps the rule rather than settling it; (c) keep the rule: a counts-only job first, to see where the unused
+numbers cluster, then share only the cluster the bosses fall in, one or two more rounds. **Recommendation:** (a).
+
+**Decision.** (a). A table made by `unused_names`, and what is counted from it, holds numbers only and is not held to
+check 6's half (settled S48). Every other check stands, and no text of the set is ever shared.
+
+**Owner's words.** "Exception (Recommended)".
+
+## DP18
+
+**Check 3's scope, and Copy for sharing** · *2026-11-14 · Decided by the owner, as recommended*
+
+**Question.** Check 3 compares every shared string and shared log line with every text imported, and treats a string of
+four or more characters contained in a text, or containing one, as game text. Since the whole English item container
+is imported (21,532 entries, item descriptions included), ordinary words collide: en-0006's table name `unused` was
+refused, as some text contains the word, and Copy for sharing refused the whole log for one line (the install check's
+list of files). **Options:** (a) compare with the texts of the name sets DataPiler uses (the character and place
+names), the only texts it ever writes anywhere, and have Copy for sharing leave a failing line out, saying how many,
+instead of refusing the copy; (b) keep check 3 as it is and avoid common words in job tables and log lines; (c) (a)'s
+Copy for sharing change only. **Recommendation:** (a).
+
+**Decision.** (a). Check 3 compares with the texts of the name sets DataPiler uses (character and place names), the
+only texts it ever writes; Copy for sharing leaves a failing line out and says how many (settled S49).
+
+**Owner's words.** "Names only + skip lines (Recommended)".
+
+## DP19
+
+**Two of Smithbox's preferences, read before a map job** · *2026-11-14 · The owner's request*
+
+**Question.** None was put: the owner asked, after map jobs kept stalling, "would it be possible to double check if
+rendering is turned off for a map loader job, then make it 10 sec fail check?" DataPiler's research had ruled out ever
+reading Smithbox's `Configuration.json`, as it also holds folders of the owner's (`docs/design/smithbox-projects.md`).
+
+**Decision.** Before a map job DataPiler reads that file, read only, and keeps two values of it: Enable Model Rendering
+(`Viewport_Enable_Rendering`) and the skipping of Havok loading (`MapEditor_SkipHavokLoad`). Nothing else of it is kept,
+shown or logged. With rendering off the first map gets 10 s; with it on, 300 s and a warning to turn it off (settled
+S58, S59). As Smithbox saves its preferences when it closes, the log says they may lag a change made since.
+
+**Owner's words.** "would it be possible to double check if rendering is turned off for a map loader job, then make it
+10 sec fail check?"
+
+## DP20
+
+**Map jobs on Smithbox's OpenGL build** · *2026-11-14 · Decided by the owner, as recommended*
+
+**Question.** After en-0011's third run brought the graphics driver down (EldenNet WHY§51), the owner asked: "is it
+possible to add a setting to datapiler to disable GPU usage for these rendering based jobs?" DataPiler itself never
+uses the GPU; Smithbox does, and no program with a window can run without it. What can be chosen is which of
+Smithbox's two builds runs: by its source at 2.2.6 (`Universe.cs` `LoadMapAsync`), its Vulkan build prepares every
+loaded map's model and texture lists even with rendering off, and its OpenGL build (`Smithbox.OpenGL.exe`, in the
+owner's Smithbox folder) does not. DataPiler already sees which build is running. That the OpenGL build spares the
+graphics card in practice is not yet tried.
+
+**Options.**
+- (a) **A setting, on by default: map jobs run on Smithbox's OpenGL build only.** A map job waits while Smithbox runs as
+  its Vulkan build, and its card says to close Smithbox and start `Smithbox.OpenGL.exe`. No new power for DataPiler.
+- (b) **(a), plus a button that starts Smithbox's OpenGL build** from the Smithbox folder DataPiler knows, only while
+  Smithbox is not running. DataPiler would start a program for the first time; it would never close Smithbox, which
+  may hold unsaved work.
+- (c) **No setting**: the README's advice to use the OpenGL build for map jobs.
+
+**Recommendation.** (a): the setting the owner asked for, with nothing DataPiler does not do already; the next map job
+is then the trial, and the setting can be turned off if the OpenGL build disappoints. (b) only if starting Smithbox by
+hand is a bother.
+
+**Decision.** (a): a setting, on by default, that map jobs run on Smithbox's OpenGL build only; a map job waits while
+Smithbox runs as its Vulkan build and says how to switch. The next map job is the trial.
+
+**Owner's words.** "OpenGL-only setting (Recommended)".
+
+## DP21
+
+**The map tables' coordinates in share files** · *2026-11-14 · Decided by the owner*
+
+**Question.** For EldenNet's map (GraceUI proposal 0002; EldenNet roadmap S7.9.c), the research needs where the game
+puts things: the resting places, the map's points and place names, the pieces it reveals, and the table that carries
+the dungeons' own coordinates onto the open world. These are numbers in five param tables (`BonfireWarpParam`,
+`WorldMapPointParam`, `WorldMapPlaceNameParam`, `WorldMapPieceParam`, `WorldMapLegacyConvParam`): an area, a grid
+cell and a position for each row, and rectangles and scales for the pieces. DP8 lets a share file hold only rows a job
+picked by an explicit list of ids, the named rows, or counts, so whole tables of positions cannot go into one, and the
+row ids are not known beforehand. First 0.2.18's `check_fields` verifies which fields exist (S67), whatever is decided
+here.
+
+**Options.**
+- (a) **A narrow exception to DP8 for these five tables' coordinate columns**: area, grid and position numbers, the
+  pieces' rectangles and scales, and each row's id, for every row, in a share file marked by a new label (`map_coords`).
+  No text id, flag or other column. The file goes to the EldenNet research session only and is never committed;
+  what EldenNet commits from it is the method, the fitted conversion, counts and error figures.
+- (b) **No exception**: the coordinates stay on the owner's PC, and the conversion is fitted later in game by
+  EldenNet's spike, from the running game's own tables.
+- (c) **Counts only** now (rows per area and grid cell, which DP8 already allows), and the question again once the
+  spike has run.
+
+**Recommendation.** (a): the numbers are coordinates, not text or anything personal; without them the map's design
+cannot be checked before EldenNet runs in game, which is a long way off; and the rule that matters, that no raw table of
+the game's data is committed, holds. (b) keeps DP8 whole at the price of waiting; (c) is a partial step.
+
+**Decision.** (a), in the owner's wider terms: game data may be used for research and development; the care is for what
+is shipped or published online. DataPiler 0.2.20 (S69) lets a share file carry the five map tables' rows whole under
+the label `map_coords`; such a file comes to EldenNet's research session and is never committed, and what EldenNet
+commits from it stays numbers it derives (a fitted conversion, counts, error figures), never the tables. DP8 stays as
+it was for every other table.
+
+**Owner's words.** "what is this about, using game data for research and development is fine, we are just careful what
+we ship online."
+
+**Later changes.**
+- *2026-11-15.* The same rule covers five more map tables in 0.2.22 (S72): the areas' and save names' colour keys
+  (`MapNameTexParam`, `MapPieceTexParam` and their expansion twins) and `MapGridCreateHeightLimitInfo`, read for the
+  map's areas and its fit, on the owner's principle above.
+
+## DP22
+
+**Nothing collected is lost: confirmations and a Deleted bin** · *2026-11-14 · Decided by the owner, as recommended*
+
+**The owner's request.** "preserve jobs and collected data files (deleting should ask in pop up prompt, accidental
+deletion should be undone by restore feature, collected data also requires entering "DELETE" in text box in pop up
+message)."
+
+**Question.** Deleted jobs and collected data (share files, workspace files, imported game text, a map job's kept
+progress) go to a Deleted bin with a Restore button instead of being erased. How long does the bin keep them?
+(a) **until the owner empties it** (recommended): nothing is erased on its own; emptying the bin, or erasing one item
+from it, also needs DELETE typed in. (b) 30 days, then erased at start. (c) Until a size limit, oldest first.
+
+**Decision.** (a). Removing a job asks in a pop-up; removing collected data asks for DELETE typed in a text box; both
+move what they remove into the bin, from which Restore puts it back. Nothing is erased until the owner empties the bin
+or erases an item from it, each with DELETE typed in.
+
+**Owner's words.** The request above; then "Until I empty it (Recommended)".
+
+**Later changes.**
+- *2026-11-14, the owner, on the built bin.* "yes anything that deletes a dataset brings up a pop up WITH text field
+  requiring entering DELETE first, until that word in capital is entered the delete button on the pop up is greyed
+  out." So every removal of a dataset asks for DELETE typed exactly, in capitals, with the button disabled until then,
+  and the API refuses without it: share and workspace files, imported game text, a map job's saved progress (whether
+  removed with its job or dropped by Start again) and erasing from the bin. Removing a job that holds no data asks in a
+  plain pop-up. The owner also approved that a map job's progress file is deleted when the job finishes, as its
+  outputs then hold what was read: "approved".
+
+## DP23
+
+**Game updates: every version's data kept, re-read and compared** · *2026-11-14 · Decided by the owner, as recommended*
+
+**The owner's request.** "updates of game version, and ability to compare data. so when Elden Rings gets an update,
+datapiler would be able to detect and see which parts of the game have been updated, which parts of the affected data
+need to be rerun, or added, so lets say a 10000 dataset gets added 50 entires (so it becomes 10050) and line 8000 and
+8001 gets changes (so those won't match anymore). Then datapiler only reruns line 8000 and 8001, then adds 10001 -
+10050 lines."
+
+**Questions.** (1) Smithbox cannot tell which map files a patch changed without loading them, so a map job must re-read
+every map it needs after an update, then keep only what changed; param jobs re-read in seconds and are compared row by
+row. Acceptable? (a) **yes, re-read and compare** (recommended); (b) params only for now; (c) look for a faster map
+route first. (2) Keep every game version's data side by side, so any two can be compared? (a) **keep every version**
+(recommended); (b) the current and the previous only.
+
+**Decision.** (1) (a) and (2) (a). DataPiler sees a game update in the provenance it already records (game version,
+regulation hash, Smithbox build). A job whose last run was on another version shows it, with an action that re-reads
+what the job reads, compares it with the last run row by row (params, by row id) or map by map (placements), keeps what
+is unchanged, replaces what changed, adds what is new, marks what was removed, rebuilds the job's outputs from the
+merged data and writes a change report. Every version's data stays in the workspace, and any two can be compared.
+
+**Owner's words.** The request above; then "Yes, re-read and compare (Recommended)" and "Keep every version
+(Recommended)".
+
+## DP24
+
+**Fields checked and read in the same job** · *2026-11-15 · Decided by the owner, as recommended*
+
+**Question.** By build plan §10, P4, a field is read only once an earlier job's `check_fields` has shown it on the
+owner's PC, which costs a release and a job for every new table. en-0015 found Smithbox's definitions matching the
+server in all 91 fields. Recommended: a job may read a field DataPiler does not list yet when an earlier
+`check_fields` in the same job names it; the field is read only if that check found it, and the job stops otherwise.
+
+**Decision.** As recommended (0.2.22, S72). A field read this way is never text, and counts as one that may hold ids.
+
+**Owner's words.** "yes, build 0.2.22 with same-job field checks".
+
+## DP25
+
+**Exported textures read anywhere in DataPiler's folder** · *2026-11-15 · The owner's request*
+
+**The owner's request.** After exporting the game's map tiles from Smithbox's Texture Viewer (whose container export
+needs the output folder set first): "yes let's build datapiler version that can read export dataset anywhere inside
+Datapiler directory (any subfolder/path)".
+
+**Decision.** 0.2.23's `read_map_tiles` (S73) finds exported map tiles in any folder inside DataPiler's own folder and
+gives numbers only: what each tile's name says and its size. No image is decoded; images stay where the owner put them,
+on the PC.
+
+## DP26
+
+**Job cards in the owner's own order** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "also for future datapiler update, can you add ability to drag job field on the jobs pags to
+rearrange them (drag with mouse cursor on top of each other in in between)."
+
+**Decision.** 0.2.24 (S74): each job card has a grip to drag it above, below or between the others, with a line where
+it will land, and the up and down arrows on the grip do the same; the order is kept across restarts.
+
+## DP27
+
+**An overview image of the exported map tiles, made on the PC** · *2026-11-15 · The owner's choice*
+
+**Question.** EldenNet's exact world-to-map fit needs an image to align against (EldenNet WHY§62). Recommended:
+DataPiler assembles one image of a sheet's level from the tiles the owner already exported, on the PC, which the owner
+uploads for research only, never committed.
+
+**Decision.** As recommended: 0.2.25's `make_map_overview` (S75) writes the image to the workspace; nothing of it goes
+into a share file, and it is research material in the owner's terms of DP21.
+
+**Owner's words.** "yes, build 0.2.25 with the overview image".
+

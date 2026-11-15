@@ -68,7 +68,8 @@ class WithoutGrpc(unittest.TestCase):
             lk.list_param_rows("NpcParam")
         self.assertEqual(lk.switch(False), "no_libs")
         self.assertEqual(lk.stats(), {"calls": 0, "last_call": None, "last_methods": []})
-        self.assertIsNone(lk.map_ids())
+        with self.assertRaises(link.LibsMissing):
+            lk.map_ids()
 
     def test_would_call_names_allowed_methods_only(self):
         rows = link.Link(FakeGame(), libs=False).would_call()
@@ -255,6 +256,19 @@ class AgainstTheFake(unittest.TestCase):
         only_id = self.link.get_param_rows("TalkParam", [9100003], ["id"])
         self.assertEqual(only_id, [{"id": 9100003}])
 
+    def test_field_types_of_the_first_row_never_values(self):
+        self.link.switch(True)
+        types = self.link.field_types("NpcParam")
+        self.assertEqual(types["nameId"], "s32")
+        self.assertEqual(types["hitHeight"], "f32")
+        self.assertEqual(types["isGhost"], "b32")
+        self.assertEqual(types["padFlags"], "u8")            # `padFlags:4` counts as its base name
+        self.assertEqual(types["epithet"], "fixstrW")
+        self.assertEqual(len(self.fake.requests("GetParamRows")), 1)
+        self.assert_no_planted(types)
+        with self.assertRaises(ValueError):
+            self.link.field_types("../NpcParam")
+
     def test_a_text_cell_is_refused(self):
         self.link.switch(True)
         with self.assertRaises(link.LinkDataError) as cm:
@@ -273,14 +287,23 @@ class AgainstTheFake(unittest.TestCase):
     def test_cancel_between_calls(self):
         self.link.switch(True)
         cancel = threading.Event()
+        at_cancel = []
 
         def progress(done, of):
             if done == 3:
+                at_cancel.append(len(self.fake.requests("GetParamRows")))
                 cancel.set()
         with self.assertRaises(link.LinkCancelled):
             self.link.get_param_rows("TalkParam", list(fake_soapstone.TALK_IDS), ["msgId"], cancel=cancel,
                                      progress=progress)
-        self.assertEqual(len(self.fake.requests("GetParamRows")), 3)
+        # S55: up to ROW_WORKERS calls run at once, so those already started when cancel is set may still go out;
+        # none starts after it. Counted from the moment cancel is set, as a slow machine may finish more calls
+        # before the progress callback runs (the bound of 3 + ROW_WORKERS failed on a Windows runner).
+        sent = len(self.fake.requests("GetParamRows"))
+        self.assertGreaterEqual(sent, 3)
+        self.assertLessEqual(sent, at_cancel[0] + link.ROW_WORKERS)
+        if at_cancel[0] + link.ROW_WORKERS < len(fake_soapstone.TALK_IDS):
+            self.assertLess(sent, len(fake_soapstone.TALK_IDS))
 
     def test_a_failed_call_names_the_code_only(self):
         self.link.switch(True)
@@ -305,23 +328,183 @@ class AgainstTheFake(unittest.TestCase):
         self.assertEqual(n, len(fake_soapstone.MAPS))
         opened = self.fake.requests("OpenResource")
         self.assertEqual(len(opened), len(fake_soapstone.MAPS) - len(fake_soapstone.LOADED_AT_START))
-        self.assertLessEqual(self.fake.max_pending, link.MAP_BATCH)
-        self.assertEqual(self.fake.max_pending, link.MAP_BATCH)
+        self.assertEqual(self.fake.max_pending, 1)             # S53: one map at a time
+        self.assertEqual(self.fake.refused, 0)
         for r in opened:
             self.assertEqual(r.resource.type, common_pb2.EDITOR_RESOURCE_TYPE_MAP)
             self.assertRegex(r.resource.name, r"^m\d{2}_\d{2}_\d{2}_\d{2}$")
-        self.assertEqual(seen, [(10, 13), (13, 13)])
+        # S52: progress from (0, 13), map by map, never back, up to (13, 13); every report names the same total
+        self.assertEqual((seen[0], seen[-1]), ((0, 13), (13, 13)))
+        self.assertEqual(sorted(seen), seen)
+        self.assertTrue(all(t == 13 for _, t in seen))
+        self.assertEqual(sorted({d for d, _ in seen}), list(range(14)))
         self.assertEqual(self.link.loaded_maps(), list(fake_soapstone.MAPS))
         for bad in ("m99_00_00", "chr/c0000", ""):
             with self.assertRaises(ValueError):
                 self.link.open_maps([bad])
 
+    def test_all_maps_lists_every_map_loaded_or_not(self):
+        # S44: Smithbox answers a file search with every map of its bank; loaded is told by the maps' file keys (S62).
+        self.link.switch(True)
+        self.assertEqual(self.link.all_maps(), sorted(fake_soapstone.MAPS))
+        self.assertEqual(self.link.map_ids(), sorted(fake_soapstone.MAPS))
+        self.assertTrue(self.link.is_loaded("m99_00_00_00"))
+        self.assertFalse(self.link.is_loaded("m99_00_00_05"))
+        self.assertEqual(self.link.loaded_of(["m99_00_00_01", "m99_00_00_05", "m99_00_00_01"]), {"m99_00_00_01"})
+        self.assertEqual(self.link.loaded_of([]), set())
+        asked = [r for r in self.fake.requests("BatchGetObjects") if r.keys and not r.keys[0].str_id]
+        self.assertTrue(asked)
+        for r in asked:
+            self.assertEqual(r.resource.name, "")
+            self.assertTrue(all(not k.str_id and k.file.startswith("map/mapstudio/m99_") for k in r.keys))
+        with self.assertRaises(link.LinkError):
+            self.link.placements("m99_00_00_05")             # known, not loaded
+        with self.assertRaises(ValueError):
+            self.link.loaded_of(["m99_00_00"])
+
+    def test_an_empty_map_reads_as_loaded(self):
+        # S62 (WHY§50): tiles that hold nothing loaded in Smithbox, but an entry search could not tell them from a
+        # failed load, so three in a row stopped en-0011. By file key they read as loaded, with no placements.
+        self.link.switch(True)
+        self.fake.empty = {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        self.link.map_skip = 0.5
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05", "m99_00_00_06"])
+        self.assertEqual(n, 4)
+        self.assertEqual(self.link.skipped_maps, [])
+        self.assertEqual(self.link.placements("m99_00_00_04"), [])
+        self.assertEqual(len(self.link.placements("m99_00_00_06")), 3)
+
+    def test_each_map_it_loads_is_handed_on_at_once(self):
+        # S63: the runner reads and keeps each map as soon as it loads; maps loaded before are not handed on.
+        self.link.switch(True)
+        self.link.map_poll = 0.01
+        seen = []
+        n = self.link.open_maps(["m99_00_00_00", "m99_00_00_03", "m99_00_00_04"], on_loaded=seen.append)
+        self.assertEqual(n, 3)
+        self.assertEqual(seen, ["m99_00_00_03", "m99_00_00_04"])
+        self.assertIsNone(self.link.capped)
+
+    def test_it_stops_asking_once_smithbox_holds_the_cap(self):
+        # S63: two maps are loaded at the start; with a cap of three, one more is asked for, then it stops.
+        self.link.switch(True)
+        self.link.map_poll = 0.01
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05"], session_cap=3)
+        self.assertEqual(n, 1)
+        self.assertEqual(self.link.capped, (3, 2))
+        self.assertEqual([r.resource.name for r in self.fake.requests("OpenResource")], ["m99_00_00_03"])
+        self.assertEqual(self.link.skipped_maps, [])
+
+    def test_a_refused_file_key_check_falls_back_to_entries(self):
+        self.link.switch(True)
+        self.fake.fail_file_keys = True
+        self.assertTrue(self.link.is_loaded("m99_00_00_00"))
+        self.assertFalse(self.link.is_loaded("m99_00_00_05"))
+        file_key_asks = [r for r in self.fake.requests("BatchGetObjects") if r.keys and not r.keys[0].str_id]
+        self.assertEqual(len(file_key_asks), 1)                # asked once, then the entry search for the session
+        self.assertFalse(self.link._file_keys)
+        self.fake.fail_maps = True
+        with self.assertRaises(link.LinkError) as cm:
+            self.link.is_loaded("m99_00_00_00")
+        self.assertIn("could not answer a map search", str(cm.exception))
+
+    def test_open_maps_skips_maps_the_project_does_not_have(self):
+        self.link.switch(True)
+        n = self.link.open_maps(["m99_00_00_03", "m98_00_00_00"])
+        self.assertEqual(n, 1)
+        self.assertEqual([r.resource.name for r in self.fake.requests("OpenResource")], ["m99_00_00_03"])
+
+    def test_no_map_editor_says_so(self):
+        self.link.switch(True)
+        self.fake.no_map_editor = True
+        for call in (self.link.all_maps, self.link.loaded_maps, lambda: self.link.open_maps(["m99_00_00_03"])):
+            with self.assertRaises(link.LinkError) as cm:
+                call()
+            self.assertIn("Visual Map Editor", str(cm.exception))
+
+    def test_a_server_failure_on_maps_says_so(self):
+        self.link.switch(True)
+        self.fake.fail_maps = True
+        for call in (self.link.all_maps, self.link.loaded_maps):
+            with self.assertRaises(link.LinkError) as cm:
+                call()
+            self.assertIn("could not answer a map search", str(cm.exception))
+
+    def test_every_search_carries_its_search_clause(self):
+        # S51: SoapstoneLib refuses a SearchObjects without `search` (UNKNOWN); the fake refuses it too.
+        self.link.switch(True)
+        self.link.all_maps()
+        self.link.is_loaded("m99_00_00_00")
+        self.link.placements("m99_00_00_00")
+        reqs = self.fake.requests("SearchObjects")
+        self.assertTrue(reqs and all(r.HasField("search") for r in reqs))
+
+    def test_a_refused_load_is_asked_again(self):
+        # S53: Smithbox refuses a load while it still finishes the last map; DataPiler asks again until it takes it.
+        self.link.switch(True)
+        self.fake.busy_after_load = 3
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05"])
+        self.assertEqual(n, 3)
+        self.assertGreater(self.fake.refused, 0)
+        self.assertEqual(sorted(self.link.loaded_maps()), sorted(set(fake_soapstone.LOADED_AT_START) |
+                                                                {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}))
+
+    def test_a_map_that_will_not_load_is_skipped(self):
+        # S57: named in the log, skipped after map_skip, and the next map asked for.
+        self.link.switch(True)
+        self.fake.broken = {"m99_00_00_04"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        self.link.map_skip = 0.2
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05"])
+        self.assertEqual(n, 2)
+        self.assertEqual(self.link.skipped_maps, ["m99_00_00_04"])
+
+    def test_three_maps_in_a_row_that_will_not_load_stop_it(self):
+        self.link.switch(True)
+        self.fake.broken = {"m99_00_00_03", "m99_00_00_04", "m99_00_00_05"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        self.link.map_skip = 0.1
+        with self.assertRaises(link.LinkError) as cm:
+            self.link.open_maps(["m99_00_00_03", "m99_00_00_04", "m99_00_00_05", "m99_00_00_06"])
+        self.assertIn("3 maps in a row did not load", str(cm.exception))
+
+    def test_the_first_limit_holds_until_a_map_loads(self):
+        # S58: a short first limit skips a first map that will not load, quickly; later maps use the base.
+        self.link.switch(True)
+        self.fake.broken = {"m99_00_00_03"}
+        self.link.map_poll = 0.01
+        self.link.map_reask = 0.02
+        t0 = time.monotonic()
+        n = self.link.open_maps(["m99_00_00_03", "m99_00_00_04"], timeout=0.3, first_timeout=0.1)
+        self.assertEqual(n, 1)
+        # the first map's 0.1 s, then the end-of-run retry at the base (0.3 s, or three times the slowest load)
+        self.assertLess(time.monotonic() - t0, 3.0)
+        self.assertEqual(self.link.skipped_maps, ["m99_00_00_03"])
+
     def test_open_maps_gives_up_on_a_batch_that_never_loads(self):
+        # S57: nothing loading at all ends in three skips in a row and an error that says what to look at.
         self.link.switch(True)
         self.fake.load_after = 10 ** 6
-        self.link.map_wait = 0.2
-        with self.assertRaises(link.LinkError):
-            self.link.open_maps(["m99_00_00_05"])
+        self.link.map_poll = 0.01
+        self.link.map_skip = 0.1
+        with self.assertRaises(link.LinkError) as cm:
+            self.link.open_maps(["m99_00_00_05", "m99_00_00_06", "m99_00_00_07"])
+        self.assertIn("Map Editor tab in front", str(cm.exception))
+
+    def test_a_placement_without_a_talk_id(self):
+        # S60: a property the part does not have is left out by Smithbox; DataPiler reads it as -1, not a failure.
+        self.link.switch(True)
+        self.link.map_poll = 0.01
+        self.assertEqual(self.link.open_maps(["m99_00_00_14"]), 1)
+        got = self.link.placements("m99_00_00_14")
+        self.assertEqual(len(got), 3)
+        self.assertEqual([p.talk_id for p in got][-1], -1)
+        self.assertTrue(all(p.talk_id > 0 for p in got[:-1]))
 
     def test_placements_as_numbers(self):
         self.link.switch(True)

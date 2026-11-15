@@ -5,6 +5,275 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+
+
+
+
+
+
+
+
+## 0.2.29 - 2026-11-15
+
+- Every level of every sheet is checked now, not only levels 2 to 4 (S79): each sheet has a reference level (the
+  coarsest with six tiles a side or more), and every other level is measured against it at its own scale (levels 0
+  and 1 too, at an eighth and a sixth of level 3), the reference against its nearest level. The expansion's map gets
+  the same check.
+- New: `"shrink"` (2, 4 or 8) makes an overview's tiles smaller, so that levels 0 and 1 fit; labels shrink with them.
+
+## 0.2.28 - 2026-11-15
+
+- Fixed: level 2 overviews mixed two images (S78). Besides the variants that are the base with pieces drawn in, the
+  export holds variants carrying another drawing of the whole map at three quarters of the scale, and the file names
+  do not tell them apart. `make_map_overview` now checks each variant against the next zoom level (levels 2, 3 and 4
+  nest by two) and leaves out one that does not match (`"check": false` turns this off, `"min_match"` sets the bar,
+  700 per mille by default); the widest variants inside it are tried instead.
+- New: `"labels": true` draws each tile's border, its column and row, and the codes laid (with their scores) or left
+  out (with a minus), so every tile in an overview can be traced to its files.
+- New: `"variant": "code"` with `"code"` shows one code's files where they were exported, and the base elsewhere.
+- New operation `check_map_tiles`: one row per exported tile of a sheet's level, with the number of the folder it was
+  found in, its copies, how much of it differs from its base, and how well it matches the next level. Numbers only; it
+  may go to a share file.
+
+## 0.2.27 - 2026-11-15
+
+- Fixed: overview tiles showed only some of their pieces revealed, so blocks of the map looked unexplored beside
+  explored ones (S77). Where a tile holds pieces that never meet, the game keeps one variant per piece and lays them
+  together; 0.2.26 used only one of them. `make_map_overview` now lays every widest revealed variant over the base,
+  where it differs from the base, so every piece shows. The log says how many tiles were joined this way.
+
+## 0.2.26 - 2026-11-15
+
+- Fixed: the overview images were split up and showed their joins (S76). A tile's revealed variants are mostly
+  transparent: the game draws them over the tile's base variant (code 0). `make_map_overview` now does the same: it
+  lays the most revealed variant over the base, by its alpha. `"variant": "base"` gives the base alone.
+- A job card that wrote workspace files or images has an **Open folder** button: it opens that job's folder in the
+  workspace (Windows).
+
+## 0.2.25 - 2026-11-15
+
+- A new job operation, `make_map_overview` (DP27, S75): it lays the map tiles you exported from Smithbox out on their
+  grid, each tile in its most revealed variant, and writes one PNG of a sheet's level to the workspace
+  (`local/<job>/<name>.png`), on your PC only: it never goes into a share file. Up to 4,096 pixels a side (level 2 of
+  the base map at most). DataPiler reads the PNG tiles with its own code and needs no new library. Outputs lists the
+  image with the workspace files.
+
+## 0.2.24 - 2026-11-15
+
+- Job cards can be put in your own order (DP26, S74): drag a card by its grip (⠿) above, below or between the others;
+  a line shows where it will land. Or focus the grip and press the up or down arrow. The order is kept in
+  `jobs/order.json` and survives a restart; a job added later shows on top, newest first, until you move it.
+
+## 0.2.23 - 2026-11-15
+
+- A new job operation, `read_map_tiles` (DP25, S73): it finds the map tiles you exported from Smithbox's Texture
+  Viewer anywhere inside DataPiler's folder, in any subfolder, and gives one row per tile: the sheet, level, column,
+  row and eight-digit code from the file's name, the width and height from the file's header, and how many copies were
+  found. It never opens an image beyond its size, and no path reaches a table or the log. DataPiler's environment,
+  logs, update downloads and Deleted bin are left out. The table may go into a share file.
+- The inbox no longer lists exported images as refused files: it leaves them to `read_map_tiles`.
+
+## 0.2.22 - 2026-11-15
+
+- A job may read a field DataPiler does not list yet, when an earlier `check_fields` in the same job names it for the
+  same table (DP24, S72). The field is read only if that check found it, with the type the server named (whole
+  numbers, numbers or flags; never text); a missing field stops the job before anything is read. A field read this way
+  counts as one that may hold ids, so a count by it never reaches a share file.
+- Five more of the game's map tables can be read and shared under `map_coords` (DP21): the two colour keys of the
+  areas and of the save names, each with the expansion's twin (`MapNameTexParam`, `MapPieceTexParam` and their
+  `_m61`), and `MapGridCreateHeightLimitInfo`.
+
+## 0.2.21 - 2026-11-14
+
+- Nothing collected is lost (DP22, S70). A new **Deleted** tab is the bin, `workspace/bin/`: removing a job, a share
+  file, a workspace file, an import of the text database or a map job's saved progress moves it there, never erasing
+  it. **Restore** puts an item back exactly (a job with its state, a share file with its row counts, an import with its
+  rows, sha256 and time) and refuses, saying what is in the way, rather than overwrite. **Erase…** and **Empty bin…**
+  erase for good.
+- Removing a job asks first in a pop-up; removing collected data (a share file, a workspace file, an import, a job that
+  holds saved map progress) asks for `DELETE` typed in, and the button waits for it. The API refuses each removal
+  without its confirmation.
+- Outputs has **Delete…** for share files and for the workspace files under `local` and `imported`. Start again moves
+  the saved progress to the bin, and so does a run that finds progress saved on another game version.
+- New endpoints: `GET /api/bin`, `POST /api/bin/restore`, `/api/bin/erase`, `/api/bin/empty` and
+  `/api/outputs/remove`; `/api/jobs/act` (remove) and `/api/imported/remove` take `confirm`.
+- Game updates (DP23, S71). Every job run that completes keeps what it read (each `fetch_rows` and `read_placements`
+  table, numbers only, with the provenance) for its game version, in the workspace's new `versions` folder, one folder
+  per version (game version, regulation hash, Smithbox build), never removed. A job whose last run was on another
+  version says so on its card ("Game updated since this ran: v1.16.0.0 (ab12cd34) → ...") and offers **Update data**:
+  it reads again (maps resumable as before), compares with the last version's read by row id for params and map by map
+  for placements, rebuilds the outputs from the new reads, and shows a line per table on the card ("422 → 425 rows: 3
+  added, 2 changed, 0 removed, ..."), with a change report of the ids in the workspace. When only the game's exe
+  changed (the same regulation and Smithbox build), the param's kept rows are used and not read again.
+- Before a run on a new version writes anything, the job's outputs of the last version (its workspace files and its
+  share file) move into that version's folder, so every version's outputs stay. Nothing of the reads or the reports
+  reaches a share file.
+- **Compare versions…** on a job card compares any two versions it kept, by `GET /api/versions` and
+  `GET /api/versions/compare`; `/api/jobs/act` takes `update`.
+- By the owner's rule, **Start again** on a job holding saved map progress now asks for `DELETE` typed in, as the
+  progress moves to the Deleted bin; so do Resume job and Update data when the saved progress is of another game
+  version. The API refuses those runs without it. Start again without saved progress keeps its plain question.
+- A map job started while the provenance is incomplete no longer stops with an internal error: it keeps no map
+  progress and leaves the saved progress where it is.
+
+## 0.2.20 - 2026-11-14
+
+- The game's five map tables can be read in full (S69): `fetch_rows` reads the 91 fields of `BonfireWarpParam`,
+  `WorldMapPointParam`, `WorldMapPlaceNameParam`, `WorldMapPieceParam` and `WorldMapLegacyConvParam` that en-0015
+  verified on the owner's PC: areas, grid cells and positions, the pieces' rectangles and scales, the conversion's
+  source and destination, and their flags, icons and text ids.
+- By the owner's decision DP21, a job may share these tables' rows whole when its `write_share` carries the new label
+  `map_coords`: for research only, never committed. Every other table keeps DP8's rule, and the label lets nothing
+  else through.
+
+## 0.2.19 - 2026-11-14
+
+- Fixed: a share file with a `check_fields` table was refused by the guard's check 3 when the game's text in the
+  workspace holds a word with `field` in it, as the owner's does (S68). `field`, `present` and `type`, the columns
+  `check_fields` makes, are now among DataPiler's fixed words, as `count` is.
+
+## 0.2.18 - 2026-11-14
+
+- A new job operation, `check_fields` (S67): whether a param's rows have the fields a job names, and their types, as
+  Smithbox's server answers for the param's first row. It reads no value and keeps no name: its table holds each
+  field's place in the job's list, whether it is there, and its type as a number, so it may go into a share file. It is
+  how a field is verified before `fetch_rows` may read it (build plan §10, P4).
+- `fetch_rows` and `check_fields` may name three more of the game's map tables, `WorldMapPointParam`,
+  `WorldMapPieceParam` and `WorldMapLegacyConvParam`, by row id only until their fields are verified, as
+  `WorldMapPlaceNameParam` and `BonfireWarpParam` already were.
+- Placements' positions cannot be read through Smithbox's server (S67): it sends single numbers and text only, and a
+  position is a vector it leaves out. No position column is added.
+
+## 0.2.17 - 2026-11-14
+
+- The icon redrawn once more, at the owner's choice (S65): a crimson katana on a plain curve, wrapped and trailed by
+  blood-red flame whose tongues break up into a spray of blood towards their ends; a handle in black cord over crimson
+  diamonds, with a round guard and fittings of dark iron edged in gold. No separate drops. Still our own drawing,
+  readable from 16 to 256 px.
+
+## 0.2.16 - 2026-11-14
+
+- The icon redrawn to a katana's proportions (S65): a slender, evenly curved crimson blade about three times the
+  handle, with its point (kissaki), temper line and the line across the point; a gold collar, a round guard, and a
+  handle in dark cord over light diamonds. The trail streams off the whole blade in tapered strands, lighter than
+  before, and the drops sit in the open corner. Still our own drawing, readable from 16 to 256 px.
+
+## 0.2.15 - 2026-11-14
+
+- The icon redrawn at the owner's request (S65): the slash is now a trail streaming off the whole blade, in tapered
+  strands that fade where the swing began, with the blade's edge leading and blood drops flung from the tip's path.
+  Still our own drawing, readable from 16 to 256 px.
+
+## 0.2.14 - 2026-11-14
+
+- No more pause at 300 maps (S65): a map job runs in one go. It still keeps each map as soon as it is read, so a
+  crash costs only the map in hand, and **Resume job** goes on from there.
+- DataPiler.exe has an icon (S65): our own blood-red katana in a rising slash, with blood drops, readable from 16 to
+  256 px. It comes with the exe, which a new release (or the patch's own build) carries.
+- **Resume job** (S66): a job that failed, was cancelled or stopped with maps kept shows how much is kept and where it
+  picks up ("Saved progress: 300 of 829 maps read and kept ... Resume job picks up at map 301 of 829 (m60_...)"), and
+  a **Resume job** button that goes on from there. **Start again** now asks first, and starts from the beginning,
+  dropping what was kept.
+
+## 0.2.13 - 2026-11-14
+
+- A setting, on by default: **Map jobs on Smithbox's OpenGL build only** (DP20, S64). Smithbox's Vulkan build prepares
+  graphics data for every map it loads, even with rendering off; its OpenGL build (`Smithbox.OpenGL.exe`, in
+  Smithbox's folder) does not. While the setting is on and Smithbox runs as its Vulkan build, a map job waits and its
+  card says how to switch; once the OpenGL build runs, the job waits for Smithbox to open its project, then goes on.
+  Switch it off on the Settings tab.
+
+## 0.2.12 - 2026-11-14
+
+- Map jobs keep what they read as they go (S63). Each map's placed characters are read as soon as the map loads and
+  saved to disk in the job's folder at once, numbers only. If Smithbox, the graphics driver or DataPiler stops
+  partway, **Start again** goes on from there: the maps already read are not loaded or read again. What is kept is
+  dropped when the job finishes, is removed, or the game or Smithbox changes.
+- A map job pauses once Smithbox holds 300 maps (S63), before Smithbox's Vulkan build runs short of graphics memory;
+  the card says how many maps are read and kept. Close Smithbox, start it again, and press **Start again**.
+
+## 0.2.11 - 2026-11-14
+
+- A map that loads with nothing in it now counts as loaded (S62). DataPiler asks Smithbox which maps are loaded by the
+  maps' file keys (BatchGetObjects, already on DP4's list), which Smithbox answers for every loaded map, empty or not;
+  the entry search it used before saw only maps with something in them. en-0011 stopped twice on three empty tiles of
+  the open world in a row, which looked like a stuck Smithbox. Should Smithbox refuse that call, the entry search takes
+  over, with a warning. The loaded maps are also asked for together, not one call per map.
+
+## 0.2.10 - 2026-11-14
+
+- A placed character's property that the part does not have is read as -1 (S60): Smithbox leaves it out of its answer,
+  as for a character without dialogue (no TalkID), and en-0007's first full read stopped on it as "not a number".
+- A map that never shows as loaded is described as such (S61): either Smithbox could not load it, or it loaded with
+  nothing to list, as m10_01_00_99 on the owner's PC, which Smithbox's auto-save named among its loaded maps.
+## 0.2.9 - 2026-11-14
+
+- A map not loaded in 10 s is skipped for now (S58), not after 5 minutes: the limit stretches to three times the slowest
+  load seen in the run, skipped maps are asked for once more at the end, a map that loads late is read all the same, and
+  three in a row stop the job only if none of them loaded late. A job may set its own limit (`load_maps`'s `timeout`,
+  5 to 900 s). Maps are asked for again every 2 s while they wait.
+- Before a map job, DataPiler reads two of Smithbox's saved preferences (DP19, S59): Enable Model Rendering and the
+  skipping of Havok loading. With rendering off the first map gets 10 s; with it on, 300 s and a warning to turn it
+  off. Nothing else of that file is kept or logged. Smithbox saves its preferences when it closes, so the log says
+  they may lag a change made since.
+- Smithbox keeps its log in its own windows only (no file, no server call), so the messages point to its Warning Log
+  for why a map did not load.
+## 0.2.8 - 2026-11-14
+
+- The newest job really is first (S54): each card now carries the time it was added, which the page sorts by; 0.2.7
+  sorted on a field the page never received.
+- The top bar shows the full version, 0.2.8 rather than 0.2 (S56).
+- A map that will not load no longer holds up the rest (S57): the log names each map as it loads, a map not loaded
+  after 5 minutes is skipped with a warning and the next one asked for, and read_placements leaves the skipped maps
+  out. Three skipped maps in a row stop the job, as Smithbox is then likely stuck.
+## 0.2.7 - 2026-11-14
+
+- Maps load one at a time (S53). Smithbox refuses to start a map load while another runs, so 0.2.3 to 0.2.6 lost nine of
+  every ten maps they asked for at once and waited for them in vain. A map not loaded yet is asked for again every
+  10 s until Smithbox takes it; the fake server now refuses a load while another runs, as Smithbox does.
+- Job cards (S54): the newest job first; each card folds to its title row (▸/▾, remembered in the browser), with Fold
+  all and Unfold all; the title row shows the step the job is at and its share done, and every op line its percentage.
+- Row reads run four calls at once (S55), the answers kept in the row ids' order; a failure or Cancel stops the rest.
+## 0.2.6 - 2026-11-14
+
+- Map loading says what it does (S52): the job card shows maps loaded of maps to load, the time so far and a rough
+  guess of the time left, at every poll; the log says how many maps are to load, each batch of ten, and every minute
+  how far it is.
+- A batch may take as long as Smithbox keeps loading: the job gives up only after 15 minutes with no map loaded, and
+  then says why. Smithbox hands a queued map load to its Map Editor only while that editor's tab is in front and its
+  window is not minimised (`MapEditorStub.cs` at 2.2.6), which is why en-0007's first run loaded nothing.
+## 0.2.5 - 2026-11-14
+
+- Map searches carry their search clause (S51). Smithbox's server library refuses a SearchObjects without one
+  (`CheckNonNull(request.Search)`), which DataPiler saw as UNKNOWN: listing the maps sent none, from 0.1.0 on, so every
+  map job failed whatever the project's editors. Listing and the loaded check now send an empty clause; the fake
+  server refuses a search without one, as Smithbox does.
+- A project that lists no map now says to enable the Visual Map Editor (its name in Smithbox 2.2.6's Available
+  Editors), press Update Project and restart Smithbox; an UNKNOWN on a map search says the server failed.
+## 0.2.4 - 2026-11-14
+
+- DP17 (S48): what `unused_names` makes, numbers and layers only, is not held to check 6's half, so job en-0006's 269
+  of 483 name numbers can be shared whole.
+- DP18 (S49): check 3 compares with the texts of the name sets DataPiler uses (character and place names), not every
+  text imported: with the whole item container imported, ordinary words (a table named `unused`, a log line listing
+  files) collided with item descriptions. Copy for sharing leaves a failing line out and says how many, instead of
+  refusing the whole copy.
+- Quit (S50): the window closes at once after a normal stop, and the page asks the browser to close its tab, which it
+  does where the tab holds a single page, as the one the launcher opens does.
+## 0.2.3 - 2026-11-14
+
+- `unused_names` (S47): the entries of a text set that no row of a table names, with their layers and, locally,
+  their texts. Narrowed from the start, as a pick for a purpose (the names the game sets elsewhere, boss bars among
+  them); check 6 measures it against the set's entries.
+- Maps (S44): Smithbox lists every map of its project for a file search, loaded or not, so 0.2.x read every map as
+  loaded. The link now lists the project's maps (`all_maps`, also `map_ids`, so Extract can load every map) and
+  tells a loaded map by an entry search. `open_maps` skips map ids the project does not have and waits for real
+  loading; `read_placements` skips such ids and still fails on a map the project has but has not loaded. When the
+  server fails on maps (UNKNOWN), the error says the Map Editor is most likely not enabled in the project.
+- Map families (S45): `load_maps` and `read_placements` take `m10_*` for every map of an area; a job naming one asks
+  before it starts.
+- Boss slots (S46): `filter` takes `"slots": "boss"`, keeping placements whose entity id ends 800 to 899, a pick for a
+  purpose (DP8).
 ## 0.2.2 - 2026-11-08
 
 - `join_names` also makes `layer`: the earliest layer of the imported text that holds the name, 0 the base game, 1

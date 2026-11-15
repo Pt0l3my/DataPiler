@@ -32,8 +32,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, events, fields, fileio, jobs, logbook, paths as paths_mod
+from . import catalogue, deleted, events, fields, fileio, jobs, logbook, paths as paths_mod, textures, versions
 from . import link as link_mod
+from . import smithbox as smithbox_mod
 from .guard import WORDS as GUARD_WORDS, GuardFailed
 from .logbook import Own, own
 
@@ -46,6 +47,12 @@ if TYPE_CHECKING:
 MAP_QUESTION = 10                   # S8: ask before loading more than ten maps
 STATE_FORMAT = "datapiler-jobstate/1"
 LOCAL_FORMAT = "datapiler-local/1"
+MAPS_FILE = "maps.jsonl"            # S63: a job's placements read so far, map by map, in its own folder
+MAPS_FORMAT = "datapiler-mapprogress/1"
+MAPS_PER_SESSION: int | None = None  # S63, S65: no pause since 0.2.14, by the owner's word; a number brings it back
+MAPS_KEY = ("game_version", "regulation_sha256", "smithbox_build")
+MAPS_READY_WAIT = 600.0             # S64: after a switch to the OpenGL build, how long to wait for Smithbox's maps
+MAPS_READY_POLL = 2.0
 WAIT_POLL = 0.5
 
 LINK_WAITS = {
@@ -53,7 +60,7 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "load_maps": "maps", "read_placements": "maps", "join_names": "rows",
+UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "check_map_tiles": "tiles", "make_map_overview": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
@@ -101,13 +108,15 @@ class _Card:
     result: dict | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
     remove_after: bool = False
+    ran: dict | None = None        # DP23 (S71): the last completed run: its version, and whether its outputs moved
 
     def public(self) -> dict:
         return {"id": self.id, "title": self.title, "format": jobs.FORMAT if self.format_ok else None,
                 "sha256": self.sha256, "state": self.state,
                 "refusals": [{"op": r.op, "where": r.where, "text": r.text} for r in self.refusals],
                 "preview": self.preview, "wait": self.wait, "ops": [dict(o) for o in self.ops],
-                "result": json.loads(json.dumps(self.result)) if self.result is not None else None}
+                "result": json.loads(json.dumps(self.result)) if self.result is not None else None,
+                "added": self.added}          # S54: the page sorts the newest first by it
 
 
 @dataclass
@@ -142,10 +151,19 @@ class _Ctx:
     sources: dict = field(default_factory=dict)      # op index -> _Source: the game table it read (check 6)
     placed: dict = field(default_factory=dict)       # map -> the placements read on it, each map once (check 6)
     names: dict = field(default_factory=dict)        # text set -> provenance.names's record (P3)
+    progress: "_MapProgress | None" = None           # S63: where the maps read so far are kept
+    kept: dict = field(default_factory=dict)         # S63: map -> its placement rows, read in this run or before
+    plan: list = field(default_factory=list)         # S66: the maps the job reads, in order, once it knows them
     local: list = field(default_factory=list)
     share: tuple | None = None
     fetched: int = 0
     unit: str = "rows"
+    card: "_Card | None" = None                       # the job's card (None for an Extract row)
+    vprov: dict | None = None                         # DP23 (S71): the provenance at the run's start
+    vkey: dict | None = None                          # its version key, None when it is not complete
+    prior: dict | None = None                         # the last completed run's record, when it was on another version
+    reads: dict = field(default_factory=dict)         # op index -> what fetch_rows or read_placements read, to keep
+    checked: dict = field(default_factory=dict)       # DP24: param -> {field: type} that check_fields found
 
 
 @dataclass(frozen=True)
@@ -160,6 +178,75 @@ class _Source:
 
 
 PLACEMENTS = "placements"           # check 6's name for the placements' game table
+
+
+class _MapProgress:
+    """S63: the placements a job has read, kept map by map in its folder as they are read, so that a job stopped by a
+    crash of Smithbox, of the GPU's driver or of DataPiler goes on where it stopped. One JSON line per map, appended
+    and flushed to disk at once: a header naming the job's sha256 and the game, Smithbox and regulation it was read
+    from, then {"map": id, "rows": [[map, entityId, npcParamId, talkId, model], ...]}. Numbers only, never shared;
+    a header that does not match drops the file (through drop, which moves it to the Deleted bin, DP22, and answers
+    whether it did; stale is set when it did not), and a line cut short by a crash ends what is read. Removed when the
+    job is done; moved to the Deleted bin with the job when it is removed, and on its own by Start again."""
+
+    def __init__(self, path: Path, key: dict, drop: Callable[[], bool] | None = None):
+        self.path = path
+        self.header = dict({"format": MAPS_FORMAT}, **key)
+        self.drop = drop
+        self.stale = False
+
+    def load(self) -> dict[str, list[tuple]]:
+        out: dict[str, list[tuple]] = {}
+        try:
+            with open(self.path, "rb") as f:
+                lines = f.read().split(b"\n")
+        except FileNotFoundError:
+            return out
+        except OSError:
+            return out
+        try:
+            match = json.loads(lines[0].decode("utf-8")) == self.header
+        except (ValueError, UnicodeDecodeError):
+            match = False
+        if not match:
+            if self.drop is None:
+                self.clear()
+            elif not self.drop():
+                self.stale = True
+            return out
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            try:
+                doc = json.loads(line.decode("utf-8"))
+                m = doc["map"]
+                if not isinstance(m, str) or not link_mod.MAP_RX.fullmatch(m):
+                    break
+                rows = [tuple(r) for r in doc["rows"]]
+                if not all(len(r) == len(jobs.PLACEMENT_COLUMNS) and all(_type_ok("int", v) for v in r)
+                           and r[0] == link_mod.map_key(m) for r in rows):
+                    break
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                break                                  # a line cut short by a crash: what came before stands
+            out[m] = rows
+        return out
+
+    def add(self, map_id: str, rows: list[tuple]) -> None:
+        new = not self.path.exists()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "ab") as f:
+            if new:
+                f.write(json.dumps(self.header, ensure_ascii=True).encode("ascii") + b"\n")
+            f.write(json.dumps({"map": map_id, "rows": [list(r) for r in rows]}, ensure_ascii=True).encode("ascii")
+                    + b"\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def clear(self) -> None:
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
 UNKNOWN_SOURCE = "unknown"          # a table whose source's rows were not counted: measured against 0
 
 
@@ -236,7 +323,7 @@ def _local_bytes(job_id: str, tables: list[tuple[str, list[tuple[str, str]], lis
 class Runner:
     def __init__(self, paths: "paths_mod.Paths | Callable[[], paths_mod.Paths]", link: LinkLike, textdb: "TextDB",
                  guard: "Guard", provenance: Callable[[], dict], game: Callable[[], "GameRunning"],
-                 language: Callable[[], str]):
+                 language: Callable[[], str], *, map_opengl: Callable[[], bool] = lambda: False):
         """paths: the Paths, or a callable giving the current ones (Settings can move the workspace and the share
         folder; the folders are read afresh at each write)."""
         self._paths = paths
@@ -246,9 +333,11 @@ class Runner:
         self.provenance = provenance
         self.game = game
         self.language = language
+        self.map_opengl = map_opengl
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
+        self._order: list[str] = []                 # S74: the owner's order of the job cards
         self._queue: deque[tuple[str, str]] = deque()
         self._current: tuple[str, str] | None = None
         self._stopping = False
@@ -258,6 +347,8 @@ class Runner:
         self._extract_cancel = threading.Event()
         self._ask: dict | None = None
         self._map_hint: str | None = None
+        self._kept_cache: dict[str, tuple] = {}
+        self._vcount: tuple[str, dict[str, int]] | None = None
         self._unsubs = [events.subscribe("link.state", self._wake),
                         events.subscribe("settings.saved", self._wake),
                         events.subscribe("inbox.import", self._on_import),
@@ -275,7 +366,7 @@ class Runner:
 
     def _save(self, card: _Card) -> None:
         doc = {"format": STATE_FORMAT, "id": card.id, "state": card.state, "wait": card.wait, "ops": card.ops,
-               "result": card.result, "added": card.added}
+               "result": card.result, "added": card.added, "ran": card.ran}
         try:
             folder = self._folder(card.id)
             folder.mkdir(parents=True, exist_ok=True)
@@ -283,19 +374,127 @@ class Runner:
         except (OSError, ValueError) as e:
             _job_log.error("the state of the job %s could not be saved: %s", own(card.id), logbook.why(e))
 
-    def _drop_folder(self, card_id: str) -> None:
-        folder = self._folder(card_id)
-        for name in ("job.json", "state.json"):
-            try:
-                os.unlink(folder / name)
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                _job_log.warn("a file of the job %s could not be removed: %s", own(card_id), logbook.why(e))
+    def _drop_folder(self, card: _Card) -> dict | None:
+        """DP22: the job's files (job.json, state.json and its saved progress) go to the Deleted bin as one item, never
+        erased, and its folder goes once empty. The item's view, or None when the folder held none of them. Raises
+        OSError or deleted.BinError with every file left where it was."""
+        folder = self._folder(card.id)
+        files = [(folder / name, name) for name in ("job.json", "state.json", MAPS_FILE) if (folder / name).exists()]
+        item = None
+        if files:
+            item = deleted.put(self.paths, "job", card.id, "jobs", card.id, files,
+                               extra={"id": card.id, "checked": card.job is not None, "sha256": card.sha256})
         try:
             folder.rmdir()
         except OSError:
             pass
+        return item
+
+    def _bin_progress(self, card_id: str) -> dict | None:
+        """DP22: a job's saved progress (maps.jsonl) alone to the Deleted bin, as Start again drops it (S66). None when
+        there is none. Raises OSError or deleted.BinError, the file left where it was."""
+        f = self._folder(card_id) / MAPS_FILE
+        if not f.exists():
+            return None
+        return deleted.put(self.paths, "progress", card_id, "jobs", "%s/%s" % (card_id, MAPS_FILE), [(f, MAPS_FILE)],
+                           extra={"id": card_id})
+
+    def _bin_stale_progress(self, card_id: str) -> bool:
+        """A saved progress of another game or Smithbox, or another job's file, to the Deleted bin (DP22). False, the
+        file kept, when it could not go."""
+        try:
+            self._bin_progress(card_id)
+            return True
+        except (OSError, deleted.BinError) as e:
+            _job_log.warn("the job %s's saved progress of another game version stays where it is, and this run keeps "
+                          "no progress: it could not be moved to the Deleted bin: %s", own(card_id), logbook.why(e))
+            return False
+
+    def removal_word(self, job_id: str) -> str:
+        """DP22: what removing the job needs confirmed. deleted.WORD (typed in) when the job holds saved progress,
+        collected data; else deleted.MOVE (a pop-up). ValueError for an unknown id."""
+        with self._lock:
+            card = self._cards.get(job_id) if isinstance(job_id, str) else None
+            if card is None:
+                raise ValueError("no such job")
+            return deleted.WORD if (self._folder(card.id) / MAPS_FILE).exists() else deleted.MOVE
+
+    def start_word(self, job_id: str, what: str) -> str | None:
+        """DP22 and the owner's rule of 2026-11-14: deleted.WORD when running the job now would move its saved map
+        progress (collected data) to the Deleted bin, so DELETE must be typed in first: Start again always would; Resume
+        job and Update data would when the progress is of another game version or another job file. None when the
+        run moves nothing. ValueError for an unknown id."""
+        with self._lock:
+            card = self._cards.get(job_id) if isinstance(job_id, str) else None
+            if card is None:
+                raise ValueError("no such job")
+            f = self._folder(card.id) / MAPS_FILE
+            if card.job is None or card.state in ACTIVE or not f.exists():
+                return None
+            if what == "start":
+                return deleted.WORD
+            job = card.job
+        if what not in ("resume", "update") or \
+                not any(o["op"] == "read_placements" and o["maps"] != "all" for o in job.ops):
+            return None
+        prov = self._prov()
+        if prov is None:
+            return None                                   # the run keeps no progress then, and moves none (S63)
+        header = dict({"format": MAPS_FORMAT}, job_sha256=job.sha256, **{k: prov.get(k) for k in MAPS_KEY})
+        try:
+            with open(f, "rb") as fh:
+                match = json.loads(fh.readline(64 * 1024).decode("utf-8")) == header
+        except (OSError, ValueError, UnicodeDecodeError):
+            match = False
+        return None if match else deleted.WORD
+
+    # ------------------------------------------------------------------------------------------------ versions
+
+    def _prov(self) -> dict | None:
+        """The provenance block now, or None when it is not complete."""
+        try:
+            return dict(self.provenance() or {})
+        except Exception:
+            return None
+
+    @staticmethod
+    def _update_of(card: _Card, cur: dict | None) -> dict | None:
+        """DP23: the card's update line while its last completed run was on another version than cur, the one now:
+        {"from", "to", "text"}; None otherwise, and for a job never run or a version not known."""
+        ran = card.ran
+        if card.job is None or not ran or not ran.get("key"):
+            return None
+        if cur is None or cur == ran["key"]:
+            return None
+        return {"from": versions.label(ran["key"]), "to": versions.label(cur),
+                "text": versions.change_text(ran["key"], cur)}
+
+    def _version_counts(self) -> dict[str, int]:
+        root = str(self.paths.versions)
+        hit = self._vcount
+        if hit is not None and hit[0] == root:
+            return hit[1]
+        try:
+            n = versions.counts(self.paths)
+        except OSError:
+            n = {}
+        self._vcount = (root, n)
+        return n
+
+    def versions_of(self, job_id: str) -> dict:
+        """GET /api/versions: the versions a job has kept reads for, the first met first, and the one in use now."""
+        if not paths_mod.name_ok(job_id):
+            raise ValueError("not a job id")
+        cur = versions.key_of(self._prov())
+        return {"job": job_id, "current": versions.label(cur) if cur else None,
+                "versions": versions.of_job(self.paths, job_id)}
+
+    def compare_versions(self, job_id: str, a: str, b: str) -> dict:
+        """GET /api/versions/compare: the change report of a job's kept reads from version a to version b, made now and
+        kept nowhere. ValueError for a job or a version DataPiler does not keep."""
+        if not paths_mod.name_ok(job_id) or not isinstance(a, str) or not isinstance(b, str) or a == b:
+            raise ValueError("pick two versions")
+        return versions.compare(self.paths, job_id, a, b)
 
     # ------------------------------------------------------------------------------------------------ checking
 
@@ -329,9 +528,57 @@ class Runner:
 
     # ------------------------------------------------------------------------------------------------ jobs
 
+    # S74 (DP26): the owner's order of the job cards, kept in jobs/order.json: card ids, first on top.
+    ORDER_FILE = "order.json"
+    MAX_ORDER = 5_000
+
+    def _load_order(self) -> list[str]:
+        try:
+            raw = (self.paths.jobs / self.ORDER_FILE).read_bytes()
+            doc = json.loads(raw.decode("utf-8")) if len(raw) <= 1024 * 1024 else None
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as e:
+            _job_log.warn("the order of the job cards could not be read, so they show newest first: %s",
+                          logbook.why(e))
+            return []
+        ids = doc.get("order") if isinstance(doc, dict) else None
+        if not isinstance(ids, list):
+            return []
+        out: list[str] = []
+        for x in ids[:self.MAX_ORDER]:
+            if isinstance(x, str) and paths_mod.name_ok(x) and x not in out:
+                out.append(x)
+        return out
+
+    def set_order(self, ids: list[str]) -> dict:
+        """S74: the job cards' order, first on top, as the owner dragged them. Every id must be a card's, once;
+        cards left out keep their place after the ones named, newest first. Saved at once in jobs/order.json."""
+        if not isinstance(ids, list) or len(ids) > self.MAX_ORDER:
+            raise ValueError("not a list of job ids")
+        seen: list[str] = []
+        with self._lock:
+            for x in ids:
+                if not isinstance(x, str) or x not in self._cards or x in seen:
+                    raise ValueError("not a job's id, or one named twice")
+                seen.append(x)
+            rest = [c.id for c in sorted(self._cards.values(), key=lambda c: -(c.added or 0)) if c.id not in seen]
+            self._order = seen + rest
+            order = list(self._order)
+        try:
+            self.paths.jobs.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(self.paths.jobs / self.ORDER_FILE,
+                                json.dumps({"order": order}, indent=1, ensure_ascii=True).encode("ascii"))
+        except OSError as e:
+            _job_log.warn("the order of the job cards could not be saved: %s", logbook.why(e))
+            return {"ok": False, "error": "The order could not be saved."}
+        _job_log.info("the job cards were put in a new order (%s cards)", logbook.n(len(order)))
+        return {"ok": True}
+
     def load_folder(self) -> None:
         """jobs/ at start: every card back; a job that was running shows "stopped" and is not resumed."""
         root = self.paths.jobs
+        self._order = self._load_order()
         try:
             names = [d.name for d in os.scandir(root) if d.is_dir(follow_symlinks=False)]
         except FileNotFoundError:
@@ -340,67 +587,167 @@ class Runner:
         for name in names:
             if not paths_mod.name_ok(name):
                 continue
-            state: dict = {}
-            try:
-                state = json.loads(fileio.read_limited(root / name / "state.json", 4 * 1024 * 1024).decode("utf-8"))
-                if not isinstance(state, dict) or state.get("format") != STATE_FORMAT:
-                    state = {}
-            except (OSError, ValueError):
-                state = {}
-            added = state.get("added")
-            if not isinstance(added, (int, float)) or isinstance(added, bool):
-                try:
-                    added = (root / name).stat().st_mtime
-                except OSError:
-                    added = 0.0
-            found.append((float(added), name, state))
+            added, state = self._read_state(root, name)
+            found.append((added, name, state))
         found.sort()
         stopped = 0
         with self._lock:
             for added, name, state in found:
-                try:
-                    raw = fileio.read_limited(root / name / "job.json", jobs.MAX_BYTES * 2)
-                except fileio.TooLarge:
-                    raw = None
-                except OSError:
+                card = self._load_card(root, name, added, state)
+                if card is None:
                     continue
-                if raw is None:
-                    try:
-                        sha = fileio.sha256_file(root / name / "job.json")
-                    except OSError:
-                        continue
-                    card = _Card(id=name, sha256=sha, title=None, format_ok=False, job=None,
-                                 refusals=[jobs.Refusal("(file)", "the file is over 256 KB", None)], preview=None,
-                                 state="refused", ops=[], added=added)
-                elif not raw:
-                    continue
-                else:
-                    card = self._make_card(raw, known=self._known_ids(), share_names=self._share_names(),
-                                           added=added, folder=name)
-                if card.job is not None:
-                    st = state.get("state")
-                    if st in ACTIVE:
-                        card.state = "stopped"
-                        stopped += 1
-                    elif st in ("done", "failed", "cancelled", "stopped"):
-                        card.state = st
-                    ops = state.get("ops")
-                    if isinstance(ops, list) and len(ops) == len(card.ops) and \
-                            all(isinstance(o, dict) and o.get("op") == c["op"] for o, c in zip(ops, card.ops)):
-                        card.ops = [dict(c, **{k: o.get(k) for k in ("state", "done", "of", "secs")})
-                                    for o, c in zip(ops, card.ops)]
-                        if card.state == "stopped":
-                            for o in card.ops:
-                                if o["state"] in ("running", "waiting"):
-                                    o["state"] = "stopped"
-                    result = state.get("result")
-                    card.result = result if isinstance(result, dict) and card.state in (
-                        "done", "failed", "cancelled", "stopped") else None
                 self._cards[card.id] = card
                 if card.state == "stopped" and state.get("state") in ACTIVE:
+                    stopped += 1
                     self._save(card)
         _job_log.info("jobs folder read: %s jobs, %s stopped by the last quit", logbook.n(len(found)),
                       logbook.n(stopped))
+        cur = versions.key_of(self._prov())
+        with self._lock:
+            older = sum(1 for c in self._cards.values() if self._update_of(c, cur) is not None)
+        if older:
+            _job_log.info("%s jobs last ran on another game version or Smithbox build: their cards offer Update data",
+                          logbook.n(older))
+
+    @staticmethod
+    def _read_state(root: Path, name: str) -> tuple[float, dict]:
+        """jobs/<name>/state.json as load_folder takes it: (when the job was added, the state, or {})."""
+        state: dict = {}
+        try:
+            state = json.loads(fileio.read_limited(root / name / "state.json", 4 * 1024 * 1024).decode("utf-8"))
+            if not isinstance(state, dict) or state.get("format") != STATE_FORMAT:
+                state = {}
+        except (OSError, ValueError):
+            state = {}
+        added = state.get("added")
+        if not isinstance(added, (int, float)) or isinstance(added, bool):
+            try:
+                added = (root / name).stat().st_mtime
+            except OSError:
+                added = 0.0
+        return float(added), state
+
+    def _load_card(self, root: Path, name: str, added: float, state: dict) -> _Card | None:
+        """One folder of jobs/ as its card, with its saved state (a job that was running shows "stopped"); None when
+        it holds no job file to read. Under self._lock."""
+        try:
+            raw = fileio.read_limited(root / name / "job.json", jobs.MAX_BYTES * 2)
+        except fileio.TooLarge:
+            raw = None
+        except OSError:
+            return None
+        if raw is None:
+            try:
+                sha = fileio.sha256_file(root / name / "job.json")
+            except OSError:
+                return None
+            card = _Card(id=name, sha256=sha, title=None, format_ok=False, job=None,
+                         refusals=[jobs.Refusal("(file)", "the file is over 256 KB", None)], preview=None,
+                         state="refused", ops=[], added=added)
+        elif not raw:
+            return None
+        else:
+            card = self._make_card(raw, known=self._known_ids(), share_names=self._share_names(),
+                                   added=added, folder=name)
+        if card.job is not None:
+            st = state.get("state")
+            if st in ACTIVE:
+                card.state = "stopped"
+            elif st in ("done", "failed", "cancelled", "stopped"):
+                card.state = st
+            ops = state.get("ops")
+            if isinstance(ops, list) and len(ops) == len(card.ops) and \
+                    all(isinstance(o, dict) and o.get("op") == c["op"] for o, c in zip(ops, card.ops)):
+                card.ops = [dict(c, **{k: o.get(k) for k in ("state", "done", "of", "secs")})
+                            for o, c in zip(ops, card.ops)]
+                if card.state == "stopped":
+                    for o in card.ops:
+                        if o["state"] in ("running", "waiting"):
+                            o["state"] = "stopped"
+            result = state.get("result")
+            card.result = result if isinstance(result, dict) and card.state in (
+                "done", "failed", "cancelled", "stopped") else None
+            card.ran = _ran_checked(state.get("ran"))
+            if card.ran is None and "ran" not in state and card.state == "done":
+                card.ran = self._ran_from_share(card)
+        return card
+
+    def _ran_from_share(self, card: _Card) -> dict | None:
+        """DP23: a job done before 0.2.21 recorded no version; its share file's provenance names the one it ran on (its
+        reads were not kept, so an update cannot compare them). None when it wrote no share file or it cannot be
+        read."""
+        share = (card.result or {}).get("share")
+        name = share.get("name") if isinstance(share, dict) else None
+        if not isinstance(name, str) or not name.endswith(".json") or not paths_mod.name_ok(name[:-5]):
+            return None
+        try:
+            doc = json.loads(fileio.read_limited(paths_mod.share_file(self.paths, name[:-5]), 64 * 1024 * 1024))
+        except (OSError, ValueError, RecursionError):
+            return None
+        key = versions.key_of(doc.get("provenance") if isinstance(doc, dict) else None)
+        if key is None:
+            return None
+        return {"key": key, "at": None, "kept": False, "moved": False}
+
+    def restore_job(self, item_id: str, meta: dict) -> None:
+        """DP22: a removed job from the Deleted bin back in jobs/ and on the page, as it was when it was removed (a job
+        that was running shows "stopped"). Raises deleted.BinError, saying what is in the way and moving nothing, when
+        a job with its id is here, its folder holds a file of the same name, or its share file's name is another
+        job's now."""
+        extra = meta.get("extra") or {}
+        jid = extra.get("id")
+        if not paths_mod.name_ok(jid):
+            raise deleted.BinError(deleted.NO_ITEM)
+        p = self.paths
+        with self._cv:
+            if jid in self._cards:
+                raise deleted.BinError("Not restored: a job with the id %s is here. Remove it first. %s"
+                                       % (jid, deleted.KEPT))
+            if extra.get("checked"):
+                try:
+                    raw = deleted.read_file(p, item_id, "job.json", jobs.MAX_BYTES * 2)
+                except (OSError, fileio.TooLarge):
+                    raw = b""
+                probe = self._make_card(raw, known=self._known_ids(), share_names=self._share_names(), added=0.0,
+                                        folder=jid) if raw else None
+                if probe is not None and probe.job is None:
+                    why = probe.refusals[0].text if probe.refusals else "the job no longer passes its checks"
+                    raise deleted.BinError("Not restored: %s. %s" % (why, deleted.KEPT))
+            folder = self._folder(jid)
+            deleted.move_back(p, item_id, meta, {f["name"]: folder / f["name"] for f in meta["files"]},
+                              "Not restored: the folder of the job %s holds its files now." % jid)
+            added, state = self._read_state(p.jobs, jid)
+            card = self._load_card(p.jobs, jid, added, state)
+            if card is None:
+                _job_log.warn("job %s restored from the Deleted bin without a job file to read", own(jid))
+                return
+            self._cards[card.id] = card
+            if card.state == "stopped" and state.get("state") in ACTIVE:
+                self._save(card)
+        _job_log.info("job %s restored from the Deleted bin", own(card.id))
+        events.emit("job.added", id=own(card.id), state=own(card.state))
+
+    def restore_progress(self, item_id: str, meta: dict) -> None:
+        """DP22: a job's saved progress from the Deleted bin back in its folder, for Resume job. Raises
+        deleted.BinError, moving nothing, when the job is not here, is running, or holds saved progress of its own."""
+        jid = (meta.get("extra") or {}).get("id")
+        if not paths_mod.name_ok(jid):
+            raise deleted.BinError(deleted.NO_ITEM)
+        with self._cv:
+            card = self._cards.get(jid)
+            if card is None:
+                raise deleted.BinError("Not restored: the job %s is not here. Restore the job first. %s"
+                                       % (jid, deleted.KEPT))
+            if card.state in ACTIVE:
+                raise deleted.BinError("Not restored: the job %s is running. Restore its saved progress once it has "
+                                       "stopped. %s" % (jid, deleted.KEPT))
+            deleted.move_back(self.paths, item_id, meta, {MAPS_FILE: self._folder(jid) / MAPS_FILE},
+                              "Not restored: the job %s holds saved progress of its own now." % jid)
+            if card.result is not None and card.state in ("failed", "cancelled", "stopped"):
+                card.result["kept"] = None             # counted again from the file (cards)
+                self._save(card)
+        _job_log.info("the saved progress of the job %s restored from the Deleted bin", own(jid))
+        events.emit("job.state", id=own(jid), state=own(card.state))
 
     def add(self, filename: str, raw: bytes) -> tuple[dict, bool]:
         """Keep raw as jobs/<id>/job.json, check it, return (card, again). again is True when the same sha256 is
@@ -420,7 +767,11 @@ class Runner:
                 if old.job is not None:            # cannot happen: an accepted id is never usable again
                     card = replace(card, id="refused-" + sha[:12])
                 else:
-                    self._drop_folder(old.id)      # a refused card with this id: the new file takes its place
+                    # a refused card with this id: the new file takes its place, the old one goes to the Deleted bin
+                    try:
+                        self._drop_folder(old)
+                    except deleted.BinError as e:
+                        raise OSError("the refused file of this id could not be moved to the Deleted bin") from e
                     del self._cards[old.id]
             try:
                 folder = self._folder(card.id)
@@ -445,24 +796,44 @@ class Runner:
             return card.public(), False
 
     def act(self, job_id: str, what: str, *, confirm_maps: int | None = None) -> dict:
-        """what: "start", "cancel" or "remove". {"ok": True}, or {"ok": False, "ask": {...}} when Start would load
-        more than ten maps and confirm_maps does not equal that number (S8). ValueError for an unknown id or what."""
-        if what not in ("start", "cancel", "remove"):
+        """what: "start", "resume", "update", "cancel" or "remove". {"ok": True}, or {"ok": False, "ask": {...}} when
+        Start would load more than ten maps and confirm_maps does not equal that number (S8). S66: "start" begins again
+        from the beginning, dropping what an earlier run kept; "resume" goes on from it. DP23 (S71): "update", offered
+        while the job's last completed run was on another game version, runs it again as "resume" does, and the run
+        compares what it reads with what that run read. ValueError for an unknown id or what."""
+        if what not in ("start", "resume", "update", "cancel", "remove"):
             raise ValueError("not something a job can do")
         with self._cv:
             card = self._cards.get(job_id) if isinstance(job_id, str) else None
             if card is None:
                 raise ValueError("no such job")
-            if what == "start":
+            if what in ("start", "resume", "update"):
                 if card.job is None:
                     return {"ok": False, "error": "a refused job cannot start - drop a corrected file"}
                 if card.state in ACTIVE:
                     return {"ok": True}
+                if what == "update" and self._update_of(card, versions.key_of(self._prov())) is None:
+                    return {"ok": False, "error": "Nothing to update: this job last ran on the game version and "
+                                                  "Smithbox build in use now."}
                 maps = card.job.maps or 0
+                fams = tuple(getattr(card.job, "map_families", ()) or ())
+                if fams and confirm_maps != maps:
+                    return {"ok": False, "ask": {"maps": maps, "text": (
+                        "This job loads every map of %s in Smithbox%s, ten at a time; how many is known once Smithbox "
+                        "lists them. Smithbox's view changes, not its data, and loading may take a long while. Start "
+                        "it?" % (jobs._and(list(fams)), " and %s more" % "{:,}".format(maps) if maps else ""))}}
                 if maps > MAP_QUESTION and confirm_maps != maps:
                     return {"ok": False, "ask": {"maps": maps, "text": (
                         "This job loads %s maps in Smithbox, ten at a time. Smithbox's view changes, not its data, "
                         "and loading may take a long while. Start it?" % "{:,}".format(maps))}}
+                if what == "start":
+                    try:
+                        self._bin_progress(card.id)       # DP22: what was kept goes to the Deleted bin
+                    except (OSError, deleted.BinError) as e:
+                        _job_log.warn("job %s did not start again: its saved progress could not be moved to the "
+                                      "Deleted bin: %s", own(card.id), logbook.why(e))
+                        return {"ok": False, "error": "The job did not start again: its saved progress could not be "
+                                                      "moved to the Deleted bin (%s)." % logbook.why(e)}
                 card.cancel = threading.Event()
                 card.state, card.wait, card.result = "queued", None, None
                 card.ops = _ops_public(card.job)
@@ -482,24 +853,74 @@ class Runner:
                     card.cancel.set()
                     self._cv.notify_all()
                 return {"ok": True}
-            # remove
+            # remove: DP22, to the Deleted bin
             if self._current == ("job", card.id):
                 card.cancel.set()
                 card.remove_after = True
                 self._cv.notify_all()
                 return {"ok": True}
+            try:
+                self._drop_folder(card)
+            except (OSError, deleted.BinError) as e:
+                _job_log.warn("job %s not removed: its files could not be moved to the Deleted bin: %s", own(card.id),
+                              logbook.why(e))
+                return {"ok": False, "error": "The job was not removed: its files could not be moved to the Deleted "
+                                              "bin (%s)." % logbook.why(e)}
             if ("job", card.id) in self._queue:
                 self._queue.remove(("job", card.id))
-            self._drop_folder(card.id)
             del self._cards[card.id]
-            _job_log.info("job %s removed", own(card.id))
+            _job_log.info("job %s removed to the Deleted bin", own(card.id))
             events.emit("job.state", id=own(card.id), state=own("removed"))
             return {"ok": True}
 
     def cards(self) -> list[dict]:
-        """/api/state "jobs", in the order they were added."""
+        """/api/state "jobs", in the order they were added. S66: a result's "kept" (what Resume goes on from) is
+        shown only while its file is still there."""
         with self._lock:
-            return [c.public() for c in self._cards.values()]
+            listed = [(c.public(), c) for c in self._cards.values()]
+        counts = self._version_counts()
+        cur = versions.key_of(self._prov())
+        out = []
+        pos = {cid: k for k, cid in enumerate(getattr(self, "_order", []))}
+        for c, card in listed:
+            c["pos"] = pos.get(c["id"])          # S74: its place in the owner's order; None: newer than the order
+            # DP23 (S71): the version its data is of, an update line when the game has changed since, and how many
+            # versions it kept reads for (two or more can be compared)
+            ran = card.ran
+            c["version"] = versions.label(ran["key"]) if ran and ran.get("key") else None
+            c["update"] = self._update_of(card, cur) if c.get("state") not in ACTIVE else None
+            c["versions"] = counts.get(c["id"], 0)
+            out.append(c)
+        for c in out:
+            r = c.get("result")
+            if not r or c.get("state") not in ("failed", "cancelled", "stopped"):
+                continue
+            f = self._folder(c["id"]) / MAPS_FILE
+            if not f.exists():
+                r["kept"] = None
+            elif not r.get("kept"):
+                # a run before 0.2.14 kept maps without a summary: count them from the file
+                n = self._kept_count(f)
+                r["kept"] = {"maps": n, "of": None, "next": None, "next_n": None} if n else None
+        return out
+
+    def _kept_count(self, f: Path) -> int:
+        """The maps a progress file holds (its lines after the header), cached by its size and time."""
+        try:
+            st = f.stat()
+        except OSError:
+            return 0
+        key = (str(f), st.st_size, st.st_mtime_ns)
+        hit = self._kept_cache.get(str(f))
+        if hit and hit[0] == key:
+            return hit[1]
+        try:
+            with open(f, "rb") as fh:
+                n = max(0, sum(1 for line in fh if line.strip()) - 1)
+        except OSError:
+            n = 0
+        self._kept_cache[str(f)] = (key, n)
+        return n
 
     # ------------------------------------------------------------------------------------------------ Extract
 
@@ -733,9 +1154,16 @@ class Runner:
                     if item[0] == "job":
                         card = self._cards.get(item[1])
                         if card is not None and card.remove_after:
-                            self._drop_folder(card.id)
-                            del self._cards[card.id]
-                            events.emit("job.state", id=own(card.id), state=own("removed"))
+                            try:
+                                self._drop_folder(card)
+                            except (OSError, deleted.BinError) as e:
+                                card.remove_after = False
+                                _job_log.warn("job %s not removed: its files could not be moved to the Deleted bin: "
+                                              "%s", own(card.id), logbook.why(e))
+                            else:
+                                del self._cards[card.id]
+                                _job_log.info("job %s removed to the Deleted bin", own(card.id))
+                                events.emit("job.state", id=own(card.id), state=own("removed"))
                     self._cv.notify_all()
 
     def _link_reason(self) -> str | None:
@@ -768,6 +1196,66 @@ class Runner:
                 if cancel.is_set() or self._stopping:
                     return False
                 self._cv.wait(WAIT_POLL)
+
+    def _build_reason(self) -> str | None:
+        """DP20 (S64): with the setting on, why a map job may not load maps now: Smithbox runs as its Vulkan build and
+        not as its OpenGL build. None when it may, or when the process list cannot be read."""
+        try:
+            if not self.map_opengl():
+                return None
+        except Exception:
+            return None
+        rs = smithbox_mod.seen()
+        if not rs:
+            return None
+        names = [r.name.lower() for r in rs if isinstance(r.name, str)]
+        if any("opengl" in n for n in names) or not any("vulkan" in n for n in names):
+            return None
+        return ("Smithbox runs as its Vulkan build, and map jobs run on its OpenGL build only (Settings): close "
+                "Smithbox, start Smithbox.OpenGL.exe from Smithbox's folder with the same project, keep its Map Editor "
+                "tab in front, and the job goes on")
+
+    def _wait_for_build(self, ctx: _Ctx) -> bool:
+        """Wait until _build_reason clears (S64). False when cancelled or stopping."""
+        said: str | None = None
+        while True:
+            if ctx.cancel.is_set() or self._stopping:
+                return False
+            reason = self._build_reason()
+            if reason is None:
+                if said is not None:
+                    # Smithbox was just started again: give it time to open its project before asking for maps, as
+                    # a map job started at once met UNAVAILABLE (2026-11-14).
+                    if not self._wait_for_maps(ctx):
+                        return False
+                    ctx.on_wait(None)
+                return True
+            if reason != said:
+                ctx.on_wait(reason)
+                said = reason
+            with self._cv:
+                if ctx.cancel.is_set() or self._stopping:
+                    return False
+                self._cv.wait(WAIT_POLL)
+
+    def _wait_for_maps(self, ctx: _Ctx) -> bool:
+        """After a switch of Smithbox's build: wait, up to MAPS_READY_WAIT seconds, until its server lists the
+        project's maps; then the job goes on either way, and load_maps says what is wrong if anything is."""
+        ctx.on_wait("waiting for Smithbox to open its project and its server to answer")
+        end = time.monotonic() + MAPS_READY_WAIT
+        while time.monotonic() < end:
+            if ctx.cancel.is_set() or self._stopping:
+                return False
+            try:
+                if self.link.all_maps():
+                    return True
+            except link_mod.LinkError:
+                pass
+            with self._cv:
+                if ctx.cancel.is_set() or self._stopping:
+                    return False
+                self._cv.wait(MAPS_READY_POLL)
+        return True
 
     # ---- a job
 
@@ -802,27 +1290,34 @@ class Runner:
             events.emit("job.state", id=own(job_id), state=own(card.state))
             return True
 
-        ctx = _Ctx(job=job, builtin=False, row=None, cancel=cancel, log=jl, on_op=on_op, on_wait=on_wait)
+        ctx = _Ctx(job=job, builtin=False, row=None, cancel=cancel, log=jl, on_op=on_op, on_wait=on_wait, card=card)
         try:
             jl.info("started: %s operations", logbook.n(len(job.ops)))
+            self._open_progress(ctx, job_id)
+            self._version_start(ctx)
             outcome, fail = self._execute(ctx)
+            if outcome == "done" and ctx.progress is not None:
+                ctx.progress.clear()
+            version, changes, ran = self._version_done(ctx) if outcome == "done" else (None, None, None)
             secs = time.monotonic() - started
             with self._lock:
                 card.wait = None
                 if outcome == "done":
                     share = ctx.share
-                    card.result = {"share": share, "local": list(ctx.local), "failed": None}
+                    card.result = {"share": share, "local": list(ctx.local), "failed": None, "version": version,
+                                   "changes": changes}
+                    card.ran = ran
                     card.state = "done"
                     jl.info("done in %s s: %s local files, %s", logbook.n(secs), logbook.n(len(ctx.local)),
                             own("a share file" if share else "no share file"))
                 elif outcome == "failed":
                     assert fail is not None
-                    card.result = {"share": None, "local": list(ctx.local), "failed": fail}
+                    card.result = {"share": None, "local": list(ctx.local), "failed": fail, "kept": self._kept(ctx)}
                     card.state = "failed"
                     jl.error("failed at op %s (%s): %s", fail["op"], own(job.ops[fail["op"]]["op"]),
                              own(fail["why"]))
                 else:
-                    card.result = {"share": None, "local": list(ctx.local), "failed": None}
+                    card.result = {"share": None, "local": list(ctx.local), "failed": None, "kept": self._kept(ctx)}
                     card.state = "stopped" if self._stopping and not card.remove_after else "cancelled"
                     jl.info("%s between calls", own(card.state))
                     for o in card.ops:
@@ -832,6 +1327,111 @@ class Runner:
             events.emit("job.state", id=own(job_id), state=own(card.state))
         finally:
             jl.close()
+
+    # ---- DP23 (S71): game versions
+
+    def _version_start(self, ctx: _Ctx) -> None:
+        """The run's version, from the provenance at its start; and when the job's last completed run was on another
+        one, that run's record, so that what this run reads is compared with what it read."""
+        ctx.vprov = self._prov()
+        ctx.vkey = versions.key_of(ctx.vprov)
+        with self._lock:
+            ran = ctx.card.ran if ctx.card is not None else None
+        if ran and ran.get("key") and ctx.vkey and ran["key"] != ctx.vkey:
+            ctx.prior = ran
+            ctx.log.info("the last run was on %s and this one is on %s: what it reads is compared with what that run "
+                         "read", own(versions.label(ran["key"])), own(versions.label(ctx.vkey)))
+
+    def _kept_param(self, ctx: _Ctx, o: dict, cols: list[tuple[str, str]]) -> dict | None:
+        """The last version's kept read of this fetch_rows, when this run is on a version of the same regulation and
+        Smithbox build and the read is of the same job file and fields; else None (the rows are read)."""
+        prior = ctx.prior
+        if ctx.builtin or prior is None or ctx.vkey is None or not versions.params_same(prior["key"], ctx.vkey):
+            return None
+        p = self.paths
+        folder = versions.find(p, prior["key"])
+        doc = versions.load_read(p, folder, ctx.job.id, o["as"])
+        if doc is None or doc["kind"] != "fetch_rows" or doc["job_sha256"] != ctx.job.sha256 or \
+                doc["param"] != o["param"] or doc["columns"] != [{"name": c, "type": t} for c, t in cols]:
+            return None
+        if ctx.job.share_name is not None and doc.get("listed") is None:
+            return None                                    # check 6 needs the param's rows as Smithbox lists them
+        doc["_folder"] = folder
+        return doc
+
+    def _before_write(self, ctx: _Ctx) -> None:
+        """Before a run on a new version writes its first output, the job's outputs of the last version (its workspace
+        files and its share file, by the names its write operations give) move into that version's folder, once, so
+        that nothing of that version is written over. Raises _Fail, writing nothing, when they cannot."""
+        prior = ctx.prior
+        if ctx.builtin or prior is None or prior.get("moved"):
+            return
+        from .guard import counts_entry, forget_counts
+
+        p = self.paths
+        old = versions.label(prior["key"])
+        share = entry = None
+        try:
+            local = [(paths_mod.local_file(p, ctx.job.id, o["name"]), o["name"] + ".json")
+                     for o in ctx.job.ops if o["op"] == "write_local"]
+            if ctx.job.share_name:
+                share = (paths_mod.share_file(p, ctx.job.share_name), ctx.job.share_name + ".json")
+                entry = counts_entry(p.share_counts, share[1])
+            folder = versions.ensure(p, prior["key"])
+            n = versions.keep_outputs(p, folder, ctx.job.id, local, share, entry)
+        except (OSError, ValueError, deleted.BinError) as e:
+            raise _Fail("the outputs of %s could not be moved into that version's folder, so nothing is written over "
+                        "them: %s" % (old, logbook.why(e))) from None
+        if share is not None and not share[0].exists() and entry is not None:
+            try:
+                forget_counts(p.share_counts, share[1])
+            except OSError as e:
+                ctx.log.warn("the moved share file's row counts stay recorded: %s", logbook.why(e))
+        with self._lock:
+            prior["moved"] = True
+            if ctx.card is not None:
+                self._save(ctx.card)
+        if n:
+            ctx.log.info("the outputs of %s (%s files) moved into that version's folder in the workspace before this "
+                         "run writes its own", own(old), logbook.n(n))
+            events.emit("versions.changed")
+
+    def _version_done(self, ctx: _Ctx) -> tuple[str | None, dict | None, dict]:
+        """A completed run: what it read is kept for its version, compared with the last version's when the job last
+        ran on another one (a change report in the workspace), and recorded as the job's last completed run. (the
+        version's label, the card's summary of the changes, the record)."""
+        key = ctx.vkey
+        ran = {"key": key, "at": time.time(), "kept": False, "moved": False}
+        if key is None:
+            ctx.log.warn("the provenance block is not complete, so what this run read is not kept by game version")
+            return None, None, ran
+        p = self.paths
+        here = versions.label(key)
+        folder = None
+        try:
+            folder = versions.ensure(p, key)
+            n = versions.write_reads(p, folder, ctx.job.id, ctx.job.sha256, ctx.vprov,
+                                     [ctx.reads[k] for k in sorted(ctx.reads)])
+            ran["kept"] = True
+            if n:
+                ctx.log.info("what this run read is kept for %s: %s tables", own(here), logbook.n(n))
+        except (OSError, ValueError) as e:
+            ctx.log.warn("what this run read could not be kept for %s: %s", own(here), logbook.why(e))
+        self._vcount = None
+        changes = None
+        if ctx.prior is not None and folder is not None and ran["kept"] and ctx.reads:
+            old_key = ctx.prior["key"]
+            try:
+                report = versions.compare(p, ctx.job.id, versions.find(p, old_key), folder, a_key=old_key)
+                where = versions.write_report(p, folder, ctx.job.id, report)
+            except (OSError, ValueError) as e:
+                ctx.log.warn("the change report could not be made: %s", logbook.why(e))
+            else:
+                changes = {"from": report["from"]["label"], "to": report["to"]["label"], "lines": report["lines"],
+                           "report": where}
+                for line in report["lines"]:
+                    ctx.log.info("changes since %s: %s", own(changes["from"]), own(line))
+        return here, changes, ran
 
     # ---- an Extract row
 
@@ -917,6 +1517,8 @@ class Runner:
                     return "cancelled", None
                 if op in jobs.LINK_OPS and not self._wait_for_link(ctx.cancel, ctx.on_wait):
                     return "cancelled", None
+                if op == "load_maps" and not ctx.builtin and not self._wait_for_build(ctx):
+                    return "cancelled", None
                 ctx.on_op(i, "running", 0, None, None)
                 t0 = time.monotonic()
                 try:
@@ -977,10 +1579,44 @@ class Runner:
         op = o["op"]
         if op == "fetch_rows":
             return self._fetch_rows(ctx, i, o)
+        if op == "check_fields":
+            return self._check_fields(ctx, i, o)
+        if op == "read_map_tiles":
+            return self._read_map_tiles(ctx, i, o)
+        if op == "check_map_tiles":
+            return self._check_map_tiles(ctx, i, o)
+        if op == "make_map_overview":
+            return self._make_map_overview(ctx, i, o)
         if op == "load_maps":
-            maps = list(o["maps"])
-            n = self.link.open_maps(maps, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
-            return n, len(maps)
+            maps = self._resolve_maps(o["maps"])
+            t0 = time.monotonic()
+            # S63: a map whose placements this run or an earlier one read and kept is not loaded again.
+            if not ctx.plan:
+                ctx.plan = list(maps)
+            kept = [m for m in maps if m in ctx.kept]
+            todo = [m for m in maps if m not in ctx.kept]
+            if kept:
+                ctx.log.info("op %s load_maps: %s of %s maps were read before and are kept; they are not loaded again",
+                             i, logbook.n(len(kept)), logbook.n(len(maps)))
+            # S52: the card shows maps loaded of maps to load, and the time so far, at every poll.
+            kw = {"timeout": float(o["timeout"])} if o.get("timeout") is not None else {}
+            kw.update(self._map_limits(ctx, i))
+            if ctx.progress is not None:
+                reads = self._maps_read_later(ctx, i)
+                kw["on_loaded"] = lambda m: self._read_now(ctx, m) if m in reads else None
+                if MAPS_PER_SESSION:
+                    kw["session_cap"] = MAPS_PER_SESSION
+            n = self.link.open_maps(todo, cancel=ctx.cancel, progress=lambda d, t: ctx.on_op(
+                i, "running", d, t, round(time.monotonic() - t0, 1)), **kw)
+            capped = getattr(self.link, "capped", None) if ctx.progress is not None else None
+            if capped:
+                done = sum(1 for m in maps if m in ctx.kept)
+                raise _Fail("paused, to spare Smithbox and the graphics driver: Smithbox holds %d maps, the most a job "
+                            "asks it to hold at once. %d of %d maps are read and kept. Close Smithbox, start it again, "
+                            "then press Start again here: the job goes on from there" % (capped[0], done, len(maps)))
+            return n + len(kept), len(maps)
+        if op == "unused_names":
+            return self._unused_names(ctx, i, o)
         if op == "read_placements":
             return self._read_placements(ctx, i, o)
         if op == "join_names":
@@ -988,6 +1624,11 @@ class Runner:
         if op == "filter":
             cols, rows = ctx.tables[o["rows"]]
             keep = _predicate(o.get("where"), cols)
+            if o.get("slots") == "boss":
+                e = [c for c, _ in cols].index("entityId")
+                lo, hi = jobs.BOSS_SLOTS
+                where_keep = keep
+                keep = lambda r, w=where_keep: isinstance(r[e], int) and r[e] > 0 and lo <= r[e] % 1000 <= hi and w(r)  # noqa: E731
             if o.get("ids") is not None:
                 j = [c for c, _ in cols].index(o["key"])
                 picked = frozenset(o["ids"])
@@ -1005,14 +1646,138 @@ class Runner:
             ctx.tables[o["as"]] = ([cols[j] for j in idx], seen)
             return len(seen), len(rows)
         if op == "write_local":
+            self._before_write(ctx)
             return self._write_local(ctx, o)
         if op == "write_share":
+            self._before_write(ctx)
             return self._write_share(ctx, i, o)
         raise _Fail("an operation DataPiler does not have")
 
+    def _read_map_tiles(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S73 (DP25): the map tiles exported from Smithbox, anywhere in DataPiler's folder (the Deleted bin, the
+        environment, logs and update downloads left out). Numbers only; no path reaches a table or a log line."""
+        ctx.on_op(i, "running", 0, None, None)
+        try:
+            rows, n = textures.find_tiles(self.paths.root, skip=(self.paths.bin, self.paths.root / "update"),
+                                          cancel=ctx.cancel, progress=lambda d: ctx.on_op(i, "running", d, None, None))
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        ctx.tables[o["as"]] = (list(textures.COLUMNS), [tuple(r) for r in rows])
+        ctx.log.info("op %s read_map_tiles: %s map tile files found (%s distinct) among %s files in DataPiler's folder",
+                     i, logbook.n(n["found"]), logbook.n(len(rows)), logbook.n(n["looked"]))
+        if n["unread"]:
+            ctx.log.info("op %s read_map_tiles: the size of %s of them is not read (not a PNG, DDS or BMP header)", i,
+                         logbook.n(n["unread"]))
+        if n["stopped"]:
+            ctx.log.warn("op %s read_map_tiles: stopped after %s files; the folder holds more", i,
+                         logbook.n(textures.MAX_FILES))
+        if not rows:
+            ctx.log.warn("op %s read_map_tiles: no exported map tile was found - export them from Smithbox's Texture "
+                         "Viewer into a folder inside DataPiler's folder", i)
+        return len(rows), n["found"]
+
+    def _check_map_tiles(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S78: for each exported tile of a sheet's level, which folder it was found in (numbered), its copies, how
+        much differs from its base, and how well it matches the next level. Numbers only; no path reaches the log."""
+        ctx.on_op(i, "running", 0, None, None)
+        try:
+            ts = textures.tile_set(self.paths.root, o["sheet"], skip=(self.paths.bin, self.paths.root / "update"),
+                                   cancel=ctx.cancel)
+            rows, n = textures.check_level(ts, o["level"], cancel=ctx.cancel,
+                                           progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        except ValueError as e:
+            raise _Fail(str(e)) from None
+        except OSError as e:
+            raise _Fail("a tile could not be read: %s" % logbook.why(e)) from None
+        ctx.tables[o["as"]] = (list(textures.TILE_CHECK_COLUMNS), rows)
+        ctx.log.info("op %s check_map_tiles: %s tiles at %s positions, found in %s folders; compared with level %s (-1: none nests with it); "
+                     "%s variants look like another image's", i, logbook.n(n["tiles"]), logbook.n(n["positions"]),
+                     logbook.n(n["folders"]), n["near_level"], logbook.n(n["other_image"]))
+        if not rows:
+            ctx.log.warn("op %s check_map_tiles: no exported PNG tile of that sheet and level was found", i)
+        return len(rows), len(rows)
+
+    def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to
+        workspace/local/<job>/<name>.png on the PC. Never shared; no path reaches the log."""
+        ctx.on_op(i, "running", 0, None, None)
+        try:
+            data, n = textures.overview(self.paths.root, o["sheet"], o["level"], rows_from=o.get("rows_from", "bottom"),
+                                        variant=o.get("variant", "revealed"), code=o.get("code"),
+                                        check=o.get("check", True), min_match=o.get("min_match", textures.MATCH_MIN),
+                                        labels=o.get("labels", False), shrink=o.get("shrink", 1),
+                                        skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
+                                        progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        except ValueError as e:
+            raise _Fail(str(e)) from None
+        except OSError as e:
+            raise _Fail("a tile could not be read: %s" % logbook.why(e)) from None
+        try:
+            path = paths_mod.local_image(self.paths, "extract" if ctx.builtin else ctx.job.id, o["name"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(path, data)
+        except ValueError:
+            raise _Fail("not a file name DataPiler writes") from None
+        except OSError as e:
+            raise _Fail("the workspace image could not be written: %s" % logbook.why(e)) from None
+        name = o["name"] + ".png"
+        ctx.local.append(name)
+        ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants, %s variants left "
+                     "out as another image's), %s by %s pixels, %s bytes (local, never shared)", own(name),
+                     logbook.n(n["tiles"]), logbook.n(n["joined"]), logbook.n(n["left_out"]), logbook.n(n["width"]),
+                     logbook.n(n["height"]), logbook.n(len(data)))
+        return n["tiles"], n["tiles"]
+
+    def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S67: one row per field the job names: its place in the job's list, whether the server's answer for the
+        param's first row has it, and its type as a number (fields.type_code). No value and no name is kept."""
+        names = list(o["fields"])
+        ctx.on_op(i, "running", 0, len(names), None)
+        types = self.link.field_types(o["param"])
+        rows = [[j, f in types, fields.type_code(types.get(f))] for j, f in enumerate(names)]
+        ctx.checked.setdefault(o["param"], {}).update({f: types[f] for f in names if f in types})
+        ctx.tables[o["as"]] = ([c for c in jobs.CHECK_COLUMNS], rows)
+        found = sum(1 for r in rows if r[1])
+        ctx.log.info("op %s check_fields: %s of %s fields named are in the server's answer", i, logbook.n(found),
+                     logbook.n(len(names)))
+        return found, len(names)
+
     def _fetch_rows(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         param = o["param"]
-        cols = [("id", "int")] + [(f, fields.PARAMS[param][f]) for f in o["fields"] if f != "id"]
+        cols = [("id", "int")]
+        for j, f in enumerate(o["fields"]):
+            if f == "id":
+                continue
+            listed_type = fields.PARAMS[param].get(f)
+            if listed_type is None:
+                # DP24 (S72): read only once this job's check_fields found it, with the type the server named.
+                found = ctx.checked.get(param, {})
+                if f not in found:
+                    raise _Fail("field %d of this read is not in the server's answer (its check_fields found no such "
+                                "field), so nothing is read" % j)
+                listed_type = fields.checked_type(found[f])
+                if listed_type is None:
+                    raise _Fail("field %d of this read is text or of a type DataPiler does not read" % j)
+            cols.append((f, listed_type))
+        old = self._kept_param(ctx, o, cols)
+        if old is not None:
+            # DP23 (S71): the regulation and Smithbox's build are those of the last run's version, so the param's rows
+            # cannot have changed: the rows kept from that version are this version's too, and are not read again.
+            rows = [tuple(r) for r in old["rows"]]
+            ctx.on_op(i, "running", len(rows), len(rows), None)
+            ctx.tables[o["as"]] = (cols, rows)
+            if old.get("listed") is not None:
+                ctx.sources[i] = _Source(param, old["listed"], len({r[0] for r in rows}) == len(rows))
+            ctx.reads[i] = {"op": i, "kind": "fetch_rows", "table": o["as"], "param": param, "columns": cols,
+                            "listed": old.get("listed"), "rows": rows, "kept_from": old["_folder"]}
+            ctx.log.info("op %s fetch_rows: the regulation and Smithbox's build are those of %s, so the rows of %s "
+                         "cannot have changed: its %s rows kept from that version are used, not read again", i,
+                         own(versions.label(ctx.prior["key"])), own(param), logbook.n(len(rows)))
+            return len(rows), len(rows)
         ids = o.get("ids")
         listed: int | None = None
         if isinstance(ids, list):
@@ -1038,6 +1803,9 @@ class Runner:
                 row.append(v)
             rows.append(tuple(row))
         ctx.tables[o["as"]] = (cols, rows)
+        if not ctx.builtin:
+            ctx.reads[i] = {"op": i, "kind": "fetch_rows", "table": o["as"], "param": param, "columns": cols,
+                            "listed": listed, "rows": rows}
         if listed is not None:
             # Smithbox lists each row id once, but a row id may be held by more than one row: the share tables of this
             # read are measured by their ids only when no id repeats among the rows it read (S19).
@@ -1049,7 +1817,64 @@ class Runner:
                               logbook.n(time.monotonic() - t0))
         return len(rows), len(rows)
 
+    def _map_limits(self, ctx: _Ctx, i: int) -> dict:
+        """S59 (DP19): Smithbox's saved preferences, said in the log, set how long the first map may take: 10 s with
+        model rendering off, 300 s with it on (and a warning), none passed when they cannot be read."""
+        try:
+            prefs = smithbox_mod.map_prefs()
+        except Exception:
+            prefs = None
+        if not prefs or prefs.get("rendering") is None:
+            ctx.log.info("op %s load_maps: Smithbox's saved preferences could not be read - the first map may take "
+                         "as long as the job allows", i)
+            return {}
+        havok = "skipped" if prefs.get("skip_havok") else "loaded" if prefs.get("skip_havok") is False else "unknown"
+        if prefs["rendering"]:
+            ctx.log.warn("op %s load_maps: Smithbox's saved preferences have Enable Model Rendering on (Havok %s), so "
+                         "each map loads its models and textures, a minute or more for a big one: turn it off in "
+                         "Smithbox's Preferences, Viewport. The first map may take 300 s. (Smithbox saves its "
+                         "preferences when it closes, so a change made since may not show here.)", i, own(havok))
+            return {"first_timeout": 300.0}
+        ctx.log.info("op %s load_maps: Smithbox's saved preferences have model rendering off (Havok %s): 10 s a map "
+                     "before it is skipped for now", i, own(havok))
+        return {"first_timeout": 10.0}
+
+    def _resolve_maps(self, maps: Sequence[str]) -> list[str]:
+        """A job's map list with each family (`m10_*`, S45) replaced by the project's maps of that area, in order,
+        each once. Ids the project does not have stay; open_maps and read_placements skip them."""
+        fams = [m for m in maps if jobs.MAP_FAMILY_RX.fullmatch(m)]
+        known = list(self.link.all_maps()) if fams else []
+        out: list[str] = []
+        for m in maps:
+            for x in ([k for k in known if k.startswith(m[:-1])] if m in fams else [m]):
+                if x not in out:
+                    out.append(x)
+        return out
+
+    def _unused_names(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """The entries of a text set that no row of a table names (S47), with their layers and, locally, their
+        texts. Check 6 measures the table against the set's entries (a source of its own)."""
+        text = o["text"]
+        words = jobs.TEXT_WORDS[text]
+        lang = self.language()
+        from . import textdb as textdb_mod
+        pairs = textdb_mod.TEXT_SETS.get(text) or ()
+        if not any(self.textdb.has(c, lang) for c in dict.fromkeys(c for c, _ in pairs)):
+            raise _Fail("%s are not imported yet - run Extract's guided row for them first" % words.capitalize())
+        layers = self.textdb.layers(text, lang)
+        names = self.textdb.names(text, lang)
+        cols, rows = ctx.tables[o["rows"]]
+        k = [c for c, _ in cols].index(o["key"])
+        used = {r[k] for r in rows if isinstance(r[k], int) and not isinstance(r[k], bool)}
+        out = [(n, layers[n], names.get(n)) for n in sorted(layers) if n not in used]
+        ctx.tables[o["as"]] = (list(jobs.UNUSED_COLUMNS), out)
+        ctx.sources[i] = _Source(text, len(layers), True)
+        ctx.log.info("op %s unused_names: %s of %s entries of %s are named by no row of %s", i,
+                     logbook.n(len(out)), logbook.n(len(layers)), own(text), own(o["rows"]))
+        return len(out), len(layers)
+
     def _read_placements(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        not_loaded: list[str] = []
         if o["maps"] == "all":
             maps = list(self.link.loaded_maps())
             if not maps:
@@ -1057,22 +1882,47 @@ class Runner:
                     self._map_hint = "load the maps in Smithbox first"
                 raise _Fail("no map is loaded in Smithbox - load the maps in Smithbox first")
         else:
-            maps = list(o["maps"])
+            maps = self._resolve_maps(o["maps"])
+            known = set(self.link.all_maps())
+            # S57: a map load_maps skipped (it would not load) is left out here too, with a log line.
+            skip = set(getattr(self.link, "skipped_maps", None) or ())
+            skip = {m for m in skip if not self.link.is_loaded(m)} if skip and hasattr(self.link, "is_loaded") else skip
+            if skip & set(maps):
+                ctx.log.info("op %s read_placements: %s maps that did not load are left out", i,
+                             logbook.n(len(skip & set(maps))))
+            not_loaded = sorted(skip & set(maps))
+            maps = [m for m in maps if m not in skip]
+            have = [m for m in maps if m in known]
+            if len(have) < len(maps):
+                # A map id the project does not have is skipped; a map it has but has not loaded fails, clearly.
+                ctx.log.info("op %s read_placements: %s of %s map ids are not maps of this Smithbox project and were "
+                             "skipped", i, logbook.n(len(maps) - len(have)), logbook.n(len(maps)))
+            maps = have
         rows: list[tuple] = []
         per_map: dict[str, int] = {}
+        read: dict[str, list[tuple]] = {}
+        t0 = time.monotonic()
+        if o["maps"] != "all" and not ctx.plan:
+            ctx.plan = list(maps)
         ctx.on_op(i, "running", 0, len(maps), None)
+        kept = sum(1 for m in maps if m in ctx.kept)
+        if kept and o["maps"] != "all":
+            ctx.log.info("op %s read_placements: %s of %s maps come from what was read and kept", i, logbook.n(kept),
+                         logbook.n(len(maps)))
         for k, m in enumerate(maps):
             if ctx.cancel.is_set():
                 raise _Cancelled()
-            n = 0
-            for p in self.link.placements(m):
-                row = (p.map, p.entity_id, p.npc_param_id, p.talk_id, p.model)
-                if not all(_type_ok("int", v) for v in row):
-                    raise _Fail("the server sent a placement that is not numbers only")
-                rows.append(row)
-                n += 1
+            got = ctx.kept.get(m) if o["maps"] != "all" else None
+            if got is None:
+                got = self._placements_of(m)
+                if ctx.progress is not None and o["maps"] != "all":
+                    ctx.kept[m] = got
+                    ctx.progress.add(m, got)
+            rows.extend(got)
+            read[m] = list(got)
+            n = len(got)
             per_map[m] = min(n, per_map.get(m, n))
-            ctx.on_op(i, "running", k + 1, len(maps), None)
+            ctx.on_op(i, "running", k + 1, len(maps), round(time.monotonic() - t0, 1))
         ctx.tables[o["as"]] = (list(jobs.PLACEMENT_COLUMNS), rows)
         # Check 6: the placements of every map the job read, a map read twice counted once (the lower count).
         for m, n in per_map.items():
@@ -1081,7 +1931,70 @@ class Runner:
         if ctx.builtin:
             ctx.fetched += len(rows)
             ctx.unit = "placements"
+        else:
+            ctx.reads[i] = {"op": i, "kind": "read_placements", "table": o["as"],
+                            "columns": list(jobs.PLACEMENT_COLUMNS), "maps": read, "not_loaded": not_loaded}
         return len(maps), len(maps)
+
+    @staticmethod
+    def _kept(ctx: _Ctx) -> dict | None:
+        """S66: what Resume goes on from - maps read and kept of the maps the job reads, and the first it has yet to
+        read - or None when nothing is kept."""
+        if ctx.progress is None or not ctx.kept:
+            return None
+        if ctx.plan:
+            done = [m for m in ctx.plan if m in ctx.kept]
+            nxt = next((k for k, m in enumerate(ctx.plan) if m not in ctx.kept), None)
+            return {"maps": len(done), "of": len(ctx.plan), "next": ctx.plan[nxt] if nxt is not None else None,
+                    "next_n": nxt + 1 if nxt is not None else None}
+        return {"maps": len(ctx.kept), "of": None, "next": None, "next_n": None}
+
+    def _placements_of(self, map_id: str) -> list[tuple]:
+        """The placed characters of one loaded map, as rows of numbers (PLACEMENT_COLUMNS)."""
+        out: list[tuple] = []
+        for p in self.link.placements(map_id):
+            row = (p.map, p.entity_id, p.npc_param_id, p.talk_id, p.model)
+            if not all(_type_ok("int", v) for v in row):
+                raise _Fail("the server sent a placement that is not numbers only")
+            out.append(row)
+        return out
+
+    def _open_progress(self, ctx: _Ctx, card_id: str) -> None:
+        """S63: a job that reads placements of named maps keeps them as it reads them; what an earlier run of the
+        same job, on the same game and Smithbox, kept is taken up."""
+        if not any(o["op"] == "read_placements" and o["maps"] != "all" for o in ctx.job.ops):
+            return
+        prov = self._prov()
+        if prov is None:
+            # Not known which game the saved progress is of: this run keeps none, and leaves what is saved in place.
+            ctx.log.warn("the provenance block is not complete, so this run keeps no map progress and leaves the saved "
+                         "progress where it is")
+            return
+        key = {"job_sha256": ctx.job.sha256, **{k: prov.get(k) for k in MAPS_KEY}}
+        ctx.progress = _MapProgress(self._folder(card_id) / MAPS_FILE, key,
+                                    drop=lambda: self._bin_stale_progress(card_id))
+        ctx.kept = ctx.progress.load()
+        if ctx.progress.stale:
+            ctx.progress, ctx.kept = None, {}
+        if ctx.kept:
+            ctx.log.info("%s maps read by an earlier run of this job are kept and not read again",
+                         logbook.n(len(ctx.kept)))
+
+    def _maps_read_later(self, ctx: _Ctx, i: int) -> set[str]:
+        """The maps a read_placements after op i names, so load_maps can read each as soon as it loads (S63)."""
+        out: set[str] = set()
+        for o in ctx.job.ops[i + 1:]:
+            if o["op"] == "read_placements" and o["maps"] != "all":
+                out.update(self._resolve_maps(o["maps"]))
+        return out
+
+    def _read_now(self, ctx: _Ctx, map_id: str) -> None:
+        """S63: read a map's placements as soon as it loads, and keep them on disk at once."""
+        if map_id in ctx.kept or ctx.progress is None:
+            return
+        rows = self._placements_of(map_id)
+        ctx.kept[map_id] = rows
+        ctx.progress.add(map_id, rows)
 
     def _join_names(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         from . import textdb as textdb_mod
@@ -1184,13 +2097,18 @@ class Runner:
         tables = []
         declared: dict[str, list[str]] = {}
         coverage: dict[str, tuple[str | None, int, str] | None] = {}
+        map_coords = jobs.MAP_COORDS in (o.get("notes") or [])
         for t, cols, rows in chosen:
             if any(typ not in ("int", "number", "bool") for _, typ in cols):
                 raise _Fail("a column of local text cannot go into a share file")
             tables.append({"name": t, "columns": [{"name": c, "type": typ} for c, typ in cols],
                            "rows": [list(r) for r in rows]})
             declared[t] = [c for c, _ in cols]
-            coverage[t] = self._coverage(ctx, t, declared[t])
+            lin = ctx.job.lineage.get(t)
+            if map_coords and lin is not None and lin.kind == "raw" and jobs._map_rows(lin, self._source_params(ctx)):
+                coverage[t] = None                   # DP21 (S69): a map table's rows whole, for research
+            else:
+                coverage[t] = self._coverage(ctx, t, declared[t])
         data = self.guard.build(job_id=ctx.job.id, job_sha256=ctx.job.sha256, provenance=prov, tables=tables,
                                 notes=list(o.get("notes") or []))
         results = self.guard.check(data, declared=declared, coverage=coverage)
@@ -1199,6 +2117,10 @@ class Runner:
             self.guard.write(self.paths.share, o["name"], data, declared=declared, coverage=coverage)
         ctx.share = (i, o["name"], data, declared, coverage)
         return 1, 1
+
+    @staticmethod
+    def _source_params(ctx: _Ctx) -> dict[int, str]:
+        return {k: o["param"] for k, o in enumerate(ctx.job.ops) if o["op"] == "fetch_rows"}
 
     @staticmethod
     def _coverage(ctx: _Ctx, table: str, columns: list[str]) -> tuple[str | None, int, str] | None:
@@ -1213,15 +2135,35 @@ class Runner:
         lin = ctx.job.lineage.get(table)
         if lin is not None and not lin.per_row and list(columns) == ["count"]:
             return None
+        if lin is not None and lin.source_op in ("check_fields", "read_map_tiles", "check_map_tiles"):
+            return None                          # S67, S73: what fields or files are, never rows of a game table
         src = ctx.sources.get(lin.source) if lin is not None and lin.source is not None else None
         if lin is None or src is None:
             return (None, 0, UNKNOWN_SOURCE)
         if src.table == PLACEMENTS:
             return (None, sum(ctx.placed.values()), PLACEMENTS)
+        if src.table in jobs.TEXTS:
+            # DP17 (settled S48): what unused_names makes holds name numbers and layers only, never a text, and is not
+            # held to check 6's half.
+            return None
         of = src.of if src.of is not None else 0
         if src.unique and lin.id_col is not None and lin.id_col in columns:
             return (lin.id_col, of, src.table)
         return (None, of, src.table)
+
+
+def _ran_checked(v: object) -> dict | None:
+    """A card's saved record of its last completed run (DP23), checked: {"key": a version key or None, "at", "kept",
+    "moved"}; None for anything else."""
+    if not isinstance(v, dict):
+        return None
+    key = v.get("key")
+    if key is not None and versions.key_of(key) != key:
+        return None
+    at = v.get("at")
+    return {"key": dict(key) if key else None,
+            "at": float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None,
+            "kept": v.get("kept") is True, "moved": v.get("moved") is True}
 
 
 def _guard_why(e: GuardFailed) -> str:

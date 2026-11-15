@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import (VERSION, detect as detect_mod, dirs as dirs_mod, events, fileio, link as link_mod, logbook,
+from . import (VERSION, deleted, detect as detect_mod, dirs as dirs_mod, events, fileio, link as link_mod, logbook,
                paths as paths_mod, settings as settings_mod, winapi)
 from .logbook import own
 from .paths import Paths
@@ -28,13 +28,29 @@ FILE_RX = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\.json")
 SAFE_NAME_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 WORKSPACE_FILES = ("textdb.sqlite",)
 WORKSPACE_MOVES = ("The workspace moves at the next start; until then DataPiler keeps using the one it has. It does "
-                   "not move its files: before you start it again, move textdb.sqlite, inbox, imported and local from "
-                   "the old workspace into the new one, or the text exports are to be imported again.")
+                   "not move its files: before you start it again, move textdb.sqlite, inbox, imported, local, bin and "
+                   "versions from the old workspace into the new one, or the text exports are to be imported again.")
 PROJECT_ASK = ("Is the project open in Smithbox the project folder set in Settings? DataPiler cannot yet see which "
                "project Smithbox has open, and the server link must never read a project in the game's own folder. "
                "OK switches the link on; you are asked once a session.")
+# DP22: the pop-ups of a removal and of the Deleted bin. "word" is what the owner types in, or deleted.MOVE for a
+# pop-up without a text box; the API refuses the removal until the request carries it as "confirm".
+JOB_ASK = "Move the job %s to the Deleted bin? Restore there puts it back."
+JOB_ASK_KEPT = ("Move the job %s and its saved map progress to the Deleted bin? The progress is collected data: type "
+                "DELETE to go on. Restore there puts it back.")
+DATA_ASK = "Move %s to the Deleted bin? It is collected data: type DELETE to go on. Restore there puts it back."
+TEXT_ASK = ("Move the import %s (%s) to the Deleted bin? Jobs stop using its texts until you restore it or import it "
+            "again. It is collected data: type DELETE to go on.")
+ERASE_ASK = "Erase %s for good? This cannot be undone: type DELETE to go on."
+# The owner's rule of 2026-11-14: a run that would move saved map progress to the Deleted bin asks for DELETE too.
+START_ASK = ("Start the job %s again from the beginning? Its saved map progress is collected data: it moves to the "
+             "Deleted bin and the maps are read again. Type DELETE to go on. To go on from it, choose Resume job.")
+STALE_ASK = ("The job %s holds saved map progress of another game version or job file, which this run cannot use: it "
+             "moves to the Deleted bin. It is collected data: type DELETE to go on.")
+RUN_BUTTONS = {"start": "Start again", "resume": "Resume job", "update": "Update data"}
+EMPTY_ASK = "Erase everything in the Deleted bin for good (%s)? This cannot be undone: type DELETE to go on."
 LEVELS = logbook.LEVELS
-ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths")
+ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths", "map_opengl")
 FOLDER_WANTS = {"smithbox_dir": "smithbox", "game_dir": "game", "project_dir": "project"}
 _PATH_CONTROL_RX = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -158,7 +174,9 @@ class Api:
         # Outputs' guard results, per share file: (mtime_ns, size, text generation) -> (ok, first failed check)
         self._passed: dict[str, tuple[tuple[int, int, int], bool, int | None]] = {}
         self._text_gen = 0
-        self._unsub = [events.subscribe(t, self._bump) for t in ("inbox.import", "local.written", "share.written")]
+        self._unsub = [events.subscribe(t, self._bump)
+                       for t in ("inbox.import", "local.written", "share.written", "bin.changed",
+                                 "versions.changed")]
         self._unsub.append(events.subscribe("textdb.changed", self._on_text))
 
     def close(self) -> None:
@@ -200,6 +218,12 @@ class Api:
             return 200, self.settings_view()
         if path == "/api/imported":
             return 200, self.imported()
+        if path == "/api/bin":
+            return 200, self.bin_list()
+        if path == "/api/versions":
+            return 200, self.versions(query.get("job", ""))
+        if path == "/api/versions/compare":
+            return 200, self.compare(query.get("job", ""), query.get("a", ""), query.get("b", ""))
         # UPDATE's routes (build plan 0.2 §3.3): forwarded as they are, and nothing else of api.py reaches update.py.
         if path == "/api/update":
             if self.updates is None:
@@ -271,7 +295,9 @@ class Api:
         for folder, default in ((p.local, None), (p.imported, "guided import")):
             if not folder.is_dir():
                 continue
-            for f in sorted(folder.rglob("*.json")):
+            # S75: the images a job makes on the PC (local only) are listed with the workspace files
+            found = list(folder.rglob("*.json")) + (list(folder.rglob("*.png")) if folder == p.local else [])
+            for f in sorted(found):
                 if f.is_file():
                     item = self._file(p.workspace, f, made_by, default)
                     if item:
@@ -408,8 +434,13 @@ class Api:
             "/api/extract/run": self.extract_run,
             "/api/extract/cancel": self.extract_cancel,
             "/api/imported/remove": self.imported_remove,
+            "/api/outputs/remove": self.outputs_remove,
+            "/api/bin/restore": self.bin_restore,
+            "/api/bin/erase": self.bin_erase,
+            "/api/bin/empty": self.bin_empty,
             "/api/jobs/drop": self.drop,
             "/api/jobs/act": self.act,
+            "/api/jobs/order": self.order,
             "/api/open": self.open_folder,
             "/api/copy-path": self.copy_path,
             "/api/settings": self.save_settings,
@@ -508,16 +539,117 @@ class Api:
                 "ready": [{"set": s, "words": jobs_mod.TEXT_WORDS.get(s, s)} for s in ready]}
 
     def imported_remove(self, body: dict) -> dict:
+        """DP22: an import of the text database to the Deleted bin, its rows kept exactly, once DELETE is typed in."""
         container = _str(body, "container", 32)
         language = _str(body, "language", 8)
-        if not container or not language:
+        if not deleted.CONTAINER_RX.fullmatch(container) or not deleted.LANGUAGE_RX.fullmatch(language):
             return {"ok": False, "error": "no such import"}
         if getattr(self.runner, "busy", lambda: None)():
             return {"ok": False, "error": "a job or an Extract run is going - remove it when it ends"}
-        ok = self.textdb.remove(container, language)
-        if ok:
-            self._log.info("the import %s (%s) removed from the text database", own(container), own(language))
-        return {"ok": ok} if ok else {"ok": False, "error": "no such import"}
+        if not self.textdb.has(container, language):
+            return {"ok": False, "error": "no such import"}
+        if body.get("confirm") != deleted.WORD:
+            return _ask("Remove the import?", TEXT_ASK % (container, language), deleted.WORD)
+        try:
+            item = deleted.remove_text(self.live.paths, self.textdb, container, language)
+        except deleted.BinError as e:
+            return {"ok": False, "error": str(e)}
+        except OSError as e:
+            return {"ok": False, "error": "Not moved to the Deleted bin: %s." % logbook.why(e)}
+        if item is None:
+            return {"ok": False, "error": "no such import"}
+        self._log.info("the import %s (%s) moved from the text database to the Deleted bin", own(container),
+                       own(language))
+        return {"ok": True, "item": item}
+
+    def outputs_remove(self, body: dict) -> dict:
+        """DP22: a share file, or a workspace file under local/ or imported/, to the Deleted bin, once DELETE is typed
+        in. The share file's kept row counts go with it."""
+        _only(body, ("area", "name", "confirm"))
+        area = body.get("area")
+        name = _str(body, "name", 300)
+        p = self.live.paths
+        if area == "share":
+            if not FILE_RX.fullmatch(name) or not (p.share / name).is_file():
+                return {"ok": False, "error": "no such share file"}
+            shown = "the share file " + name
+        elif area == "workspace":
+            if deleted.workspace_parts(name) is None:
+                return {"ok": False, "error": "only the files under local and imported can be removed here"}
+            if not (p.workspace / name).is_file():
+                return {"ok": False, "error": "no such workspace file"}
+            shown = "the workspace file " + name
+        else:
+            raise Bad("area must be workspace or share")
+        if body.get("confirm") != deleted.WORD:
+            return _ask("Delete the file?", DATA_ASK % shown, deleted.WORD)
+        try:
+            item = deleted.remove_share(p, name) if area == "share" else deleted.remove_workspace_file(p, name)
+        except deleted.BinError as e:
+            return {"ok": False, "error": str(e)}
+        except OSError as e:
+            return {"ok": False, "error": "Not moved to the Deleted bin: %s." % logbook.why(e)}
+        if area == "share":
+            with self._lock:
+                self._passed.pop(name, None)
+        return {"ok": True, "item": item}
+
+    # ------------------------------------------------------------------------------------------------ the Deleted bin
+
+    def bin_list(self) -> dict:
+        """GET /api/bin (DP22): the items, the newest first, and their size together."""
+        items = deleted.items(self.live.paths)
+        return {"items": items, "size": sum(x["size"] for x in items)}
+
+    def bin_restore(self, body: dict) -> dict:
+        """An item back where it came from, never over a file of the same name."""
+        _only(body, ("id",))
+        iid = _str(body, "id", 64)
+        p = self.live.paths
+        try:
+            meta = deleted.item(p, iid)
+            if meta["kind"] == "text" and getattr(self.runner, "busy", lambda: None)():
+                return {"ok": False, "error": "a job or an Extract run is going - restore it when it ends"}
+            out = deleted.restore(p, iid, runner=self.runner, textdb=self.textdb)
+        except deleted.BinError as e:
+            return {"ok": False, "error": str(e)}
+        except OSError as e:
+            return {"ok": False, "error": "Not restored: %s. %s" % (logbook.why(e), deleted.KEPT)}
+        return {"ok": True, "item": out}
+
+    def bin_erase(self, body: dict) -> dict:
+        """One item erased for good, once DELETE is typed in."""
+        _only(body, ("id", "confirm"))
+        iid = _str(body, "id", 64)
+        p = self.live.paths
+        try:
+            meta = deleted.item(p, iid)
+        except deleted.BinError as e:
+            return {"ok": False, "error": str(e)}
+        if body.get("confirm") != deleted.WORD:
+            what = "the %s %s" % (deleted.KINDS[meta["kind"]].lower(), meta["name"])
+            return _ask("Erase for good?", ERASE_ASK % what, deleted.WORD, "Erase")
+        try:
+            out = deleted.erase(p, iid)
+        except deleted.BinError as e:
+            return {"ok": False, "error": str(e)}
+        except OSError as e:
+            return {"ok": False, "error": "Not erased: %s." % logbook.why(e)}
+        return {"ok": True, "item": out}
+
+    def bin_empty(self, body: dict) -> dict:
+        """Every item erased for good, once DELETE is typed in."""
+        _only(body, ("confirm",))
+        p = self.live.paths
+        if body.get("confirm") != deleted.WORD:
+            n = len(deleted.items(p))
+            return _ask("Empty the Deleted bin?", EMPTY_ASK % ("1 item" if n == 1 else "%d items" % n), deleted.WORD,
+                        "Empty bin")
+        try:
+            n = deleted.empty(p)
+        except OSError as e:
+            return {"ok": False, "error": "The bin was not emptied: %s." % logbook.why(e)}
+        return {"ok": True, "erased": n}
 
     def drop(self, body: dict) -> dict:
         name = _str(body, "name", 260) or "job.json"
@@ -540,9 +672,49 @@ class Api:
         what = _str(body, "what", 16)
         confirm = _int_or_none(body, "confirm_maps")
         try:
+            if what == "remove":
+                # DP22: Remove asks first, and wants DELETE typed in when the job holds saved progress (collected data)
+                word = self.runner.removal_word(jid)
+                got = body.get("confirm")
+                if got != word and got != deleted.WORD:
+                    return _ask("Remove the job?", (JOB_ASK_KEPT if word == deleted.WORD else JOB_ASK) % jid, word)
+            elif what in RUN_BUTTONS:
+                # The owner's rule of 2026-11-14: a run that would move saved map progress to the Deleted bin (Start
+                # again always; Resume job and Update data when it is of another version) wants DELETE typed in
+                word = self.runner.start_word(jid, what)
+                if word is not None and body.get("confirm") != deleted.WORD:
+                    return _ask("Delete the saved progress?", (START_ASK if what == "start" else STALE_ASK) % jid,
+                                deleted.WORD, RUN_BUTTONS[what])
             return self.runner.act(jid, what, confirm_maps=confirm)
         except ValueError:
             raise Bad("no such job, or not something a job can do") from None
+
+    def order(self, body: dict) -> dict:
+        """POST /api/jobs/order {"ids": [...]}: the job cards' order, first on top (S74, DP26)."""
+        ids = body.get("ids")
+        if not isinstance(ids, list) or len(ids) > 5_000 or not all(isinstance(x, str) and len(x) <= 128 for x in ids):
+            raise Bad("ids must be a list of job ids")
+        try:
+            return self.runner.set_order(ids)
+        except ValueError:
+            raise Bad("not a job's id, or one named twice") from None
+
+    # ------------------------------------------------------------------------------------------------ versions (DP23)
+
+    def versions(self, job: str) -> dict:
+        """GET /api/versions?job=: the game versions a job has kept reads for. Local only."""
+        try:
+            return self.runner.versions_of(job)
+        except ValueError:
+            raise Bad("not a job id") from None
+
+    def compare(self, job: str, a: str, b: str) -> dict:
+        """GET /api/versions/compare?job=&a=&b=: what changed in a job's kept reads from version a to version b, by
+        row id and by map. Local only: it is made now and written nowhere."""
+        try:
+            return self.runner.compare_versions(job, a, b)
+        except ValueError:
+            raise Bad("pick two versions this job has kept reads for") from None
 
     def _area(self, body: dict) -> Path:
         area = body.get("area")
@@ -550,7 +722,13 @@ class Api:
             return self.live.paths.workspace
         if area == "share":
             return self.live.paths.share
-        raise Bad("area must be workspace or share")
+        if area == "job":
+            # S76: a job's own workspace folder, workspace/local/<job id>/, where its files and images are
+            job = body.get("job")
+            if not isinstance(job, str) or not paths_mod.name_ok(job) or not (self.live.paths.local / job).is_dir():
+                raise Bad("no workspace folder for that job")
+            return self.live.paths.local / job
+        raise Bad("area must be workspace, share or job")
 
     def open_folder(self, body: dict) -> dict:
         folder = self._area(body)
@@ -768,14 +946,23 @@ class Api:
         b = winapi.backend()
         words = [w for w in (b.user_name(), b.pc_name()) if w]
         out = []
+        left = {"3": 0, "4": 0}
         for ln in picked:
             text = line_text(ln)
+            # DP18 (settled S49): a failing line is left out, never copied, and counted; the rest is copied.
             if self.textdb.find_in(text):
-                return {"ok": False, "refused": {"check": 3, "line": ln["seq"]}}
+                left["3"] += 1
+                continue
             if owner_hit(text, words):
-                return {"ok": False, "refused": {"check": 4, "line": ln["seq"]}}
+                left["4"] += 1
+                continue
             out.append(text)
-        return {"ok": True, "text": "\n".join(out) + ("\n" if out else "")}
+        return {"ok": True, "text": "\n".join(out) + ("\n" if out else ""), "left_out": left}
+
+
+def _ask(title: str, text: str, word: str, button: str = "Move to the Deleted bin") -> dict:
+    """A removal refused until confirmed (DP22): the page's pop-up, then the same request with "confirm": word."""
+    return {"ok": False, "ask": {"title": title, "text": text, "word": word, "button": button}}
 
 
 def _only(body: dict, allowed: tuple[str, ...]) -> None:

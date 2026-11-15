@@ -187,6 +187,10 @@ Never: a pattern search over the text, a fallback to other keys or to `project.j
 lock or rename in Smithbox's folders, or a read of `Configuration.json` (it holds other folders of the owner's, and the
 two auto-load settings are not needed for the rule above).
 
+*2026-11-14, by DP19:* the one exception. Before a map job DataPiler reads `Configuration.json`, read only, and keeps
+two values of it, `Viewport_Enable_Rendering` and `MapEditor_SkipHavokLoad`; nothing else of it is kept, shown or
+logged (settled S59).
+
 **Privacy** (design 0002 §3.5, DP3): the names and paths stay in memory for the session; the masking filter learns
 each path as `<FOUND>`; the log names only sources and counts, for example "project: 2 places from Smithbox's
 project record, 1 open, 3 for another game, 1 not recognised"; and the "Mask paths on this page" switch (DP14)

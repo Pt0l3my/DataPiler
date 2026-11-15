@@ -64,6 +64,12 @@ class FakeRunner:
     def load_folder(self):
         self.loaded = True
 
+    def set_order(self, ids):
+        if "test-0000-unknown" in ids:
+            raise ValueError("not a job")
+        self.order = list(ids)
+        return {"ok": True}
+
     def add(self, filename, raw):
         if not raw:
             raise ValueError("empty")
@@ -76,6 +82,16 @@ class FakeRunner:
         if what == "start" and confirm_maps != 98:
             return {"ok": False, "ask": {"maps": 98, "text": "Start loads 98 maps in Smithbox. Go on?"}}
         return {"ok": True}
+
+    def removal_word(self, job_id):
+        if job_id != JOB_ID:
+            raise ValueError("unknown")
+        return "move"
+
+    def start_word(self, job_id, what):
+        if job_id != JOB_ID:
+            raise ValueError("unknown")
+        return None
 
     def run_extract(self, rows, *, load_maps=False, confirm_maps=None):
         if any(r not in ("character_rows", "map_placements") for r in rows):
@@ -261,6 +277,14 @@ class ApiBase(unittest.TestCase):
         code, body = self.api.get(path, {k: str(v) for k, v in query.items()})
         self.assertEqual(code, 200, path)
         return json.loads(json.dumps(body))
+
+    def test_s74_the_job_cards_order(self):
+        code, body, _ = self.post("/api/jobs/order", {"ids": ["test-0001-a", "test-0002-b"]})
+        self.assertEqual((code, body), (200, {"ok": True}))
+        self.assertEqual(self.runner.order, ["test-0001-a", "test-0002-b"])
+        for bad in ({"ids": "test-0001-a"}, {"ids": [1]}, {"ids": ["test-0000-unknown"]}, {}):
+            with self.assertRaises(Bad):
+                self.post("/api/jobs/order", bad)
 
     def post(self, path, body):
         code, answer, after = self.api.post(path, body)
@@ -469,6 +493,12 @@ class ApiTest(ApiBase):
         self.assertEqual(self.b.opened, str(self.live.paths.share))
         with self.assertRaises(Bad):
             self.api.post("/api/open", {"area": "elsewhere"})
+        (self.live.paths.local / "en-0020-map-overview").mkdir(parents=True, exist_ok=True)
+        _, r, _ = self.post("/api/open", {"area": "job", "job": "en-0020-map-overview"})
+        self.assertEqual(self.b.opened, str(self.live.paths.local / "en-0020-map-overview"))   # S76
+        for bad in ({"area": "job", "job": "../share"}, {"area": "job", "job": "en-9999-none"}, {"area": "job"}):
+            with self.assertRaises(Bad):
+                self.api.post("/api/open", bad)
 
     def test_copy_path(self):
         f = self.live.paths.share / "roster-counts.json"
@@ -608,7 +638,11 @@ class ApiTest(ApiBase):
         log.info("a line with a planted text: %s", own(PLANTED))
         _, last = logbook.lines_after(0, limit=0)
         _, r, _ = self.post("/api/log/share", {"after": start, "upto": last, "levels": ["INFO"], "sources": ["job"]})
-        self.assertEqual(r, {"ok": False, "refused": {"check": 3, "line": last}})
+        # DP18: the failing line is left out and counted, the rest copied
+        self.assertTrue(r["ok"])
+        self.assertIn("an ordinary line: 12 rows", r["text"])
+        self.assertNotIn("planted", r["text"])
+        self.assertEqual(r["left_out"], {"3": 1, "4": 0})
         _, r, _ = self.post("/api/log/share", {"after": start, "upto": last, "levels": ["INFO"], "sources": ["app"]})
         self.assertTrue(r["ok"])
         crafted = [{"seq": 41, "t": "2026-11-08 08:00:00.000", "level": "INFO", "src": "link",
@@ -617,9 +651,9 @@ class ApiTest(ApiBase):
                     "msg": "by zorblax"}]
         with mock.patch.object(logbook, "lines_after", lambda seq, limit=1000: ([x for x in crafted if x["seq"] > seq], 42)):
             _, r, _ = self.post("/api/log/share", {"after": 0, "upto": 42, "levels": ["INFO"], "sources": ["link"]})
-            self.assertEqual(r, {"ok": False, "refused": {"check": 4, "line": 41}})
+            self.assertEqual(r, {"ok": True, "text": "", "left_out": {"3": 0, "4": 2}})
             _, r, _ = self.post("/api/log/share", {"after": 41, "upto": 42, "levels": ["INFO"], "sources": ["link"]})
-        self.assertEqual(r, {"ok": False, "refused": {"check": 4, "line": 42}})
+        self.assertEqual(r, {"ok": True, "text": "", "left_out": {"3": 0, "4": 1}})
 
     def test_owner_rules_for_a_line(self):
         words = ["zorblax", "QUENTIN-RIG"]
@@ -791,8 +825,11 @@ class FoldersApiTest(ApiBase):
         self.assertEqual(self.live.settings.expansion, "yes")
         self.assertEqual(self.post("/api/settings/one", {"key": "mask_paths", "value": True})[0], 200)
         self.assertTrue(self.live.settings.mask_paths)
+        self.assertTrue(self.live.settings.map_opengl)                      # DP20: on at first
+        self.assertEqual(self.post("/api/settings/one", {"key": "map_opengl", "value": False})[0], 200)
+        self.assertFalse(self.live.settings.map_opengl)
         for body in ({"key": "recent", "value": []}, {"key": "port", "value": 1}, {"key": "expansion", "value": "x"},
-                     {"key": "mask_paths", "value": "yes"}, {"key": "game_dir", "value": 5},
+                     {"key": "mask_paths", "value": "yes"}, {"key": "map_opengl", "value": 1}, {"key": "game_dir", "value": 5},
                      {"key": "game_dir", "value": "C:\\x\x07"}, {"key": "game_dir", "value": "C:\\" + "x" * 1100},
                      {"key": "game_dir", "value": "", "more": 1}):
             with self.subTest(body=body):

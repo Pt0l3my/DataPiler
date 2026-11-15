@@ -92,12 +92,12 @@ class OverviewTest(unittest.TestCase):
         k = (y * w + x) * 4
         return tuple(px[k:k + 3])
 
-    def test_layout_rows_from_the_bottom_and_most_revealed(self):
+    def test_layout_rows_from_the_bottom_and_widest_variant(self):
         s = 4
         self.tile("ex/MENU_MapTile_M00_L4_00_00_00000000.png", s, (10, 0, 0))     # bottom left
         self.tile("ex/MENU_MapTile_M00_L4_01_00_00000000.png", s, (20, 0, 0))     # bottom right, plain
         self.tile("ex/MENU_MapTile_M00_L4_01_00_00000003.png", s, (25, 0, 0))     # bottom right, two pieces
-        self.tile("ex/MENU_MapTile_M00_L4_01_00_00000004.png", s, (21, 0, 0))     # one piece only
+        self.tile("ex/MENU_MapTile_M00_L4_01_00_00000001.png", s, (21, 0, 0))     # one of them only: inside 3, unused
         self.tile("ex/MENU_MapTile_M00_L4_00_01_00000000.png", s, (30, 0, 0))     # top left
         self.tile("ex/MENU_MapTile_M00_L3_00_00_00000000.png", s, (99, 0, 0))     # another level
         self.tile("ex/MENU_MapTile_M01_L4_00_00_00000000.png", s, (98, 0, 0))     # another sheet
@@ -129,6 +129,53 @@ class OverviewTest(unittest.TestCase):
         self.assertEqual(bytes(textures.png_decode(only)[2][0:4]), bytes([100, 100, 100, 255]))
         with self.assertRaises(ValueError):
             textures.overview(self.root, 0, 4, variant="most")
+
+    def put(self, code, px, s=2):
+        p = self.root / ("ex/MENU_MapTile_M00_L4_00_00_%08X.png" % code)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(textures.png_encode(s, s, bytes(px)))
+
+    def test_s77_pieces_apart_in_a_tile_are_laid_together(self):
+        g, r, b = [100, 100, 100, 255], [200, 0, 0, 255], [0, 0, 200, 255]
+        self.put(0, g * 4)
+        self.put(1, r + g * 3)                 # piece 1 drawn in the first pixel
+        self.put(2, g + b + g * 2)             # piece 2 drawn in the second: no variant 3, the two never meet here
+        data, n = textures.overview(self.root, 0, 4)
+        px = textures.png_decode(data)[2]
+        self.assertEqual([list(px[k * 4:k * 4 + 4]) for k in range(4)], [r, b, g, g])
+        self.assertEqual(n["joined"], 1)
+        only, n = textures.overview(self.root, 0, 4, variant="base")
+        self.assertEqual(bytes(textures.png_decode(only)[2]), bytes(g * 4))
+        self.assertEqual(n["joined"], 0)
+
+    def test_s77_overlapping_widest_variants_and_subsets_left_out(self):
+        g, r, b, y = [100, 100, 100, 255], [200, 0, 0, 255], [0, 0, 200, 255], [9, 9, 9, 255]
+        self.put(0, g * 4)
+        self.put(1, y * 4)                     # a subset of 3: never laid
+        self.put(2, y * 4)
+        self.put(4, y * 4)
+        self.put(3, r + r + g + g)             # pieces 1 and 2 meet: their joint variant
+        self.put(6, g + b + b + g)             # pieces 2 and 4 meet; 1 and 4 do not (no 5, no 7)
+        data, n = textures.overview(self.root, 0, 4)
+        px = textures.png_decode(data)[2]
+        self.assertEqual([list(px[k * 4:k * 4 + 4]) for k in range(4)], [r, b, b, g])
+        self.assertEqual(textures.widest({0, 1, 2, 4, 3, 6}), [3, 6])
+        self.assertEqual(textures.widest({0}), [])
+
+    def test_s77_without_a_base_variants_are_laid_by_alpha(self):
+        r, b, clear = [200, 0, 0, 255], [0, 0, 200, 255], [0, 0, 0, 0]
+        self.put(1, r + clear * 3)
+        self.put(2, clear + b + clear * 2)
+        data, _ = textures.overview(self.root, 0, 4)
+        px = textures.png_decode(data)[2]
+        self.assertEqual([list(px[k * 4:k * 4 + 4]) for k in range(4)], [r, b, clear, clear])
+
+    def test_lay_over_counts_what_it_drew(self):
+        g, r = bytes([1, 2, 3, 255]), bytes([4, 5, 6, 255])
+        canvas = bytearray(g * 3)
+        self.assertEqual(textures.lay_over(canvas, g * 3, g * 3), 0)
+        self.assertEqual(textures.lay_over(canvas, r + g * 2, g * 3), 1)
+        self.assertEqual(bytes(canvas), r + g * 2)
 
     def test_refusals(self):
         with self.assertRaises(ValueError):

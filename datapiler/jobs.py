@@ -1168,8 +1168,9 @@ def _line(o: dict) -> str:
     if op == "write_share":
         return "share file `%s.json`: %s" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
     if op == "make_map_overview":
-        return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each in its most revealed "
-                "variant (local, never shared)" % (o["name"], o["sheet"], o["level"]))
+        look = "in its base variant" if o.get("variant") == "base" else "with every piece revealed"
+        return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each %s (local, never shared)"
+                % (o["name"], o["sheet"], o["level"], look))
     return op
 
 

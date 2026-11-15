@@ -107,17 +107,29 @@ MAX_SIDE = 4096                # the largest overview, in pixels a side: level 2
 ROWS_FROM = ("bottom", "top")  # where tile row 0 sits: the bottom, by WHY§62's fit, unless a job says otherwise
 
 
+def widest(codes: Collection[int]) -> list[int]:
+    """S77: the codes no other code of the set contains (bits are map pieces, WHY§62), lowest first. A position's
+    exported variants are every subset of these and nothing else (WHY§63): pieces whose drawings meet in a tile share
+    a variant; pieces apart in it have one each, which the game lays together."""
+    nonzero = sorted(set(c for c in codes if c))
+    return [c for c in nonzero if not any(d != c and d & c == c for d in nonzero)]
+
+
 def tile_files(root: Path, sheet: int, level: int, *, skip: Collection[Path] = (),
-               cancel: threading.Event | None = None) -> dict[tuple[int, int], tuple[int, Path, Path | None]]:
-    """For each tile position of one sheet and level, the exported file of its most revealed variant (the code with
-    the most bits, then the highest code) and of its base variant (code 0), if exported. {(x, y): (code, path,
-    base path or None)}. Paths never leave this module's callers' logs."""
+               cancel: threading.Event | None = None
+               ) -> dict[tuple[int, int], tuple[tuple[tuple[int, Path], ...], Path | None]]:
+    """For each tile position of one sheet and level, the exported files of its widest revealed variants (S77: every
+    piece revealed is these laid together over the base) and of its base variant (code 0), if exported.
+    {(x, y): (((code, path), ...), base path or None)}. Paths never leave this module's callers' logs."""
     root = Path(root)
     skipped = {os.path.normcase(os.path.abspath(str(s))) for s in skip}
-    best: dict[tuple[int, int], tuple[int, int, Path]] = {}
-    base: dict[tuple[int, int], Path] = {}
+    found: dict[tuple[int, int], dict[int, Path]] = {}
     base_depth = len(Path(os.path.abspath(str(root))).parts)
     looked = 0
+
+    def result() -> dict[tuple[int, int], tuple[tuple[tuple[int, Path], ...], Path | None]]:
+        return {k: (tuple((c, v[c]) for c in widest(v)), v.get(0)) for k, v in found.items()}
+
     for here, dirs, files in os.walk(root, followlinks=False):
         if cancel is not None and cancel.is_set():
             raise Cancelled()
@@ -125,10 +137,10 @@ def tile_files(root: Path, sheet: int, level: int, *, skip: Collection[Path] = (
         dirs[:] = sorted(d for d in dirs if d.lower() not in SKIP_DIRS and depth < MAX_DEPTH
                          and not os.path.islink(os.path.join(here, d))
                          and os.path.normcase(os.path.abspath(os.path.join(here, d))) not in skipped)
-        for name in files:
+        for name in sorted(files):
             looked += 1
             if looked > MAX_FILES:
-                return {k: (v[1], v[2], base.get(k)) for k, v in best.items()}
+                return result()
             m = TILE_RX.fullmatch(name)
             if m is None or m.group(6).lower() != "png":
                 continue
@@ -137,36 +149,38 @@ def tile_files(root: Path, sheet: int, level: int, *, skip: Collection[Path] = (
             full = Path(here) / name
             if os.path.islink(full):
                 continue
-            code = int(m.group(5), 16)
-            key = (int(m.group(3)), int(m.group(4)))
-            if code == 0:
-                base.setdefault(key, full)
-            rank = (bin(code).count("1"), code)
-            have = best.get(key)
-            if have is None or rank > (have[0], have[1]):
-                best[key] = (rank[0], code, full)
-    return {k: (v[1], v[2], base.get(k)) for k, v in best.items()}
+            found.setdefault((int(m.group(3)), int(m.group(4))), {}).setdefault(int(m.group(5), 16), full)
+    return result()
 
 
-def blend_over(base: bytearray, over: bytes | bytearray) -> bytearray:
-    """S76: `over` drawn on `base` (both RGBA, same size), by its alpha: what the game shows when it lays a revealed
-    variant, which is mostly transparent, over the tile's base variant."""
-    out = bytearray(base)
+def lay_over(canvas: bytearray, over: bytes | bytearray, base: bytes | bytearray | None = None) -> int:
+    """S77: `over` drawn on `canvas` in place (all RGBA, one size), by its alpha, wherever it differs from the tile's
+    base variant `base` (everywhere when there is none): a revealed variant is the base with its pieces drawn in, so
+    what differs is its pieces, and several laid on one canvas reveal them all. Straight alpha, rounded. The number of
+    pixels drawn."""
     n = len(over) // 4
+    if base is not None and bytes(over) == bytes(base):
+        return 0
+    o32 = memoryview(over).cast("B").cast("I")
+    b32 = memoryview(base).cast("B").cast("I") if base is not None else None
+    drawn = 0
     for k in range(n):
+        if b32 is not None and o32[k] == b32[k]:
+            continue
         j = k * 4
         a = over[j + 3]
         if a == 0:
             continue
+        drawn += 1
         if a == 255:
-            out[j:j + 4] = over[j:j + 4]
+            canvas[j:j + 4] = over[j:j + 4]
             continue
-        ba = base[j + 3]
+        ca = canvas[j + 3]
         ia = 255 - a
         for c in range(3):
-            out[j + c] = (over[j + c] * a + base[j + c] * ia + 127) // 255
-        out[j + 3] = a + (ba * ia + 127) // 255
-    return out
+            canvas[j + c] = (over[j + c] * a + canvas[j + c] * ia + 127) // 255
+        canvas[j + 3] = a + (ca * ia + 127) // 255
+    return drawn
 
 
 def png_decode(data: bytes) -> tuple[int, int, bytearray]:
@@ -268,15 +282,16 @@ def png_encode(w: int, h: int, rgba: bytes | bytearray) -> bytes:
             + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
 
 
-VARIANTS = ("revealed", "base")   # S76: the most revealed variant laid over the base, or the base alone
+VARIANTS = ("revealed", "base")   # S77: every piece revealed (its widest variants laid over the base), or the base alone
 
 
 def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", variant: str = "revealed",
              skip: Collection[Path] = (),
              cancel: threading.Event | None = None,
              progress: Callable[[int, int], None] | None = None) -> tuple[bytes, dict[str, int]]:
-    """One PNG of a sheet's level, each position in its most revealed variant, laid out on the tile grid (column x;
-    row y counted from the bottom, or from the top). Positions without a file stay transparent. ValueError when no tile
+    """One PNG of a sheet's level, each position with every piece revealed (S77) or in its base variant, laid out on
+    the tile grid (column x; row y counted from the bottom, or from the top). Positions without a file stay
+    transparent. "joined" counts the positions laid from more than one revealed variant. ValueError when no tile
     is found, the result would pass MAX_SIDE, or a tile is not a PNG DataPiler reads or not square."""
     if rows_from not in ROWS_FROM:
         raise ValueError("rows_from is bottom or top")
@@ -290,22 +305,31 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
     size = None
     canvas = None
     done = 0
-    for (x, y), (code, path, base_path) in sorted(files.items()):
+    joined = 0
+    for (x, y), (lays, base_path) in sorted(files.items()):
         if cancel is not None and cancel.is_set():
             raise Cancelled()
-        # S76: a revealed variant is mostly transparent: the game lays it over the tile's base variant (code 0)
-        if variant == "base" or code == 0 or base_path is None:
-            use = base_path if variant == "base" and base_path is not None else path
-            with open(use, "rb") as f:
-                tw, th, px = png_decode(f.read())
-        else:
+        under = None
+        if base_path is not None:
             with open(base_path, "rb") as f:
                 tw, th, under = png_decode(f.read())
+        if variant == "base" and under is not None:
+            lays = ()
+        elif variant == "base":
+            lays = lays[:1]               # no base exported: its first variant stands in, as before
+        # S77: every piece revealed is the base with each widest revealed variant laid over it where it differs
+        px = bytearray(under) if under is not None else None
+        for _, path in lays:
             with open(path, "rb") as f:
                 ow, oh, over = png_decode(f.read())
+            if px is None:
+                tw, th, px = ow, oh, bytearray(over)
+                continue
             if (ow, oh) != (tw, th):
                 raise ValueError("a tile's variants are not of one size")
-            px = blend_over(under, over)
+            lay_over(px, over, under)
+        if len(lays) > 1:
+            joined += 1
         if tw != th or (size is not None and tw != size):
             raise ValueError("the tiles are not all square and of one size")
         if size is None:
@@ -324,4 +348,4 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
             progress(done, len(files))
     data = png_encode(cols * size, rows * size, canvas)
     return data, {"tiles": len(files), "columns": cols, "rows": rows, "tile": size, "width": cols * size,
-                  "height": rows * size}
+                  "height": rows * size, "joined": joined}

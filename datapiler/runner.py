@@ -1675,7 +1675,7 @@ class Runner:
         return len(rows), n["found"]
 
     def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
-        """S75: one PNG of a sheet's level of the exported map tiles, each in its most revealed variant, written to
+        """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to
         workspace/local/<job>/<name>.png on the PC. Never shared; no path reaches the log."""
         ctx.on_op(i, "running", 0, None, None)
         try:
@@ -1699,8 +1699,9 @@ class Runner:
             raise _Fail("the workspace image could not be written: %s" % logbook.why(e)) from None
         name = o["name"] + ".png"
         ctx.local.append(name)
-        ctx.log.info("workspace image %s written: %s tiles, %s by %s pixels, %s bytes (local, never shared)", own(name),
-                     logbook.n(n["tiles"]), logbook.n(n["width"]), logbook.n(n["height"]), logbook.n(len(data)))
+        ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants), %s by %s pixels, "
+                     "%s bytes (local, never shared)", own(name), logbook.n(n["tiles"]), logbook.n(n["joined"]),
+                     logbook.n(n["width"]), logbook.n(n["height"]), logbook.n(len(data)))
         return n["tiles"], n["tiles"]
 
     def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:

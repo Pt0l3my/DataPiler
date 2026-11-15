@@ -13,6 +13,13 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.27 - 2026-11-15
+
+- Fixed: overview tiles showed only some of their pieces revealed, so blocks of the map looked unexplored beside
+  explored ones (S77). Where a tile holds pieces that never meet, the game keeps one variant per piece and lays them
+  together; 0.2.26 used only one of them. `make_map_overview` now lays every widest revealed variant over the base,
+  where it differs from the base, so every piece shows. The log says how many tiles were joined this way.
+
 ## 0.2.26 - 2026-11-15
 
 - Fixed: the overview images were split up and showed their joins (S76). A tile's revealed variants are mostly

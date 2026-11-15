@@ -287,18 +287,23 @@ class AgainstTheFake(unittest.TestCase):
     def test_cancel_between_calls(self):
         self.link.switch(True)
         cancel = threading.Event()
+        at_cancel = []
 
         def progress(done, of):
             if done == 3:
+                at_cancel.append(len(self.fake.requests("GetParamRows")))
                 cancel.set()
         with self.assertRaises(link.LinkCancelled):
             self.link.get_param_rows("TalkParam", list(fake_soapstone.TALK_IDS), ["msgId"], cancel=cancel,
                                      progress=progress)
-        # S55: up to ROW_WORKERS calls run at once, so a few more may have gone out; the rest never do.
+        # S55: up to ROW_WORKERS calls run at once, so those already started when cancel is set may still go out;
+        # none starts after it. Counted from the moment cancel is set, as a slow machine may finish more calls
+        # before the progress callback runs (the bound of 3 + ROW_WORKERS failed on a Windows runner).
         sent = len(self.fake.requests("GetParamRows"))
         self.assertGreaterEqual(sent, 3)
-        self.assertLessEqual(sent, 3 + link.ROW_WORKERS)
-        self.assertLess(sent, len(fake_soapstone.TALK_IDS))
+        self.assertLessEqual(sent, at_cancel[0] + link.ROW_WORKERS)
+        if at_cancel[0] + link.ROW_WORKERS < len(fake_soapstone.TALK_IDS):
+            self.assertLess(sent, len(fake_soapstone.TALK_IDS))
 
     def test_a_failed_call_names_the_code_only(self):
         self.link.switch(True)

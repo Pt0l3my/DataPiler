@@ -28,8 +28,9 @@ Smithbox, for EldenNet's research (EldenNet O54 to O57). Its decisions are in [d
 - The Smithbox server link (DP4): read calls only, from a fixed allowlist; only while the game is not running; never a
   project folder that is the game's folder or inside it.
 - No me3 and no fromsoftware-rs, in any form (EldenNet O47, O48); none of Smithbox's me3 features.
-- DP35 (EldenNet O74): DataPiler is to read the game through EldenNet's devkit, only while the game runs. Neither holds
-  a key, and nothing of the game leaves the PC. DataPiler never reads the game's memory (EldenNet O73).
+- DP35 (EldenNet O74, O75): DataPiler is to read the game through EldenNet's devkit, with the game closed or running,
+  within the devkit's safe limits. Neither holds a key, and nothing of the game leaves the PC. DataPiler never reads
+  the game's memory (EldenNet O73).
 - Jobs are data, never code: a closed set of operations, a schema version, no scripts, shell commands, outside paths
   or network beyond Smithbox's local server.
 

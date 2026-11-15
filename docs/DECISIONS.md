@@ -686,3 +686,8 @@ workbench and the replay harness are a tool of their own.
 
 **Owner's words.** "A workbench on the PC + A replay harness: we could merge and build these into datapiler" and "Yes,
 all of it (Recommended)".
+
+*Later (2026-11-15):* EldenNet's O75 lets the devkit work with the game closed too, within safe limits (read-only,
+no bulk export, nothing of the game carried, never the game's memory) and with a disclosure of safe use. So
+DataPiler's reads through it need no running game; "only while the game of the same install is running" above no
+longer holds.

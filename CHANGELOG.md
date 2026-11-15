@@ -13,6 +13,12 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.24 - 2026-11-15
+
+- Job cards can be put in your own order (DP26, S74): drag a card by its grip (⠿) above, below or between the others;
+  a line shows where it will land. Or focus the grip and press the up or down arrow. The order is kept in
+  `jobs/order.json` and survives a restart; a job added later shows on top, newest first, until you move it.
+
 ## 0.2.23 - 2026-11-15
 
 - A new job operation, `read_map_tiles` (DP25, S73): it finds the map tiles you exported from Smithbox's Texture

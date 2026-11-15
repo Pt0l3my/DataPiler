@@ -22,7 +22,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
 - **2026-11-14.** DP22 (nothing collected is lost: a Deleted bin, confirmations) and DP23 (game updates: every
   version's data kept, re-read and compare), both decided the same day, as recommended.
 - **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended. DP25 (exported textures
-  read anywhere in DataPiler's folder), the owner's request.
+  read anywhere in DataPiler's folder), the owner's request. DP26 (job cards in the owner's own order), the owner's
+  request.
 - **Open.** None.
 
 ## DP1
@@ -460,4 +461,14 @@ Datapiler directory (any subfolder/path)".
 **Decision.** 0.2.23's `read_map_tiles` (S73) finds exported map tiles in any folder inside DataPiler's own folder and
 gives numbers only: what each tile's name says and its size. No image is decoded; images stay where the owner put them,
 on the PC.
+
+## DP26
+
+**Job cards in the owner's own order** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "also for future datapiler update, can you add ability to drag job field on the jobs pags to
+rearrange them (drag with mouse cursor on top of each other in in between)."
+
+**Decision.** 0.2.24 (S74): each job card has a grip to drag it above, below or between the others, with a line where
+it will land, and the up and down arrows on the grip do the same; the order is kept across restarts.
 

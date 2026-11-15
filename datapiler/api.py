@@ -438,6 +438,7 @@ class Api:
             "/api/bin/empty": self.bin_empty,
             "/api/jobs/drop": self.drop,
             "/api/jobs/act": self.act,
+            "/api/jobs/order": self.order,
             "/api/open": self.open_folder,
             "/api/copy-path": self.copy_path,
             "/api/settings": self.save_settings,
@@ -685,6 +686,16 @@ class Api:
             return self.runner.act(jid, what, confirm_maps=confirm)
         except ValueError:
             raise Bad("no such job, or not something a job can do") from None
+
+    def order(self, body: dict) -> dict:
+        """POST /api/jobs/order {"ids": [...]}: the job cards' order, first on top (S74, DP26)."""
+        ids = body.get("ids")
+        if not isinstance(ids, list) or len(ids) > 5_000 or not all(isinstance(x, str) and len(x) <= 128 for x in ids):
+            raise Bad("ids must be a list of job ids")
+        try:
+            return self.runner.set_order(ids)
+        except ValueError:
+            raise Bad("not a job's id, or one named twice") from None
 
     # ------------------------------------------------------------------------------------------------ versions (DP23)
 

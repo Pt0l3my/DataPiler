@@ -302,6 +302,28 @@ class JobRunTest(RunnerBase):
         self.assertIn("not in the server's answer", card["result"]["failed"]["why"])
         self.assertFalse(any(c[0] == "GetParamRows" for c in self.link.calls))
 
+    def test_s74_the_owners_order_of_the_cards_is_kept(self):
+        def raw(jid):
+            return json.dumps({"format": "datapiler-job/1", "id": jid, "title": "Order (invented)",
+                               "ops": [{"op": "read_map_tiles", "as": "t_x"}]}).encode()
+        for jid in ("test-0074-a", "test-0074-b", "test-0074-c"):
+            self.r.add(jid + ".json", raw(jid))
+        self.assertEqual({c["id"]: c["pos"] for c in self.r.cards()},
+                         {"test-0074-a": None, "test-0074-b": None, "test-0074-c": None})
+        self.assertEqual(self.r.set_order(["test-0074-c", "test-0074-a"]), {"ok": True})
+        pos = {c["id"]: c["pos"] for c in self.r.cards()}
+        self.assertEqual(pos["test-0074-c"], 0)
+        self.assertEqual(pos["test-0074-a"], 1)
+        self.assertEqual(pos["test-0074-b"], 2)              # left out: after the ones named
+        again = self.new_runner()
+        again.load_folder()
+        self.assertEqual({c["id"]: c["pos"] for c in again.cards()}, pos)
+        for bad in (["test-0074-a", "test-0074-a"], ["test-0000-none"], "test-0074-a"):
+            with self.assertRaises(ValueError):
+                self.r.set_order(bad)
+        self.r.add("test-0074-d.json", raw("test-0074-d"))
+        self.assertIsNone(self.card("test-0074-d")["pos"])   # newer than the order: shown first, newest first
+
     def test_s73_map_tiles_anywhere_in_the_folder_go_to_a_share_file(self):
         import struct as _st
         d = self.p.root / "exports" / "71_maptile"

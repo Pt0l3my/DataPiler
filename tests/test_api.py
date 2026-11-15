@@ -64,6 +64,12 @@ class FakeRunner:
     def load_folder(self):
         self.loaded = True
 
+    def set_order(self, ids):
+        if "test-0000-unknown" in ids:
+            raise ValueError("not a job")
+        self.order = list(ids)
+        return {"ok": True}
+
     def add(self, filename, raw):
         if not raw:
             raise ValueError("empty")
@@ -271,6 +277,14 @@ class ApiBase(unittest.TestCase):
         code, body = self.api.get(path, {k: str(v) for k, v in query.items()})
         self.assertEqual(code, 200, path)
         return json.loads(json.dumps(body))
+
+    def test_s74_the_job_cards_order(self):
+        code, body, _ = self.post("/api/jobs/order", {"ids": ["test-0001-a", "test-0002-b"]})
+        self.assertEqual((code, body), (200, {"ok": True}))
+        self.assertEqual(self.runner.order, ["test-0001-a", "test-0002-b"])
+        for bad in ({"ids": "test-0001-a"}, {"ids": [1]}, {"ids": ["test-0000-unknown"]}, {}):
+            with self.assertRaises(Bad):
+                self.post("/api/jobs/order", bad)
 
     def post(self, path, body):
         code, answer, after = self.api.post(path, body)

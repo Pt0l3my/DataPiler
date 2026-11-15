@@ -15,6 +15,7 @@ let ST = null, CAT = null, GONE = false, FAILS = 0, TAB = "status", HOLD = false
 let OUT_REV = -1, VIEW = null, SETTINGS = null;
 let PICK = new Set(), BUNDLE = null, LAST_ROWS = [];
 let JOBS_KEY = "", ROWS_KEY = "", CARDS_KEY = "";
+let DRAG = null, DROPLINE = null, REFOCUS = null;   // S74: the job card being dragged, the drop marker, the grip to refocus
 const TERM = { last: 0, lines: [], paused: false, level: "INFO", srcs: new Set() };
 
 function api(path, body) {
@@ -501,7 +502,30 @@ function jobProgress(j) {
 function jobCard(j) {
   const key = foldKey(j);
   const c = el("div", "jobcard" + (folded().has(key) ? " folded" : ""));
+  c.dataset.jid = j.id;
   const head = el("div", "jhead");
+  // S74: drag the grip to move the card above, below or between others; or focus it and use the arrow keys
+  const grip = el("button", "jgrip", "⠿");
+  grip.title = "Drag to move this job up or down; or focus it and press the up or down arrow";
+  grip.setAttribute("aria-label", "Move the job " + (j.title || j.id) + ": drag, or use the up and down arrows");
+  grip.addEventListener("mousedown", () => { c.draggable = true; });
+  grip.addEventListener("mouseup", () => { if (!DRAG) c.draggable = false; });
+  grip.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); moveJob(j.id, e.key === "ArrowUp" ? -1 : 1); }
+  });
+  c.addEventListener("dragstart", (e) => {
+    DRAG = j.id;
+    c.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", j.id);
+  });
+  c.addEventListener("dragend", () => {
+    c.draggable = false;
+    c.classList.remove("dragging");
+    showDrop(null);
+    if (DRAG) { DRAG = null; JOBS_KEY = ""; if (ST) paintJobs(ST); }
+  });
+  add(head, grip);
   const fold = el("button", "fold", folded().has(key) ? "▸" : "▾");
   fold.title = "Fold or unfold this job";
   fold.addEventListener("click", () => {
@@ -586,14 +610,59 @@ function jobCard(j) {
   add(c, act);
   return c;
 }
+function jobOrder(list) {
+  // S74: the owner's order (pos, first on top); cards added since it was set come first, newest first (S54)
+  return list.slice().sort((a, b) => {
+    const pa = a.pos == null ? -1 : a.pos, pb = b.pos == null ? -1 : b.pos;
+    if (pa === -1 && pb === -1) return (Number(b.added) || 0) - (Number(a.added) || 0);
+    if (pa === -1) return -1;
+    if (pb === -1) return 1;
+    return pa - pb;
+  });
+}
 function paintJobs(s) {
+  if (DRAG) return;                                          // never redrawn under a drag
   const key = JSON.stringify(s.jobs);
   if (key === JOBS_KEY) return;
   JOBS_KEY = key;
   const box = clear($("jobs"));
   if (!s.jobs.length) { add(box, el("div", "mute", "No job files yet.")); return; }
-  // S54: the newest job first, then older ones, by when each was added.
-  s.jobs.slice().sort((a, b) => (Number(b.added) || 0) - (Number(a.added) || 0)).forEach((j) => add(box, jobCard(j)));
+  jobOrder(s.jobs).forEach((j) => add(box, jobCard(j)));
+  if (REFOCUS) {
+    const g = box.querySelector('.jobcard[data-jid="' + CSS.escape(REFOCUS) + '"] .jgrip');
+    REFOCUS = null;
+    if (g) g.focus();
+  }
+}
+function cardIds() { return Array.prototype.map.call($("jobs").querySelectorAll(".jobcard"), (c) => c.dataset.jid); }
+function saveOrder(ids) {
+  // shown at once; the server keeps it in jobs/order.json
+  if (ST) { ST.jobs.forEach((j) => { j.pos = ids.indexOf(j.id); }); JOBS_KEY = ""; paintJobs(ST); }
+  api("/api/jobs/order", { ids: ids }).then((r) => {
+    if (!r.ok) note(r.error || "The order was not saved.");
+  }).catch((e) => { note(e.message); JOBS_KEY = ""; poll(); });
+}
+function moveJob(id, by) {
+  const ids = cardIds(), k = ids.indexOf(id), to = k + by;
+  if (k < 0 || to < 0 || to >= ids.length) return;
+  ids.splice(k, 1); ids.splice(to, 0, id);
+  REFOCUS = id;
+  saveOrder(ids);
+}
+function dropAt(y) {
+  // before the first card whose middle is below the pointer, or after the last
+  const cards = Array.prototype.slice.call($("jobs").querySelectorAll(".jobcard"));
+  for (let k = 0; k < cards.length; k++) {
+    const r = cards[k].getBoundingClientRect();
+    if (y < r.top + r.height / 2) return { index: k, card: cards[k], before: true };
+  }
+  return { index: cards.length, card: cards[cards.length - 1], before: false };
+}
+function showDrop(t) {
+  if (!DROPLINE) DROPLINE = el("div", "dropline");
+  if (!t || !t.card) { DROPLINE.remove(); return; }
+  if (t.before) t.card.parentNode.insertBefore(DROPLINE, t.card);
+  else t.card.parentNode.insertBefore(DROPLINE, t.card.nextSibling);
 }
 function addFiles(files) {
   Array.prototype.forEach.call(files, (f) => {
@@ -885,6 +954,26 @@ $("quit").addEventListener("click", () => {
 $("run").addEventListener("click", () => runRows([...PICK], $("loadMaps").checked, null));
 $("cancel").addEventListener("click", () => api("/api/extract/cancel", {}).then(poll).catch((e) => note(e.message)));
 $("pick").addEventListener("click", (e) => { e.stopPropagation(); $("file").click(); });
+$("jobs").addEventListener("dragover", (e) => {
+  if (!DRAG) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  showDrop(dropAt(e.clientY));
+});
+$("jobs").addEventListener("drop", (e) => {
+  if (!DRAG) return;
+  e.preventDefault();
+  const t = dropAt(e.clientY), ids = cardIds(), id = DRAG, from = ids.indexOf(id);
+  showDrop(null);
+  DRAG = null;
+  if (from < 0) return;
+  let at = t.index;
+  if (from < at) at -= 1;
+  if (at === from) { JOBS_KEY = ""; if (ST) paintJobs(ST); return; }
+  ids.splice(from, 1); ids.splice(at, 0, id);
+  saveOrder(ids);
+});
+$("jobs").addEventListener("dragleave", (e) => { if (!$("jobs").contains(e.relatedTarget)) showDrop(null); });
 $("foldAll").addEventListener("click", () => { if (ST) { ST.jobs.forEach((j) => setFolded(foldKey(j), true)); JOBS_KEY = ""; paintJobs(ST); } });
 $("unfoldAll").addEventListener("click", () => { if (ST) { ST.jobs.forEach((j) => setFolded(foldKey(j), false)); JOBS_KEY = ""; paintJobs(ST); } });
 $("drop").addEventListener("click", () => $("file").click());

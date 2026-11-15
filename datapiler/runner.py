@@ -337,6 +337,7 @@ class Runner:
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
+        self._order: list[str] = []                 # S74: the owner's order of the job cards
         self._queue: deque[tuple[str, str]] = deque()
         self._current: tuple[str, str] | None = None
         self._stopping = False
@@ -527,9 +528,57 @@ class Runner:
 
     # ------------------------------------------------------------------------------------------------ jobs
 
+    # S74 (DP26): the owner's order of the job cards, kept in jobs/order.json: card ids, first on top.
+    ORDER_FILE = "order.json"
+    MAX_ORDER = 5_000
+
+    def _load_order(self) -> list[str]:
+        try:
+            raw = (self.paths.jobs / self.ORDER_FILE).read_bytes()
+            doc = json.loads(raw.decode("utf-8")) if len(raw) <= 1024 * 1024 else None
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as e:
+            _job_log.warn("the order of the job cards could not be read, so they show newest first: %s",
+                          logbook.why(e))
+            return []
+        ids = doc.get("order") if isinstance(doc, dict) else None
+        if not isinstance(ids, list):
+            return []
+        out: list[str] = []
+        for x in ids[:self.MAX_ORDER]:
+            if isinstance(x, str) and paths_mod.name_ok(x) and x not in out:
+                out.append(x)
+        return out
+
+    def set_order(self, ids: list[str]) -> dict:
+        """S74: the job cards' order, first on top, as the owner dragged them. Every id must be a card's, once;
+        cards left out keep their place after the ones named, newest first. Saved at once in jobs/order.json."""
+        if not isinstance(ids, list) or len(ids) > self.MAX_ORDER:
+            raise ValueError("not a list of job ids")
+        seen: list[str] = []
+        with self._lock:
+            for x in ids:
+                if not isinstance(x, str) or x not in self._cards or x in seen:
+                    raise ValueError("not a job's id, or one named twice")
+                seen.append(x)
+            rest = [c.id for c in sorted(self._cards.values(), key=lambda c: -(c.added or 0)) if c.id not in seen]
+            self._order = seen + rest
+            order = list(self._order)
+        try:
+            self.paths.jobs.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(self.paths.jobs / self.ORDER_FILE,
+                                json.dumps({"order": order}, indent=1, ensure_ascii=True).encode("ascii"))
+        except OSError as e:
+            _job_log.warn("the order of the job cards could not be saved: %s", logbook.why(e))
+            return {"ok": False, "error": "The order could not be saved."}
+        _job_log.info("the job cards were put in a new order (%s cards)", logbook.n(len(order)))
+        return {"ok": True}
+
     def load_folder(self) -> None:
         """jobs/ at start: every card back; a job that was running shows "stopped" and is not resumed."""
         root = self.paths.jobs
+        self._order = self._load_order()
         try:
             names = [d.name for d in os.scandir(root) if d.is_dir(follow_symlinks=False)]
         except FileNotFoundError:
@@ -832,7 +881,9 @@ class Runner:
         counts = self._version_counts()
         cur = versions.key_of(self._prov())
         out = []
+        pos = {cid: k for k, cid in enumerate(getattr(self, "_order", []))}
         for c, card in listed:
+            c["pos"] = pos.get(c["id"])          # S74: its place in the owner's order; None: newer than the order
             # DP23 (S71): the version its data is of, an update line when the game has changed since, and how many
             # versions it kept reads for (two or more can be compared)
             ran = card.ran

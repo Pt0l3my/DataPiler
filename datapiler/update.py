@@ -646,11 +646,19 @@ class Updater:
             raw = base64.b64decode(data, validate=True)
         except (binascii.Error, ValueError):
             return 400, {"error": "data must be base64"}
+        stopped: threading.Thread | None = None
         with self._lock:
             if self._closed or self._leaving:
                 return 400, {"error": "DataPiler is stopping"}
             if self._state in ("checking", "downloading"):
-                return 400, {"error": "Wait until the check or the download has finished, then give the file again."}
+                stopped = self._cancel()         # S93: a file given stops a check (its answer dropped) or a download
+        if stopped is not None:
+            stopped.join(TIMEOUT + 5)            # a download first takes away its own part, outside the lock
+        with self._lock:
+            if self._closed or self._leaving:
+                return 400, {"error": "DataPiler is stopping"}
+            if self._state in ("checking", "downloading"):
+                return 400, {"error": "The check or the download did not stop - give the file again."}
             if self._state == "ready":
                 self._discard()                      # the file replaces a download or a file not installed
             self._poll = self._clock()

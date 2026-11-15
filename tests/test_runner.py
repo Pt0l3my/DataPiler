@@ -568,6 +568,22 @@ class PackTest(RunnerBase):
                 self.assertNotIn(word, x["msg"])
 
 
+class DoneNowTest(RunnerBase):
+    """S92: the page leaves a job finished since DataPiler started unfolded; one finished in an earlier run folds."""
+
+    def test_s92_a_job_finished_in_this_run_is_done_now_and_not_after_a_restart(self):
+        self.put_game_file()
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0092-now", "title": "Done now (invented)",
+                          "ops": [{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}]}).encode()
+        card = self.run_job(raw)
+        self.assertTrue(card["done_now"])
+        again = self.new_runner()
+        again.load_folder()
+        self.assertTrue(wait_for(lambda: any(c["id"] == "test-0092-now" for c in again.cards())))
+        later = next(c for c in again.cards() if c["id"] == "test-0092-now")
+        self.assertEqual((later["state"], later["done_now"]), ("done", False))
+
+
 class PauseTest(RunnerBase):
     """S84: Pause lets the step running now finish, keeps the job's context in the workspace, and Resume goes on from
     the next step: on the same run, after a restart, never on another game version or job file."""

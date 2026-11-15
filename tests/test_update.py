@@ -813,6 +813,15 @@ class GivenFile(Base):
         self.assertIsNone(v["file"])
         self.assertEqual(self.update_files(), [])
 
+    def test_s93_a_file_given_during_a_check_stops_the_check(self):
+        self.release()
+        with self.u._lock:
+            self.u._state = "checking"            # a check under way, as the pop-up has just opened
+            self.u._gen += 1
+        (code, v), _ = self.give(version="0.3.1", name="DataPiler-0.3.1.zip")
+        self.assertEqual((code, v["state"], v["file"]["version"]), (200, "ready", "0.3.1"))
+        self.assertEqual(self.update_files(), ["update/0.3.1/DataPiler-0.3.1.zip"])
+
     def test_a_file_replaces_a_download_not_installed(self):
         self.release()
         self.assertEqual(self.download()["state"], "ready")

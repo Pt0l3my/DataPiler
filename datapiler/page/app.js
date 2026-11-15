@@ -497,7 +497,8 @@ function openCompare(j) {
 }
 // S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
 // S86 (the owner's request of 2026-11-15): a finished job starts folded; the owner's own fold or unfold of a card is
-// remembered and wins.
+// remembered and wins. S92 (the owner's, the same day): a job that finished since DataPiler started stays unfolded,
+// its results in view.
 function foldKey(j) { return String(j.sha256 || j.id || ""); }
 function keySet(name) { try { return new Set(JSON.parse(store.get(name) || "[]")); } catch (e) { return new Set(); } }
 function folded() { return keySet("dp.jobs.folded"); }
@@ -505,7 +506,7 @@ function unfolded() { return keySet("dp.jobs.unfolded"); }
 function isFolded(j) {
   const key = foldKey(j);
   if (unfolded().has(key)) return false;
-  return folded().has(key) || j.state === "done";
+  return folded().has(key) || (j.state === "done" && !j.done_now);
 }
 function setFolded(key, on) {
   const f = folded(), u = unfolded();

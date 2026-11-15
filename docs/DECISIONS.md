@@ -28,7 +28,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
   choice of (b). DP30 (a finished job's files packed into 7z to upload; finished jobs folded), the owner's request.
   DP31 (the server link switched on by itself after launch, a setting), the owner's request, built in 0.2.36.
-  DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request.
+  DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request; its drop box
+  rebuilt in 0.2.37, and DP30's jobs finished in the session left unfolded, both at the owner's word.
 - **Open.** None.
 
 ## DP1
@@ -564,6 +565,10 @@ sharing it stays the owner's own act.
 
 **Owner's words.** As above.
 
+- Later (2026-11-15), the owner: "for jobs that have been done within the session, don't auto fold those, so user can
+  see results without having to unfold." Built in 0.2.37 (S92): a job that finished since DataPiler started stays
+  unfolded; one finished before folds, and the owner's own fold or unfold still wins.
+
 ## DP31
 
 **The server link switched on by itself after launch, a setting** · *2026-11-15 · The owner's request, for the next
@@ -600,3 +605,9 @@ one given with the file, and **Install and restart** installs it through the sam
 checks where each file landed, the new version started, and the old one put back on any failure.
 
 **Owner's words.** As above.
+
+- Later (2026-11-15), the owner: "you forgot to add drop zone to the updater UI window, this is what the pandorumLLM
+  lypsinc feature has for drop box, just a zone with an add file button, that's what I asked for." In 0.2.36 the
+  zone was a line with a Choose file button, shown only once GitHub's check had answered. Rebuilt in 0.2.37 (S93): a
+  box titled "Drop a DataPiler update here" with an **Add file** button, in every state of the pop-up from the moment
+  it opens; a file dropped anywhere on the pop-up counts, and it stops a check or a download under way.

@@ -13,6 +13,14 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.37 - 2026-11-15
+
+- Changed: the Update pop-up's drop zone is a box titled **Drop a DataPiler update here** with an **Add file** button,
+  shown in every state from the moment the pop-up opens (S93). A file dropped anywhere on the pop-up counts, and it
+  stops a check or a download that is under way.
+- Changed: jobs that finished since DataPiler started stay unfolded, their results in view (S92); jobs finished before
+  still start folded, and your own fold or unfold of a card still wins.
+
 ## 0.2.36 - 2026-11-15
 
 - New: install from a file (DP32, S91). The Update pop-up has a zone to drop a DataPiler release zip on, and

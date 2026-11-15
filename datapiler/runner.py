@@ -359,6 +359,7 @@ class Runner:
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
+        self._done_now: set[str] = set()   # S92: jobs whose run finished since DataPiler started
         self._order: list[str] = []                 # S74: the owner's order of the job cards
         self._queue: deque[tuple[str, str]] = deque()
         self._current: tuple[str, str] | None = None
@@ -1129,6 +1130,7 @@ class Runner:
         pos = {cid: k for k, cid in enumerate(getattr(self, "_order", []))}
         for c, card in listed:
             c["pos"] = pos.get(c["id"])          # S74: its place in the owner's order; None: newer than the order
+            c["done_now"] = c["id"] in self._done_now and c.get("state") == "done"   # S92: finished this session
             # DP23 (S71): the version its data is of, an update line when the game has changed since, and how many
             # versions it kept reads for (two or more can be compared)
             ran = card.ran
@@ -1566,6 +1568,7 @@ class Runner:
                                    "changes": changes}
                     card.ran = ran
                     card.state = "done"
+                    self._done_now.add(card.id)    # S92: the page leaves it unfolded this session
                     jl.info("done in %s s: %s local files, %s", logbook.n(secs), logbook.n(len(ctx.local)),
                             own("a share file" if share else "no share file"))
                 elif outcome == "paused":

@@ -148,7 +148,7 @@
       }
       add(foot, close, again);
     }
-    if (["up_to_date", "older", "none", "not_installable", "newer", "failed"].indexOf(s) >= 0) add(body, fileZone());
+    add(body, fileZone());         // S93: in every state, from the moment the pop-up opens
     add(body, el("div", "up-err"));
     const pri = foot.querySelector("button.pri") || foot.querySelector("button:last-child");
     if (pri) setTimeout(() => { if (H && H.box.contains(pri)) pri.focus(); }, 0);
@@ -179,27 +179,35 @@
   // (its shape, every file against the zip's own manifest, the version inside, never an older one), shows its sha256
   // to compare with the one given with it, and installs it only on Install and restart.
   const FILE_MAX = 32 * 1048576;
+  // S93 (the owner's request of 2026-11-15): a zone with a title and an Add file button, as the drop boxes the
+  // owner knows; a file dropped anywhere on the pop-up counts too.
   function fileZone() {
     const z = el("div", "up-drop");
     const input = el("input");
     input.type = "file";
     input.accept = ".zip";
     input.hidden = true;
-    add(z, el("div", null, "Install from a file: drop a DataPiler release zip here, or "),
-        btn("Choose file…", null, () => input.click()), input);
-    add(z, el("div", "mute up-small", "DataPiler checks the zip's shape and every file in it against its own " +
-      "manifest, and shows its sha256 to compare with the one given with it. Nothing changes until you press " +
-      "Install and restart."));
-    input.addEventListener("change", () => giveFile(input.files && input.files[0]));
-    z.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); z.classList.add("up-over"); });
-    z.addEventListener("dragleave", () => z.classList.remove("up-over"));
-    z.addEventListener("drop", (e) => {
+    const title = el("div", "up-drop-title", "Drop a DataPiler update here ");
+    const q = el("span", "qm", "?");
+    q.title = "A DataPiler release zip, such as one sent to you. DataPiler checks its shape and every file in it " +
+      "against the zip's own manifest, never takes an older version than this one, and shows the zip's sha256 to " +
+      "compare with the one given with it. Nothing changes until you press Install and restart.";
+    add(title, q);
+    add(z, title, add(el("div", "up-drop-act"), btn("Add file", null, () => input.click())), input);
+    input.addEventListener("change", () => { giveFile(input.files && input.files[0]); input.value = ""; });
+    return z;
+  }
+  function dropTarget(box) {
+    const zone = () => box.querySelector(".up-drop");
+    const on = (yes) => { const z = zone(); if (z) z.classList.toggle("up-over", yes); };
+    box.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); on(true); });
+    box.addEventListener("dragleave", (e) => { if (!box.contains(e.relatedTarget)) on(false); });
+    box.addEventListener("drop", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      z.classList.remove("up-over");
+      on(false);
       giveFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
     });
-    return z;
   }
   function giveFile(f) {
     if (!f || BUSY || LEAVING) return;
@@ -305,6 +313,7 @@
     api("/api/update", body).then((v) => {
       BUSY = false;
       if (body.action === "install" && v && v.ok === true && v.state === "restarting") restarting(v);
+      else if (body.action === "cancel" && v && v.state === "idle" && H) press({ action: "check", fresh: false });
       else show(v);
     }).catch((e) => { BUSY = false; problem(e && e.message); });
   }
@@ -314,6 +323,7 @@
     SHOWN = { state: "checking" };
     KEY = "";
     H = overlay("Update DataPiler", { opener: $("btn-update"), onClose: closed });
+    dropTarget(H.box);
     paint({ state: "checking" });
     press({ action: "check", fresh: false });
     TIMER = setInterval(tick, 500);

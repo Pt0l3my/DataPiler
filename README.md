@@ -67,8 +67,9 @@ and what changed in [CHANGELOG.md](CHANGELOG.md).
   so and offers **R** to go back to the version you had, with its Python environment. It never goes back by itself.
 - **If the Python libraries changed**, the window asks Y again after the restart, as at the first start; the new
   `.venv` is built beside the old one, which stays until the new version's page is up.
-- **From a file:** the pop-up also takes a DataPiler release zip given by hand: drop it on the pop-up's zone, or press
-  **Choose file…**. It is checked as a download is (its shape, every file against the zip's own manifest, the version
+- **From a file:** the pop-up also takes a DataPiler release zip given by hand: drop it on the pop-up (its box reads
+  **Drop a DataPiler update here**), or press **Add file**. It is checked as a download is (its shape, every file
+  against the zip's own manifest, the version
   inside, never older than the one running), and the pop-up shows its sha256 in full: compare it with the one given
   with the file before you press **Install and restart**, which then works as above. No release vouches for a file
   given by hand.
@@ -139,8 +140,8 @@ everything the job has done in the workspace; **Resume job** goes on from the ne
 closed, as long as the job file, the game and Smithbox are the same. **Stop** cuts the step short instead, and asks
 first.
 
-Finished jobs start folded to their title row. Fold or unfold a card yourself and DataPiler remembers that for the job
-in this browser.
+Jobs that finished before DataPiler started start folded to their title row; a job that finishes while it runs stays
+unfolded, its results in view. Fold or unfold a card yourself and DataPiler remembers that for the job in this browser.
 
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks

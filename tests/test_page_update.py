@@ -12,7 +12,8 @@ from pathlib import Path
 PAGE = Path(_repo.ROOT) / "datapiler" / "page"
 JS = (PAGE / "update.js").read_text(encoding="utf-8")
 CSS = (PAGE / "update.css").read_text(encoding="utf-8")
-SHARED_CLASSES = {"mute", "mono", "pri", "left", "m", "unk"}      # app.css's own, used as they are
+SHARED_CLASSES = {"mute", "mono", "pri", "left", "m", "unk", "qm"}   # app.css's own, used as they are (qm: the
+                                                                 # "?" of a note, as Settings shows it; S93)
 
 
 def code_only(js: str) -> str:

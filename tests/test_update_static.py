@@ -145,7 +145,9 @@ class OneNetworkModule(unittest.TestCase):
             where = enclosing(tree)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Attribute) and node.attr in PRESSES:
-                    if name != "datapiler/update.py" or where.get(node) != ["Updater", "post"]:
+                    # S93: a file given by hand is a press too: it may stop a check or a download, as Cancel does
+                    ok = [["Updater", "post"]] + ([["Updater", "from_file"]] if node.attr == "_cancel" else [])
+                    if name != "datapiler/update.py" or where.get(node) not in ok:
                         problems.append("%s:%d %s from %s" % (name, node.lineno, node.attr, where.get(node)))
                 if isinstance(node, ast.Attribute) and node.attr in WORKERS:
                     if name != "datapiler/update.py" or where.get(node) != ["Updater", WORKERS[node.attr]]:

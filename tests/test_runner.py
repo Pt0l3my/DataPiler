@@ -16,7 +16,9 @@ from unittest import mock
 
 from dataclasses import replace
 
-from datapiler import catalogue, events, guard, jobs, link, logbook, paths, runner, textdb, textures
+from _packs import FakeOodle, bnd4_bytes, dcx_bytes, menu_like
+
+from datapiler import catalogue, events, gamefiles, guard, jobs, link, logbook, paths, runner, textdb, textures
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -212,6 +214,18 @@ class RunnerBase(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / "MENU_MapTile_M00_L4_00_00_00000000.png").write_bytes(textures.png_encode(2, 2, bytes([9, 9, 9, 255]) * 4))
 
+    def put_game_file(self, data: bytes | None = None, name: str = "99_invented.testbnd.dcx",
+                      where: str = "unpacks/menu") -> Path:
+        """S81: an invented binder as if Smithbox had unpacked it into DataPiler's folder; its inner names carry a
+        planted word, which must never reach a log line, an event or a table."""
+        d = self.p.root / where
+        d.mkdir(parents=True, exist_ok=True)
+        if data is None:
+            data = dcx_bytes(bnd4_bytes([(0, "\\XX\\data\\INTERROOT_win64\\menu\\Serevan_a.test", b"a" * 9, False),
+                                         (1, "\\XX\\data\\INTERROOT_win64\\menu\\Serevan_b.test", b"b" * 7, False)]))
+        (d / name).write_bytes(data)
+        return d / name
+
     def run_job(self, raw: bytes, *, state: str = "done") -> dict:
         card, again = self.r.add("job.json", raw)
         self.assertFalse(again)
@@ -389,8 +403,12 @@ class JobRunTest(RunnerBase):
 
     def test_every_op_and_the_local_file(self):
         self.put_tile()                                       # S75: make_map_overview needs one
+        self.put_game_file()                                  # S81: unpack_game_file needs one
         card = self.run_job(fixture("job-files", "good-every-op.json"))
-        self.assertEqual(card["result"]["local"], ["npc-named.json", "every-op-overview.png"])
+        self.assertEqual(card["result"]["local"], ["unpacked/99_invented.testbnd.dcx/ (2 files)", "npc-named.json",
+                                                   "every-op-overview.png"])
+        out = paths.local_folder(self.p, "test-0001-every-op", "unpacked") / "99_invented.testbnd.dcx" / "menu"
+        self.assertEqual(sorted(os.listdir(out)), ["Serevan_a.test", "Serevan_b.test"])
         img = self.p.local / "test-0001-every-op" / "every-op-overview.png"
         self.assertEqual(textures.png_decode(img.read_bytes())[:2], (2, 2))     # S75: one 2-pixel tile
         self.assertFalse(any(n.endswith(".png") for n in os.listdir(self.p.share)))
@@ -434,6 +452,7 @@ class JobRunTest(RunnerBase):
 
     def test_nothing_planted_reaches_the_ring_or_an_event(self):
         self.put_tile()                                       # S75: make_map_overview needs one
+        self.put_game_file()                                  # S81: its inner names carry a planted word
         _, seq = logbook.lines_after(0, limit=0)
         self.run_job(fixture("job-files", "good-every-op.json"))
         lines, _ = logbook.lines_after(seq)
@@ -854,6 +873,83 @@ class AddAndRemoveTest(RunnerBase):
         card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
         with self.assertRaises(ValueError):
             self.r.act(card["id"], "explode")
+
+
+class UnpackTest(RunnerBase):
+    """S81 (DP28): unpack_game_file, on invented files only; the game's Oodle library is a fake that gives back what
+    a test's KRAK DCX holds."""
+
+    COLS = [c for c, _ in gamefiles.UNPACK_COLUMNS]
+
+    def job(self, ops: list[dict], jid: str = "test-0081-unpack") -> bytes:
+        return json.dumps({"format": "datapiler-job/1", "id": jid, "title": "Unpack (invented)", "ops": ops}).encode()
+
+    def test_s81_a_krak_binder_is_unpacked_with_the_game_library_and_its_numbers_shared(self):
+        self.put_game_file(menu_like(("Serevan_m00.testmsk", "Serevan_m01.testmsk")), "99_invented.testmskbnd.dcx")
+        fake = FakeOodle()
+        ops = [{"op": "unpack_game_file", "file": "99_invented.testmskbnd.dcx", "as": "masks"},
+               {"op": "write_share", "name": "masks", "tables": ["masks"], "columns": {"masks": self.COLS}}]
+        _, seq = logbook.lines_after(0, limit=0)
+        with mock.patch.object(gamefiles, "load_oodle", return_value=fake):
+            card = self.run_job(self.job(ops))
+        self.assertEqual(fake.calls, 1)
+        self.assertEqual(card["ops"][0]["done"], 2)
+        out = paths.local_folder(self.p, "test-0081-unpack", "unpacked") / "99_invented.testmskbnd.dcx"
+        self.assertEqual((out / "menu" / "Invented" / "mask" / "Serevan_m01.testmsk").read_bytes(), bytes([1]) * 41)
+        raw = (self.p.share / "masks.json").read_bytes()
+        doc = json.loads(raw)
+        self.assertEqual([c["name"] for c in doc["tables"][0]["columns"]], self.COLS)
+        rows = doc["tables"][0]["rows"]
+        self.assertEqual([r[:6] for r in rows], [[0, -1, 0, -1, 1, 2], [1, 0, 1, 0, 0, 0], [2, 0, 1, 1, 0, 0]])
+        for word in (b"Serevan", b"testmsk", b"Invented", b"INTERROOT", b"unpacks", b"menu"):
+            self.assertNotIn(word, raw)
+        lines, _ = logbook.lines_after(seq)
+        self.assertTrue(any("unpack_game_file" in x["msg"] for x in lines))
+        for x in lines:
+            self.assertNotIn("Serevan", x["msg"])
+            self.assertNotIn("unpacks", x["msg"])
+
+    def test_s81_a_file_that_is_not_there_stops_the_job(self):
+        card = self.run_job(self.job([{"op": "unpack_game_file", "file": "99_missing.testbnd.dcx"}]), state="failed")
+        self.assertIn("no file named 99_missing.testbnd.dcx was found", card["result"]["failed"]["why"])
+
+    def test_s81_copies_must_agree(self):
+        self.put_game_file()
+        self.put_game_file(where="elsewhere")
+        card = self.run_job(self.job([{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}]))
+        self.assertEqual(card["result"]["local"], ["unpacked/99_invented.testbnd.dcx/ (2 files)"])
+        self.put_game_file(dcx_bytes(bnd4_bytes([(0, "other.test", b"o", False)])), where="third")
+        card = self.run_job(self.job([{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}],
+                                     "test-0082-unpack"), state="failed")
+        self.assertIn("they differ - keep one", card["result"]["failed"]["why"])
+
+    def test_s81_a_copy_in_the_game_folder_is_left_alone(self):
+        self.put_game_file(where="Game")
+        r = runner.Runner(lambda: self.p, self.link, self.db, self.guard, lambda: self.provenance(),
+                          lambda: GameRunning(False, None), lambda: "engus",
+                          game_dir=lambda: str(self.p.root / "Game"))
+        self.runners.append(r)
+        self.r = r
+        card = self.run_job(self.job([{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}]), state="failed")
+        self.assertIn("no file named", card["result"]["failed"]["why"])
+
+    def test_s81_krak_without_the_game_library_stops_the_job(self):
+        self.put_game_file(menu_like(), "99_invented.testmskbnd.dcx")
+        card = self.run_job(self.job([{"op": "unpack_game_file", "file": "99_invented.testmskbnd.dcx"}]),
+                            state="failed")
+        self.assertIn("needs the game's Oodle library", card["result"]["failed"]["why"])
+
+    def test_s81_a_file_that_is_neither_a_dcx_nor_a_binder(self):
+        self.put_game_file(b"invented bytes, no header", "99_invented.txt")
+        card = self.run_job(self.job([{"op": "unpack_game_file", "file": "99_invented.txt"}]), state="failed")
+        self.assertIn("nothing to unpack", card["result"]["failed"]["why"])
+
+    def test_s81_the_checker_refuses_a_path(self):
+        for bad in ("..\\x.dcx", "a/b.dcx", "C:x.dcx", ".hidden", "con.dcx", "x.", "", 7, "client_secret_key",
+                    "server_public_key", "regulation.bin", "KEYS.dcx"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(jobs.JobRefused):
+                    jobs.check(self.job([{"op": "unpack_game_file", "file": bad}]), known_ids=(), share_names={})
 
 
 class SavedStateTest(RunnerBase):

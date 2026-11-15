@@ -67,6 +67,10 @@
       "level": 4
     },
     {
+      "op": "unpack_game_file",
+      "file": "99_invented.testbnd.dcx"
+    },
+    {
       "op": "join_names",
       "as": "npc_named",
       "rows": "npc",

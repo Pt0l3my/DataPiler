@@ -46,8 +46,8 @@ class Base(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def put(self, level, x, y, code, px, folder="ex"):
-        p = self.root / folder / ("MENU_MapTile_M00_L%d_%02d_%02d_%08X.png" % (level, x, y, code))
+    def put(self, level, x, y, code, px, folder="ex", sheet=0):
+        p = self.root / folder / ("MENU_MapTile_M%02d_L%d_%02d_%02d_%08X.png" % (sheet, level, x, y, code))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(textures.png_encode(S, S, px))
 
@@ -219,6 +219,40 @@ class GeneralTest(Base):
         genuine = next(r for r in rows if r[:3] == (1, 1, 1))
         self.assertLess(genuine[11], 900)
 
+    def test_s81_the_expansions_geometry(self):
+        q = 2089 / 10496
+        self.assertEqual([textures.level_scale(lv, 10) for lv in (0, 1, 2, 3)], [1.0, 0.75, q, q / 2])
+        self.assertEqual([textures.level_scale(lv, s) for s in (0, 1, 11) for lv in (2,)], [0.25] * 3)
+        self.assertEqual(textures.level_top(10), frozenset({1, 2}))
+        self.assertEqual(textures.level_top(0), frozenset({1}))
+        self.assertEqual(textures.tile_set(self.root, 10).sheet, 10)
+
+    def expansion_level_2(self, sheet):
+        """Level 0: 8 x 8 tiles; level 2: the same map at the expansion's scale, at the top left of a 2 x 2 grid."""
+        step = 1.0 / 4
+        for x in range(8):
+            for y in range(8):
+                self.put(0, x, y, 0, tile(world, x * S * step, (7 - y) * S * step, step=step), sheet=sheet)
+        q = textures.level_scale(2, 10)
+        for x in range(2):
+            for y in range(2):
+                self.put(2, x, y, 0, tile(world, x * S / q * step, (1 - y) * S / q * step, step=step / q), sheet=sheet)
+        rows, n = textures.check_level(textures.tile_set(self.root, sheet), 2)
+        return [max(r[9], r[10]) for r in rows], n
+
+    def test_s81_the_expansions_level_2_at_the_top_left(self):
+        got, n = self.expansion_level_2(10)
+        self.assertEqual(n["near_level"], 0)
+        self.assertEqual(len(got), 4)
+        self.assertTrue(all(v > 950 for v in got), got)
+        judge = textures.Judge(textures.tile_set(self.root, 10), 2)
+        judge.size = S
+        self.assertAlmostEqual(judge.lift(2), 2 * S - 8 * S * textures.level_scale(2, 10))
+
+    def test_s81_the_base_maps_geometry_does_not_fit_the_expansion(self):
+        base, _ = self.expansion_level_2(0)             # the same tiles named as the base map's
+        self.assertLess(min(base), 700, base)
+
     def test_sums(self):
         px = bytes(v for k in range(16) for v in (k * 3, k * 3, k * 3, 255))
         sums = textures._Sums(px, 4)
@@ -279,6 +313,55 @@ class OverviewTest(Base):
         white = sum(1 for k in range(0, len(px), 4) if px[k:k + 4] == b"\xff\xff\xff\xff")
         self.assertGreater(white, 100)
         self.assertEqual(self.pixel(plain, S - 1, S - 1), self.pixel(data, S - 1, S - 1))   # far from any label
+
+    def old_set(self, current_too=False):
+        """Level 0, 8 x 8 tiles over a level-3 reference; at (2, 3), code 4 of the old set: the ground of tile (4, 3)
+        with a lit patch, which belongs two tiles to the right (OLD_SHIFT made two tiles for the test)."""
+        GeneralTest.fine_level(self, 0, 8)
+        old_ground = (4 * S / 4, (7 - 3) * S / 4)
+        self.put(0, 2, 3, 4, tile(world, *old_ground, step=1.0 / 4, patch=(40, 40, 10)))
+        if current_too:
+            self.put(0, 4, 3, 4, tile(world, *old_ground, step=1.0 / 4, patch=(20, 40, 10)))
+        old = textures.OLD_SHIFT
+        textures.OLD_SHIFT = 2 * S
+        try:
+            return textures.overview(self.root, 0, 0, labels=False)
+        finally:
+            textures.OLD_SHIFT = old
+
+    def lit(self, data, tx, ty, c, r):
+        """Whether the pixel (c, r) of tile (tx, ty) is lit above the base."""
+        w, h, px = textures.png_decode(data)
+        top = (8 - 1 - ty) * S
+        base = tile(world, tx * S / 4, (7 - ty) * S / 4, step=1.0 / 4)
+        return px[((top + r) * w + tx * S + c) * 4] > base[(r * S + c) * 4]
+
+    def test_s81_the_old_set_is_moved_to_where_it_matches(self):
+        data, n = self.old_set()
+        self.assertEqual(n["moved"], 1)
+        self.assertTrue(self.lit(data, 4, 3, 45, 45))               # the old variant's patch, moved to (4, 3)
+        self.assertTrue(self.lit(data, 4, 3, 7, 7))                 # today's code 1 there, over it
+        self.assertFalse(self.lit(data, 2, 3, 45, 45))              # not at its own place, where it fails
+        self.assertEqual(n["left_out"], 1)
+
+    def test_s81_todays_variant_of_the_same_code_wins(self):
+        data, n = self.old_set(current_too=True)
+        self.assertEqual(n["moved"], 0)
+        self.assertTrue(self.lit(data, 4, 3, 25, 45))               # today's code 4
+        self.assertFalse(self.lit(data, 4, 3, 45, 45))
+
+    def test_s81_no_old_set_at_other_levels_or_unchecked(self):
+        GeneralTest.fine_level(self, 0, 8)
+        self.put(0, 2, 3, 4, tile(world, 4 * S / 4, (7 - 3) * S / 4, step=1.0 / 4, patch=(40, 40, 10)))
+        old = textures.OLD_SHIFT
+        textures.OLD_SHIFT = 2 * S
+        try:
+            _, n = textures.overview(self.root, 0, 0, check=False)
+            self.assertEqual(n["moved"], 0)
+            _, n = textures.overview(self.root, 0, 3)
+            self.assertEqual(n["moved"], 0)
+        finally:
+            textures.OLD_SHIFT = old
 
     def test_label_lines_that_do_not_fit(self):
         canvas = bytearray(S * S * 4)

@@ -128,6 +128,7 @@ class TileSet:
         self.folder: dict[Path, int] = {}
         self.folders = 0
         self.stopped = False
+        self.sheet = 0
 
     def grid(self, level: int) -> tuple[int, int]:
         at = self.levels.get(level) or {}
@@ -143,6 +144,7 @@ def tile_set(root: Path, sheet: int, *, skip: Collection[Path] = (),
     root = Path(root)
     skipped = {os.path.normcase(os.path.abspath(str(s))) for s in skip}
     ts = TileSet()
+    ts.sheet = sheet
     numbers: dict[str, int] = {}
     base_depth = len(Path(os.path.abspath(str(root))).parts)
     looked = 0
@@ -336,6 +338,11 @@ TILE_CHECK_COLUMNS: tuple[tuple[str, str], ...] = (
     ("moved", "int"))
 LEVEL_TOP = frozenset({1})   # S80: levels whose map sits at the top of their grid (level 1: WHY§70); the rest, the bottom
 OLD_SHIFT = 1024             # S80: map units (level-0 pixels) the old tile set's columns sit left of today's (WHY§70)
+# S81: a sheet whose levels are not LEVEL_SCALES and LEVEL_TOP. The expansion's map (sheet 10): level 1 as the base map's,
+# level 2 level 0 at 2,089 / 10,496, both at the top left of their grids (WHY§71). Other sheets keep the base map's.
+SHEET_SCALES: dict[int, tuple[float, ...]] = {10: (1.0, 0.75, 2089 / 10496)}
+SHEET_TOP: dict[int, frozenset[int]] = {10: frozenset({1, 2})}
+OLD_LEVELS = frozenset({0, 1})   # S81: the levels whose old tile set an overview moves to its place (WHY§70, WHY§71)
 
 
 def thumb(px: bytes | bytearray, size: int) -> array:
@@ -415,11 +422,17 @@ def nests(finer: tuple[int, int], coarser: tuple[int, int]) -> bool:
     return all((f + 1) // 2 <= c <= (f + 1) // 2 + 1 for f, c in zip(finer, coarser)) and min(finer) > 0
 
 
-def level_scale(level: int) -> float:
-    """S79: a level's size against level 0's (halving past the table)."""
-    if level < len(LEVEL_SCALES):
-        return LEVEL_SCALES[level]
-    return LEVEL_SCALES[-1] / 2 ** (level - len(LEVEL_SCALES) + 1)
+def level_scale(level: int, sheet: int = 0) -> float:
+    """S79, S81: a level's size against level 0's on a sheet (halving past its table)."""
+    scales = SHEET_SCALES.get(sheet, LEVEL_SCALES)
+    if level < len(scales):
+        return scales[level]
+    return scales[-1] / 2 ** (level - len(scales) + 1)
+
+
+def level_top(sheet: int) -> frozenset[int]:
+    """S80, S81: the levels of a sheet whose map sits at the top of their grid."""
+    return SHEET_TOP.get(sheet, LEVEL_TOP)
 
 
 def reference_level(ts: TileSet) -> int | None:
@@ -483,6 +496,7 @@ class Judge:
 
     def __init__(self, ts: TileSet, level: int, cancel: threading.Event | None = None) -> None:
         self.ts = ts
+        self.sheet = ts.sheet
         self.level = level
         self.cancel = cancel
         self.at = ts.levels.get(level, {})
@@ -495,7 +509,8 @@ class Judge:
                 near = sorted((lv for lv, at in ts.levels.items() if at and lv != level),
                               key=lambda lv: (abs(lv - level), -lv))
                 self.other = near[0] if near else None
-        self.ratio = level_scale(self.other) / level_scale(level) if self.other is not None else 0.0
+        self.ratio = level_scale(self.other, self.sheet) / level_scale(level, self.sheet) \
+            if self.other is not None else 0.0
         self.size: int | None = None
         self._kept: dict[Path, _Sums] = {}
 
@@ -525,11 +540,11 @@ class Judge:
 
     def lift(self, level: int) -> float:
         """S80: how far above its grid's bottom a level's map starts, in that level's pixels: the gap left at the
-        bottom by a level whose map sits at the top of its grid (LEVEL_TOP), else 0. The map is level 0's grid at
+        bottom by a level whose map sits at the top of its grid (level_top), else 0. The map is level 0's grid at
         the level's scale."""
-        if level not in LEVEL_TOP or self.size is None:
+        if level not in level_top(self.sheet) or self.size is None:
             return 0.0
-        full = (self.ts.grid(0)[1] or 41) * self.size * level_scale(level)
+        full = (self.ts.grid(0)[1] or 41) * self.size * level_scale(level, self.sheet)
         return max(0.0, self.ts.grid(level)[1] * self.size - full)
 
     def near(self, x: int, y: int, code: int, t: array | None, shift: float = 0.0) -> tuple[int, int, int]:
@@ -545,7 +560,7 @@ class Judge:
         while n > 4 and span / n < 1.0:
             n //= 2
         mine_all = _shrink_thumb(t, n)
-        mine, theirs = level_scale(self.level), level_scale(self.other)
+        mine, theirs = level_scale(self.level, self.sheet), level_scale(self.other, self.sheet)
         x0 = (x * size + shift * mine) * self.ratio   # its bottom left, in the other level's pixels from the bottom
         y0 = (y * size - self.lift(self.level)) / mine * theirs + self.lift(self.other)
         cell = span / n
@@ -706,9 +721,13 @@ def shrink_rgba(px: bytes | bytearray, size: int, f: int) -> bytearray:
 
 
 def _choose(codes: dict[int, Path], judge: Judge | None, x: int, y: int, min_match: int,
-            px_of: dict[int, bytearray]) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+            px_of: dict[int, bytearray], scores: dict[tuple[int, int, int], tuple[int, int]] | None = None,
+            extra: dict[int, tuple[Path, int]] | None = None
+            ) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
     """S78: the widest variants to lay, each with its score, and those left out as another image's. A widest variant
-    that fails gives way to the widest of the codes inside it, which are judged in turn."""
+    that fails gives way to the widest of the codes inside it, which are judged in turn. scores: what was measured
+    already, by (x, y, code). S81: extra holds the old tile set's variants that belong here ({code: (path, score)});
+    each stands in for a code whose own variant here is missing or fails, and is given back third."""
     nonzero = [c for c in codes if c]
     todo = widest(nonzero)
     seen: set[int] = set()
@@ -722,18 +741,53 @@ def _choose(codes: dict[int, Path], judge: Judge | None, x: int, y: int, min_mat
         if judge is None:
             kept.append((c, UNMEASURED))
             continue
-        px = px_of.get(c)
-        if px is None:
-            px = px_of[c] = judge.decode(codes[c])
-        _, near, near_base = judge.near(x, y, c, judge.thumb(px))
+        got = scores.get((x, y, c)) if scores is not None else None
+        if got is None:
+            px = px_of.get(c)
+            if px is None:
+                px = px_of[c] = judge.decode(codes[c])
+            got = judge.near(x, y, c, judge.thumb(px))[1:]
+        near, near_base = got
         score = max(near, near_base)
         if passes(near, near_base, min_match):
             kept.append((c, score))
         else:
             out.append((c, score))
             todo.extend(d for d in widest([d for d in nonzero if d != c and d & c == d]) if d not in seen)
-    best = set(widest([c for c, _ in kept]))
-    return sorted((c, sc) for c, sc in kept if c in best), sorted(out)
+    mine = {c for c, _ in kept}
+    moved = [(c, sc) for c, (_, sc) in sorted((extra or {}).items()) if c not in mine]
+    best = set(widest([c for c, _ in kept] + [c for c, _ in moved]))
+    return (sorted((c, sc) for c, sc in kept if c in best), sorted(out),
+            [(c, sc) for c, sc in moved if c in best])
+
+
+def _old_set(judge: Judge, at: dict[tuple[int, int], dict[int, Path]], cols: int, min_match: int,
+             scores: dict[tuple[int, int, int], tuple[int, int]], progress: Callable[[int], None] | None = None
+             ) -> dict[tuple[int, int], dict[int, tuple[Path, int]]]:
+    """S81: a level's old tile set (WHY§70), by the place each variant belongs: a variant measured that fails at its
+    own place and matches OLD_SHIFT map units to the right belongs that many columns to the right, when that is a
+    whole number of tiles inside the grid. {(x, y): {code: (path, score)}}. Every variant's own scores go into
+    scores, so that nothing is measured twice."""
+    found: dict[tuple[int, int], dict[int, tuple[Path, int]]] = {}
+    step = OLD_SHIFT * level_scale(judge.level, judge.sheet) / (judge.size or 1)
+    k = round(step) if abs(step - round(step)) < 1e-6 else 0
+    done = 0
+    for (x, y), codes in sorted(at.items()):
+        for c in sorted(codes):
+            if not c:
+                continue
+            t = judge.thumb(judge.decode(codes[c]))
+            _, near, near_base = judge.near(x, y, c, t)
+            scores[(x, y, c)] = (near, near_base)
+            done += 1
+            if progress is not None and done % 50 == 0:
+                progress(done)
+            if k < 1 or x + k >= cols or max(near, near_base) == UNMEASURED or passes(near, near_base, min_match):
+                continue
+            m = max(judge.near(x, y, c, t, OLD_SHIFT)[1:])
+            if m != UNMEASURED and m >= min_match:
+                found.setdefault((x + k, y), {})[c] = (codes[c], m)
+    return found
 
 
 def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", variant: str = "revealed",
@@ -744,9 +798,11 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
     """One PNG of a sheet's level, laid out on the tile grid (column x; row y counted from the bottom, or from the
     top). Each position with every piece revealed (S77; with `check`, variants that do not match the next level are
     left out, S78), or in its base variant, or (variant "code") the file of one code where it was exported and the
-    base elsewhere. `labels` draws each tile's border, its column and row, and the codes laid (a score after each, per
-    mille) or left out (a minus before). `shrink` (S79) makes each tile 2, 4 or 8 times smaller, so that levels 0 and 1
-    fit. Positions without a file stay transparent. ValueError when no tile is found, the result would pass MAX_SIDE,
+    base elsewhere. With `check` at OLD_LEVELS (S81), the old tile set's variants are moved to the place they match
+    and stand in there for codes whose own variant is missing or fails, under today's. `labels` draws each tile's
+    border, its column and row, and the codes laid (a score after each, per mille; a plus before one moved there) or
+    left out (a minus before). `shrink` (S79) makes each tile 2, 4 or 8 times smaller, so that levels 0 and 1 fit.
+    Positions without a file stay transparent. ValueError when no tile is found, the result would pass MAX_SIDE,
     or a tile is not a PNG DataPiler reads or not square."""
     if rows_from not in ROWS_FROM:
         raise ValueError("rows_from is bottom or top")
@@ -763,10 +819,29 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
     cols, rows = ts.grid(level)
     judge = Judge(ts, level, cancel)
     use_judge = judge if variant == "revealed" and check else None
-    size = None
-    canvas = None
-    done = joined = left_out = measured = 0
-    for (x, y), codes in sorted(at.items()):
+    first_codes = at[min(at)]
+    judge.decode(first_codes[min(first_codes)])          # the tiles' size, before anything else is read
+    full = judge.size
+    if full % shrink:
+        raise ValueError("the tiles cannot be shrunk %d times" % shrink)
+    size = full // shrink
+    if cols * size > MAX_SIDE or rows * size > MAX_SIDE:
+        raise ValueError("that level would make an image over %d pixels a side; choose a smaller level or shrink it"
+                         % MAX_SIDE)
+    canvas = bytearray(cols * size * rows * size * 4)
+    scores: dict[tuple[int, int, int], tuple[int, int]] = {}
+    extra: dict[tuple[int, int], dict[int, tuple[Path, int]]] = {}
+    variants = sum(1 for codes in at.values() for c in codes if c)
+    if use_judge is not None and level in OLD_LEVELS:
+        extra = _old_set(judge, at, cols, min_match, scores,
+                         None if progress is None else lambda d: progress(d, variants + len(at)))
+    else:
+        variants = 0
+    places = sorted(set(at) | set(extra))
+    done = joined = left_out = measured = moved_in = 0
+    for (x, y) in places:
+        codes = at.get((x, y), {})
+        here = extra.get((x, y), {})
         under = judge.decode(codes[0]) if 0 in codes else None
         px_of: dict[int, bytearray] = {}
         text = ["%d,%d" % (x, y)]
@@ -782,10 +857,12 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
             px = judge.decode(codes[code])
             text.append("%X" % code)
         else:
-            lays, out = _choose(codes, use_judge, x, y, min_match, px_of)
+            lays, out, moved = _choose(codes, use_judge, x, y, min_match, px_of, scores, here)
             px = bytearray(under) if under is not None else None
-            for c, _ in lays:
-                over = px_of[c] if c in px_of else judge.decode(codes[c])
+            # S81: the old tile set's variants first, today's over them
+            layers = [(here[c][0], None) for c, _ in moved] + [(codes[c], c) for c, _ in lays]
+            for path, c in layers:
+                over = px_of[c] if c is not None and c in px_of else judge.decode(path)
                 if px is None:
                     px = bytearray(over)
                     continue
@@ -793,21 +870,15 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
             if px is None:                               # every variant left out and no base: the first stands in
                 c = widest(codes)[0]
                 px = judge.decode(codes[c])
-            if len(lays) > 1:
+            if len(layers) > 1:
                 joined += 1
             left_out += len(out)
+            moved_in += len(moved)
             measured += sum(1 for _, sc in lays + out if sc != UNMEASURED)
-            text += ["%X" % c if sc == UNMEASURED else "%X %d" % (c, sc) for c, sc in lays] or ["0"]
+            shown = ["+%X %d" % (c, sc) for c, sc in moved]
+            shown += ["%X" % c if sc == UNMEASURED else "%X %d" % (c, sc) for c, sc in lays]
+            text += shown or ["0"]
             text += ["-%X" % c if sc == UNMEASURED else "-%X %d" % (c, sc) for c, sc in out]
-        if size is None:
-            if judge.size % shrink:
-                raise ValueError("the tiles cannot be shrunk %d times" % shrink)
-            full = judge.size
-            size = full // shrink
-            if cols * size > MAX_SIDE or rows * size > MAX_SIDE:
-                raise ValueError("that level would make an image over %d pixels a side; choose a smaller level or "
-                                 "shrink it" % MAX_SIDE)
-            canvas = bytearray(cols * size * rows * size * 4)
         px = shrink_rgba(px, full, shrink)
         top = (rows - 1 - y) * size if rows_from == "bottom" else y * size
         left = x * size
@@ -819,8 +890,9 @@ def overview(root: Path, sheet: int, level: int, *, rows_from: str = "bottom", v
             label(canvas, cols * size, left, top, size, text)
         done += 1
         if progress is not None:
-            progress(done, len(at))
+            progress(variants + done, variants + len(places))
     data = png_encode(cols * size, rows * size, canvas)
-    return data, {"tiles": len(at), "columns": cols, "rows": rows, "tile": size, "width": cols * size,
+    return data, {"tiles": len(places), "columns": cols, "rows": rows, "tile": size, "width": cols * size,
                   "height": rows * size, "joined": joined, "left_out": left_out, "measured": measured,
+                  "moved": moved_in,
                   "near_level": judge.other if use_judge is not None and judge.other is not None else -1}

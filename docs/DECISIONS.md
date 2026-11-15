@@ -650,3 +650,7 @@ quote, or not at all, are one item with their count and the names. Whether a car
 page is open; DP30's fold of whole cards, and Fold all and Unfold all, leave it as it was.
 
 **Owner's words.** As above.
+
+- Later (2026-11-15), before 0.2.39 shipped, so that a finished card is short as the owner asked (S96): once no step
+  is running and none has failed, the steps' lines are under Details too, while a running or failed step's lines stay
+  in view; the Workspace line gives a count ("Workspace: 40 folders, local, never shared"), its list under Details.

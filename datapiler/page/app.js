@@ -456,24 +456,50 @@ function detailCol(title, items) {
 }
 // S95: Reads / Computes / Writes under one Details toggle inside the card, folded by default. Whether a card's Details
 // is open is kept while this page is open (not saved), by the same key as the card's fold. It is not DP30's fold of
-// whole cards (S54, S86, S92): folding a card, Fold all and Unfold all leave it as it was.
+// whole cards (S54, S86, S92): folding a card, Fold all and Unfold all leave it as it was. S96: under the columns,
+// the steps' lines once they have nothing live to show (liveSteps), and the list of the job's workspace folders and
+// files, which its Workspace line counts.
 const DETAILS_OPEN = {};
-function detailsBlock(j) {
+function detailsBlock(j, steps, local) {
   const key = foldKey(j), n = (j.ops || []).length;
   const words = "Details (" + n + (n === 1 ? " step)" : " steps)");
   const box = el("div", "jdetails");
   const b = el("button", "dtoggle");
-  b.title = "Show or hide what each step reads, computes and writes";
+  b.title = "Show or hide what each step reads, computes and writes" + (steps ? ", how each step went" : "") +
+    (local ? " and the job's workspace folders and files" : "");
+  const body = el("div", "jdbody");
   const cols = el("div", "cols3");
   add(cols, detailCol("Reads", j.details.reads), detailCol("Computes", j.details.computes), detailCol("Writes", j.details.writes));
+  add(body, cols);
+  if (steps) add(body, add(el("div", "jdsec"), el("b", null, "Steps"), steps));
+  if (local) {
+    const ns = el("div", "jnames");
+    local.forEach((x) => add(ns, el("code", null, x)));
+    add(body, add(el("div", "jdsec"), el("b", null, "Workspace"), ns));
+  }
   const show = (on) => {
-    cols.hidden = !on;
+    body.hidden = !on;
     b.textContent = (on ? "▾ " : "▸ ") + words;
     b.setAttribute("aria-expanded", on ? "true" : "false");
   };
   show(!!DETAILS_OPEN[key]);
-  b.addEventListener("click", () => { DETAILS_OPEN[key] = cols.hidden; show(DETAILS_OPEN[key]); });
-  return add(box, b, cols);
+  b.addEventListener("click", () => { DETAILS_OPEN[key] = body.hidden; show(DETAILS_OPEN[key]); });
+  return add(box, b, body);
+}
+// S96: the steps' lines stay in view while the job is queued, waits or runs, and while a step is running or has
+// failed; otherwise they are under Details.
+function liveSteps(j) {
+  return ["queued", "waiting", "running"].indexOf(j.state) >= 0 ||
+    (j.ops || []).some((o) => o.state === "running" || o.state === "failed");
+}
+// S96: "40 folders", "2 folders and 3 files": the job's workspace outputs (result.local: a folder is
+// "unpacked/<file>/ (N files)", a file "<name>.json" or "<name>.png")
+function localCount(local) {
+  const folders = local.filter((x) => String(x).indexOf("/") >= 0).length, files = local.length - folders;
+  const parts = [];
+  if (folders) parts.push(fmtN(folders) + (folders === 1 ? " folder" : " folders"));
+  if (files) parts.push(fmtN(files) + (files === 1 ? " file" : " files"));
+  return parts.join(" and ");
 }
 function opLine(o) {
   const parts = ["op " + o.n + " " + o.op + ": " + o.state];
@@ -676,18 +702,23 @@ function jobCard(j) {
   packBits(j, head);
   add(c, head);
   if (j.about && j.state !== "refused") add(c, aboutBlock(j.about));
-  if (j.details && j.state !== "refused") add(c, detailsBlock(j));
+  // S96: the steps' lines in view while they are live, else under Details with the workspace's list
+  let steps = null;
+  if (j.ops && j.ops.length && ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped", "paused"].indexOf(j.state) >= 0) {
+    steps = el("div", "oplines");
+    j.ops.forEach((o) => add(steps, opLine(o)));
+  }
+  const local = j.result && j.result.local && j.result.local.length ? j.result.local : null;
+  const inDetails = !!j.details && j.state !== "refused";
+  const stepsInView = steps && (!inDetails || liveSteps(j));
+  if (inDetails) add(c, detailsBlock(j, stepsInView ? null : steps, local));
   if (j.refusals && j.refusals.length) {
     const r = el("div", "refusals");
     j.refusals.forEach((x) => add(r, el("div", null, (x.op != null ? "op " + x.op + " - " : "") + x.where + ": " + x.text)));
     add(c, r);
   }
   if (j.wait) add(c, el("div", "wait", "Waits: " + j.wait));
-  if (j.ops && j.ops.length && ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped", "paused"].indexOf(j.state) >= 0) {
-    const ol = el("div", "oplines");
-    j.ops.forEach((o) => add(ol, opLine(o)));
-    add(c, ol);
-  }
+  if (stepsInView) add(c, steps);
   if (j.result) {
     const res = el("div", "result");
     if (j.result.share) {
@@ -697,10 +728,10 @@ function jobCard(j) {
       show.addEventListener("click", () => { showTab("outputs"); openShare(sh.name); });
       add(res, add(line, show));
     }
-    if (j.result.local && j.result.local.length) {
-      // S76: the job's own workspace folder, where its files and images are
+    if (local) {
+      // S76: the job's own workspace folder, where its files and images are. S96: counted; listed under Details
       const row = el("div", "jlocal");
-      add(row, el("span", null, "Workspace: " + j.result.local.join(", ")));
+      add(row, el("span", null, "Workspace: " + (inDetails ? localCount(local) + ", local, never shared" : local.join(", "))));
       const ob = el("button", "sm", "Open folder");
       ob.title = "Open this job's folder in the workspace (Windows)";
       ob.addEventListener("click", () => api("/api/open", { area: "job", job: j.id }).then((r) => { if (!r.ok) note(r.error || "Not opened."); }).catch((e) => note(e.message)));

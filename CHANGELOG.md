@@ -25,6 +25,10 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
   wraps ("40 game files … that Smithbox unpacked, …"), and steps whose sentences are the same word for word are one
   item ("2 steps: …"). Each card's Details stays open or closed while the page is open; folding the card, **Fold all**
   and **Unfold all** leave it as it was.
+- Changed: a finished card is short (S96). Once no step is running and none has failed, the steps' lines (op 0, op 1,
+  …) are under **Details** too, below the columns; while a job is queued, waits or runs, and when a step has failed,
+  they stay in view as before, so a running or failed step is never hidden. The **Workspace** line gives a count, such
+  as "Workspace: 40 folders, local, never shared", and its list of folders and files is under Details.
 - New: a job file may have an `about`: plain text of 1 to 600 characters, where a newline starts a new line and no
   other control character is taken; anything else is refused, naming the rule. A job that has one says
   `"needs": "0.2.39"`, as older versions refuse the key. The schema has it.

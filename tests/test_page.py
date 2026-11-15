@@ -163,12 +163,13 @@ class Page02Test(unittest.TestCase):
         folded by default and kept open or closed while the page is open only; DP30's fold of whole cards leaves it."""
         js, css = self.files["app.js"], self.files["app.css"]
         card = js[js.index("function jobCard("):js.index("function jobOrder(")]
-        about, details = card.index("aboutBlock(j.about)"), card.index("detailsBlock(j)")
+        about, details = card.index("aboutBlock(j.about)"), card.index("detailsBlock(j,")
         self.assertLess(card.index("add(c, head);"), about)
         self.assertLess(about, details)
         self.assertLess(details, card.index("if (j.refusals && j.refusals.length)"))
         self.assertIn('if (j.about && j.state !== "refused") add(c, aboutBlock(j.about));', card)
-        self.assertIn('if (j.details && j.state !== "refused") add(c, detailsBlock(j));', card)
+        self.assertIn('const inDetails = !!j.details && j.state !== "refused";', card)
+        self.assertIn("if (inDetails) add(c, detailsBlock(j, stepsInView ? null : steps, local));", card)
         self.assertNotIn("cols3", card)                        # the columns are drawn under Details only
         self.assertNotIn("j.preview", card)
         block = js[js.index("function aboutBlock("):js.index("function opLine(")]
@@ -194,6 +195,33 @@ class Page02Test(unittest.TestCase):
         for rule in (".jnames { display: flex; flex-wrap: wrap;", "button.dtoggle {", ".jref {",
                      ".jabout-text { white-space: pre-line;"):
             self.assertIn(rule, css)
+
+    def test_s96_the_steps_and_the_workspace_list_under_details(self):
+        """DP34's later note: once no step runs and none failed, the steps' lines are under Details; while the job is
+        queued, waits or runs, or a step runs or failed, they stay in view. The Workspace line counts; its list is
+        under Details."""
+        js, css = self.files["app.js"], self.files["app.css"]
+        card = js[js.index("function jobCard("):js.index("function jobOrder(")]
+        live = js[js.index("function liveSteps("):js.index("function localCount(")]
+        self.assertIn('return ["queued", "waiting", "running"].indexOf(j.state) >= 0 ||', live)
+        self.assertIn('(j.ops || []).some((o) => o.state === "running" || o.state === "failed");', live)
+        self.assertIn("const stepsInView = steps && (!inDetails || liveSteps(j));", card)
+        self.assertEqual(card.count("add(c, steps)"), 1)
+        self.assertLess(card.index('if (j.wait) add(c, el("div", "wait"'), card.index("if (stepsInView) add(c, steps);"))
+        self.assertLess(card.index("if (stepsInView) add(c, steps);"), card.index("if (j.result) {"))
+        self.assertIn('"Workspace: " + (inDetails ? localCount(local) + ", local, never shared" : local.join(", "))',
+                      card)
+        self.assertNotIn('"Workspace: " + j.result.local.join', card)
+        det = js[js.index("function detailsBlock("):js.index("function liveSteps(")]
+        self.assertIn('if (steps) add(body, add(el("div", "jdsec"), el("b", null, "Steps"), steps));', det)
+        self.assertIn('add(body, add(el("div", "jdsec"), el("b", null, "Workspace"), ns));', det)
+        self.assertIn("body.hidden = !on;", det)                  # columns, steps and list fold together
+        self.assertNotIn("cols.hidden", det)
+        count = js[js.index("function localCount("):js.index("function opLine(")]
+        self.assertIn('local.filter((x) => String(x).indexOf("/") >= 0).length', count)   # unpacked/<file>/ (N files)
+        self.assertIn('(folders === 1 ? " folder" : " folders")', count)
+        self.assertIn('(files === 1 ? " file" : " files")', count)
+        self.assertIn(".jdsec > b {", css)
 
     def test_only_the_pages_own_addresses(self):
         js = self.files["folders.js"]

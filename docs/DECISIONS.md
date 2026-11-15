@@ -691,3 +691,7 @@ all of it (Recommended)".
 no bulk export, nothing of the game carried, never the game's memory) and with a disclosure of safe use. So
 DataPiler's reads through it need no running game; "only while the game of the same install is running" above no
 longer holds.
+
+*Later (2026-11-15):* EldenNet's O79: the devkit ships as part of EldenNet, its features behind Developer mode, so
+DataPiler uses it from the EldenNet install, and development builds of the devkit until EldenNet ships. EldenNet's
+O76: its launcher will also run EldenNet's engine off game, as the replay harness does here.

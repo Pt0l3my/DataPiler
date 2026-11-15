@@ -197,6 +197,7 @@ def fixed_words() -> frozenset[str]:
     words.update(c for c, _ in jobs.CHECK_COLUMNS)      # S68: check_fields's columns, `field`, `present`, `type`
     from . import textures
     words.update(c for c, _ in textures.COLUMNS)         # S73: read_map_tiles's columns
+    words.update(c for c, _ in textures.TILE_CHECK_COLUMNS)  # S78: check_map_tiles's columns
     return frozenset(words)
 
 

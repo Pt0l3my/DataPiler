@@ -13,6 +13,20 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.28 - 2026-11-15
+
+- Fixed: level 2 overviews mixed two images (S78). Besides the variants that are the base with pieces drawn in, the
+  export holds variants carrying another drawing of the whole map at three quarters of the scale, and the file names
+  do not tell them apart. `make_map_overview` now checks each variant against the next zoom level (levels 2, 3 and 4
+  nest by two) and leaves out one that does not match (`"check": false` turns this off, `"min_match"` sets the bar,
+  700 per mille by default); the widest variants inside it are tried instead.
+- New: `"labels": true` draws each tile's border, its column and row, and the codes laid (with their scores) or left
+  out (with a minus), so every tile in an overview can be traced to its files.
+- New: `"variant": "code"` with `"code"` shows one code's files where they were exported, and the base elsewhere.
+- New operation `check_map_tiles`: one row per exported tile of a sheet's level, with the number of the folder it was
+  found in, its copies, how much of it differs from its base, and how well it matches the next level. Numbers only; it
+  may go to a share file.
+
 ## 0.2.27 - 2026-11-15
 
 - Fixed: overview tiles showed only some of their pieces revealed, so blocks of the map looked unexplored beside

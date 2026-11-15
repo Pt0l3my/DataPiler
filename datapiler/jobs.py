@@ -33,7 +33,7 @@ FORMAT = "datapiler-job/1"
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
-OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "join_names", "unused_names", "filter", "count", "distinct",
+OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles", "join_names", "unused_names", "filter", "count", "distinct",
        "write_local", "write_share", "make_map_overview")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
@@ -71,17 +71,19 @@ ARGS: dict[str, dict[str, bool]] = {
     "load_maps": {"maps": True, "timeout": False},
     "read_placements": {"as": True, "maps": True},
     "read_map_tiles": {"as": True},
+    "check_map_tiles": {"as": True, "sheet": True, "level": True},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
     "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False, "slots": False},
     "unused_names": {"as": True, "rows": True, "key": True, "text": True},
     "count": {"as": True, "rows": True, "by": False, "where": False},
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
-    "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False},
+    "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False, "code": False,
+                          "check": False, "min_match": False, "labels": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
-READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles")
+READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles")
 # What check_fields makes (S67): one row per field the job names, by its place in the list - whether the server's
 # answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
 CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
@@ -613,6 +615,21 @@ class _Checker:
             self.tables[as_] = list(textures.COLUMNS)
             self.lineage[as_] = Lineage("aggregate", None, "read_map_tiles", None, (), False, False, "")
 
+    def op_check_map_tiles(self, place: str, i: int, o: dict) -> None:
+        # S78: what the exported tiles of one sheet's level are and how each matches the next level: numbers only,
+        # measured on the PC; no image leaves it.
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        self.sheet_level(place, o, i)
+        if as_ is not None:
+            self.tables[as_] = list(textures.TILE_CHECK_COLUMNS)
+            self.lineage[as_] = Lineage("aggregate", None, "check_map_tiles", None, (), False, False, "")
+
+    def sheet_level(self, place: str, o: dict, i: int) -> None:
+        for key, lo, hi in (("sheet", 0, 99), ("level", 0, 9)):
+            v = o.get(key)
+            if key in o and (isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi):
+                self.add("%s.%s" % (place, key), "must be a whole number from %d to %d" % (lo, hi), i)
+
     def op_join_names(self, place: str, i: int, o: dict) -> None:
         as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
         r = self.ref(place + ".rows", o["rows"], i) if "rows" in o else None
@@ -815,14 +832,22 @@ class _Checker:
             if name in self.local_names:
                 self.add(place + ".name", "`%s` is written twice by this job" % name, i)
             self.local_names.add(name)
-        for key, lo, hi in (("sheet", 0, 99), ("level", 0, 9)):
-            v = o.get(key)
-            if key in o and (isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi):
-                self.add("%s.%s" % (place, key), "must be a whole number from %d to %d" % (lo, hi), i)
+        self.sheet_level(place, o, i)
         if "rows_from" in o and o["rows_from"] not in textures.ROWS_FROM:
             self.add(place + ".rows_from", "must be bottom or top", i)
         if "variant" in o and o["variant"] not in textures.VARIANTS:
-            self.add(place + ".variant", "must be revealed or base", i)
+            self.add(place + ".variant", "must be revealed, base or code", i)
+        code = o.get("code")
+        if "code" in o and (isinstance(code, bool) or not isinstance(code, int) or not 0 <= code <= 0xFFFFFFFF):
+            self.add(place + ".code", "must be a whole number from 0 to 4294967295", i)
+        if (o.get("variant") == "code") != ("code" in o):
+            self.add(place + ".code", "is given with variant code, and only then", i)
+        for key in ("check", "labels"):
+            if key in o and not isinstance(o[key], bool):
+                self.add("%s.%s" % (place, key), "must be true or false", i)
+        mm = o.get("min_match")
+        if "min_match" in o and (isinstance(mm, bool) or not isinstance(mm, int) or not 0 <= mm <= 1000):
+            self.add(place + ".min_match", "must be a whole number from 0 to 1000", i)
 
     def op_write_share(self, place: str, i: int, o: dict) -> None:
         if self.share_at is not None:
@@ -940,6 +965,7 @@ _CHECKS = {
     "load_maps": _Checker.op_load_maps,
     "read_placements": _Checker.op_read_placements,
     "read_map_tiles": _Checker.op_read_map_tiles,
+    "check_map_tiles": _Checker.op_check_map_tiles,
     "join_names": _Checker.op_join_names,
     "unused_names": _Checker.op_unused_names,
     "filter": _Checker.op_filter,
@@ -1140,6 +1166,9 @@ def _line(o: dict) -> str:
     if op == "read_map_tiles":
         return ("the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, row, code "
                 "and size - no image is opened beyond its size")
+    if op == "check_map_tiles":
+        return ("the exported map tiles of sheet %d, level %d, measured on the PC: for each, its folder's number, how much "
+                "differs from its base and how well it matches the next level - numbers only" % (o["sheet"], o["level"]))
     if op == "unused_names":
         return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
@@ -1168,9 +1197,16 @@ def _line(o: dict) -> str:
     if op == "write_share":
         return "share file `%s.json`: %s" % (o["name"], _plural(len(o["tables"]), "table", "tables"))
     if op == "make_map_overview":
-        look = "in its base variant" if o.get("variant") == "base" else "with every piece revealed"
-        return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each %s (local, never shared)"
-                % (o["name"], o["sheet"], o["level"], look))
+        if o.get("variant") == "base":
+            look = "in its base variant"
+        elif o.get("variant") == "code":
+            look = "in its code %X variant where exported" % o["code"]
+        elif o.get("check", True):
+            look = "with every piece revealed, from variants that match the next level"
+        else:
+            look = "with every piece revealed"
+        return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each %s%s (local, never shared)"
+                % (o["name"], o["sheet"], o["level"], look, ", labelled" if o.get("labels") else ""))
     return op
 
 
@@ -1208,6 +1244,8 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
             tables[o["as"]] = list(PLACEMENT_COLUMNS)
         elif op == "read_map_tiles":
             tables[o["as"]] = list(textures.COLUMNS)
+        elif op == "check_map_tiles":
+            tables[o["as"]] = list(textures.TILE_CHECK_COLUMNS)
         elif op == "join_names":
             tables[o["as"]] = tables[o["rows"]] + list(JOIN_COLUMNS)
         elif op == "unused_names":

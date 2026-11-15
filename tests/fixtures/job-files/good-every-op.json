@@ -61,6 +61,12 @@
       "as": "tiles"
     },
     {
+      "op": "check_map_tiles",
+      "as": "tile_check",
+      "sheet": 0,
+      "level": 4
+    },
+    {
       "op": "join_names",
       "as": "npc_named",
       "rows": "npc",
@@ -164,7 +170,8 @@
       "op": "make_map_overview",
       "name": "every-op-overview",
       "sheet": 0,
-      "level": 4
+      "level": 4,
+      "labels": true
     }
   ]
 }

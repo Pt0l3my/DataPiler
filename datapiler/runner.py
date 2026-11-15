@@ -60,7 +60,7 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "make_map_overview": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
+UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "check_map_tiles": "tiles", "make_map_overview": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
          "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
@@ -1583,6 +1583,8 @@ class Runner:
             return self._check_fields(ctx, i, o)
         if op == "read_map_tiles":
             return self._read_map_tiles(ctx, i, o)
+        if op == "check_map_tiles":
+            return self._check_map_tiles(ctx, i, o)
         if op == "make_map_overview":
             return self._make_map_overview(ctx, i, o)
         if op == "load_maps":
@@ -1674,13 +1676,38 @@ class Runner:
                          "Viewer into a folder inside DataPiler's folder", i)
         return len(rows), n["found"]
 
+    def _check_map_tiles(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S78: for each exported tile of a sheet's level, which folder it was found in (numbered), its copies, how
+        much differs from its base, and how well it matches the next level. Numbers only; no path reaches the log."""
+        ctx.on_op(i, "running", 0, None, None)
+        try:
+            ts = textures.tile_set(self.paths.root, o["sheet"], skip=(self.paths.bin, self.paths.root / "update"),
+                                   cancel=ctx.cancel)
+            rows, n = textures.check_level(ts, o["level"], cancel=ctx.cancel,
+                                           progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        except ValueError as e:
+            raise _Fail(str(e)) from None
+        except OSError as e:
+            raise _Fail("a tile could not be read: %s" % logbook.why(e)) from None
+        ctx.tables[o["as"]] = (list(textures.TILE_CHECK_COLUMNS), rows)
+        ctx.log.info("op %s check_map_tiles: %s tiles at %s positions, found in %s folders; compared with level %s (-1: none nests with it); "
+                     "%s variants look like another image's", i, logbook.n(n["tiles"]), logbook.n(n["positions"]),
+                     logbook.n(n["folders"]), n["near_level"], logbook.n(n["other_image"]))
+        if not rows:
+            ctx.log.warn("op %s check_map_tiles: no exported PNG tile of that sheet and level was found", i)
+        return len(rows), len(rows)
+
     def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to
         workspace/local/<job>/<name>.png on the PC. Never shared; no path reaches the log."""
         ctx.on_op(i, "running", 0, None, None)
         try:
             data, n = textures.overview(self.paths.root, o["sheet"], o["level"], rows_from=o.get("rows_from", "bottom"),
-                                        variant=o.get("variant", "revealed"),
+                                        variant=o.get("variant", "revealed"), code=o.get("code"),
+                                        check=o.get("check", True), min_match=o.get("min_match", textures.MATCH_MIN),
+                                        labels=o.get("labels", False),
                                         skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
                                         progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
         except textures.Cancelled:
@@ -1699,9 +1726,10 @@ class Runner:
             raise _Fail("the workspace image could not be written: %s" % logbook.why(e)) from None
         name = o["name"] + ".png"
         ctx.local.append(name)
-        ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants), %s by %s pixels, "
-                     "%s bytes (local, never shared)", own(name), logbook.n(n["tiles"]), logbook.n(n["joined"]),
-                     logbook.n(n["width"]), logbook.n(n["height"]), logbook.n(len(data)))
+        ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants, %s variants left "
+                     "out as another image's), %s by %s pixels, %s bytes (local, never shared)", own(name),
+                     logbook.n(n["tiles"]), logbook.n(n["joined"]), logbook.n(n["left_out"]), logbook.n(n["width"]),
+                     logbook.n(n["height"]), logbook.n(len(data)))
         return n["tiles"], n["tiles"]
 
     def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
@@ -2107,7 +2135,7 @@ class Runner:
         lin = ctx.job.lineage.get(table)
         if lin is not None and not lin.per_row and list(columns) == ["count"]:
             return None
-        if lin is not None and lin.source_op in ("check_fields", "read_map_tiles"):
+        if lin is not None and lin.source_op in ("check_fields", "read_map_tiles", "check_map_tiles"):
             return None                          # S67, S73: what fields or files are, never rows of a game table
         src = ctx.sources.get(lin.source) if lin is not None and lin.source is not None else None
         if lin is None or src is None:

@@ -53,6 +53,9 @@
             "$ref": "#/$defs/op_read_map_tiles"
           },
           {
+            "$ref": "#/$defs/op_check_map_tiles"
+          },
+          {
             "$ref": "#/$defs/op_join_names"
           },
           {
@@ -866,6 +869,35 @@
         }
       }
     },
+    "op_check_map_tiles": {
+      "type": "object",
+      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the next level whose grid nests with this one by two, -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "as",
+        "sheet",
+        "level"
+      ],
+      "properties": {
+        "op": {
+          "const": "check_map_tiles"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
+        },
+        "sheet": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        }
+      }
+    },
     "op_join_names": {
       "type": "object",
       "description": "Joins a table with the local text database by a name number (key, a column of whole numbers). Makes the table's columns, named (a flag), layer (the earliest layer of the text holding the name: 0 the base game, 1 DLC 1, 2 DLC 2, -1 none) and name (local text: workspace files only).",
@@ -1138,7 +1170,7 @@
     },
     "op_make_map_overview": {
       "type": "object",
-      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, each tile with every piece revealed, laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side. variant: revealed (default; each of the tile's widest revealed variants laid over its base variant where it differs, as the game shows every piece found) or base (the base variant alone).",
+      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side. variant: revealed (default; each of the tile's widest revealed variants laid over its base variant where it differs, as the game shows every piece found), base (the base variant alone) or code (the file of one code, given as code, where it was exported, and the base elsewhere). check (default true): a revealed variant that matches the next level whose grid nests with this one by less than min_match per mille (default 700) is left out as another image's, and the widest variants inside it are tried instead. labels (default false): each tile's border, its x and y, and the codes laid (in hex, a score after each) or left out (a minus before).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -1172,8 +1204,25 @@
         "variant": {
           "enum": [
             "revealed",
-            "base"
+            "base",
+            "code"
           ]
+        },
+        "code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "check": {
+          "type": "boolean"
+        },
+        "min_match": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "labels": {
+          "type": "boolean"
         }
       }
     }

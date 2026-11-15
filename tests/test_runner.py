@@ -348,6 +348,30 @@ class JobRunTest(RunnerBase):
         self.assertEqual(doc["tables"][1]["rows"], [[0, 0, 3]])
         self.assertNotIn("exports", json.dumps(doc))
 
+    def test_s78_a_tile_check_goes_to_a_share_file_and_a_labelled_overview_is_written(self):
+        d = self.p.root / "exports" / "71_maptile"
+        d.mkdir(parents=True, exist_ok=True)
+        for x in range(2):
+            for code in (0, 1):
+                px = bytes([20 + 40 * x + code, 9, 9, 255]) * (64 * 64)
+                (d / ("MENU_MapTile_M00_L2_%02d_00_%08X.png" % (x, code))).write_bytes(textures.png_encode(64, 64, px))
+        (d / "MENU_MapTile_M00_L3_00_00_00000000.png").write_bytes(
+            textures.png_encode(64, 64, bytes([30, 9, 9, 255]) * (64 * 64)))
+        cols = [c for c, _ in textures.TILE_CHECK_COLUMNS]
+        ops = [{"op": "check_map_tiles", "as": "t_check", "sheet": 0, "level": 2},
+               {"op": "write_share", "name": "map-tile-check", "tables": ["t_check"], "columns": {"t_check": cols}},
+               {"op": "make_map_overview", "name": "tiles-l2", "sheet": 0, "level": 2, "labels": True}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0078-check", "title": "Tile check (invented)",
+                          "ops": ops}).encode()
+        card = self.run_job(raw)
+        self.assertEqual(card["ops"][0]["done"], 4)
+        doc = json.loads((self.p.share / "map-tile-check.json").read_text(encoding="utf-8"))
+        rows = doc["tables"][0]["rows"]
+        self.assertEqual([r[:5] for r in rows], [[0, 0, 0, 1, 1], [0, 0, 1, 1, 1], [1, 0, 0, 1, 1], [1, 0, 1, 1, 1]])
+        self.assertEqual({r[7] for r in rows}, {3})             # measured against level 3 (flat tiles: no score)
+        self.assertNotIn("exports", json.dumps(doc))
+        self.assertTrue(paths.local_image(self.p, "test-0078-check", "tiles-l2").is_file())
+
     def test_check_fields_gives_numbers_only_and_may_be_shared(self):
         raw = json.dumps({"format": "datapiler-job/1", "id": "test-0067-check", "title": "Fields (invented)", "ops": [
             {"op": "check_fields", "as": "fc", "param": "NpcParam",

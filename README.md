@@ -186,7 +186,9 @@ map tiles' container on the Map Tiles tab and export all its textures. A job wit
 files in any subfolder and records, for each tile, what its name says and its size: numbers only, never the image.
 A job with `make_map_overview` lays one sheet's level out as a single PNG in the workspace, on your PC only, with
 every map piece revealed (or, with `"variant": "base"`, none). Export every variant of the tiles, not only some:
-a tile whose pieces never meet is drawn from several of them.
+a tile whose pieces never meet is drawn from several of them. Variants that do not match the next zoom level are
+left out as another image's; `"labels": true` writes each tile's position and codes on it, and a job with
+`check_map_tiles` measures every tile of a level, numbers only.
 
 ## What it will and won't do
 

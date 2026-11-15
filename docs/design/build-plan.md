@@ -37,7 +37,7 @@ Where this plan names something "to verify", no builder guesses it: §10 lists t
    tests skipping) and with grpcio in a venv under the brief's build folder, then the commit.
 
 Each builder's report to the lead: the files written, the test command and its last lines, the sweep's result
-(`privsweep.py files FILE...` from EldenNet's `tools/privsweep/`), and any §10 point they ran into.
+(`privsweep.py files FILE...` from the sweep, installed from the owner's private repository), and any §10 point they ran into.
 
 ---
 

@@ -32,7 +32,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, deleted, events, fields, fileio, gamefiles, jobs, logbook, paths as paths_mod, textures
+from . import catalogue, deleted, events, fields, fileio, gamefiles, hardware, jobs, logbook
+from . import paths as paths_mod, textures
 from . import versions
 from . import link as link_mod
 from . import smithbox as smithbox_mod
@@ -112,12 +113,16 @@ class _Card:
     cancel: threading.Event = field(default_factory=threading.Event)
     remove_after: bool = False
     ran: dict | None = None        # DP23 (S71): the last completed run: its version, and whether its outputs moved
+    pause: threading.Event = field(default_factory=threading.Event)   # S84: stop after the step running now
+    pausing: bool = False
+    resume_from: int | None = None  # S84: the step a resumed run goes on from, its context read from the paused file
 
     def public(self) -> dict:
         return {"id": self.id, "title": self.title, "format": jobs.FORMAT if self.format_ok else None,
                 "sha256": self.sha256, "state": self.state,
                 "refusals": [{"op": r.op, "where": r.where, "text": r.text} for r in self.refusals],
                 "preview": self.preview, "wait": self.wait, "ops": [dict(o) for o in self.ops],
+                "pausing": self.pausing,
                 "result": json.loads(json.dumps(self.result)) if self.result is not None else None,
                 "added": self.added}          # S54: the page sorts the newest first by it
 
@@ -167,6 +172,7 @@ class _Ctx:
     prior: dict | None = None                         # the last completed run's record, when it was on another version
     reads: dict = field(default_factory=dict)         # op index -> what fetch_rows or read_placements read, to keep
     checked: dict = field(default_factory=dict)       # DP24: param -> {field: type} that check_fields found
+    pause: threading.Event | None = None              # S84: set when the job is to pause after its step
 
 
 @dataclass(frozen=True)
@@ -181,6 +187,9 @@ class _Source:
 
 
 PLACEMENTS = "placements"           # check 6's name for the placements' game table
+PAUSED_DIR = "paused"               # S84: workspace/paused/<job>.json, a paused job's context (local, never shared)
+PAUSED_FORMAT = "datapiler-paused/1"
+MAP_STEPS = ("load_maps", "read_placements")   # S84: steps that pause at their next map, their maps kept (S63)
 
 
 class _MapProgress:
@@ -327,10 +336,12 @@ class Runner:
     def __init__(self, paths: "paths_mod.Paths | Callable[[], paths_mod.Paths]", link: LinkLike, textdb: "TextDB",
                  guard: "Guard", provenance: Callable[[], dict], game: Callable[[], "GameRunning"],
                  language: Callable[[], str], *, map_opengl: Callable[[], bool] = lambda: False,
-                 game_dir: Callable[[], str] = lambda: ""):
+                 game_dir: Callable[[], str] = lambda: "",
+                 work: Callable[[], tuple[int, int]] = lambda: (1, 0)):
         """paths: the Paths, or a callable giving the current ones (Settings can move the workspace and the share
         folder; the folders are read afresh at each write). game_dir: the game folder in Settings, where
-        unpack_game_file finds the game's Oodle library (DP28)."""
+        unpack_game_file finds the game's Oodle library (DP28). work: the Settings caps for the image steps (cores,
+        memory MB; 0 automatic), DP29; the default, one core, keeps a runner without Settings in this process."""
         self._paths = paths
         self.link = link
         self.textdb = textdb
@@ -340,6 +351,7 @@ class Runner:
         self.language = language
         self.map_opengl = map_opengl
         self.game_dir = game_dir
+        self.work = work
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
@@ -405,6 +417,84 @@ class Runner:
         return deleted.put(self.paths, "progress", card_id, "jobs", "%s/%s" % (card_id, MAPS_FILE), [(f, MAPS_FILE)],
                            extra={"id": card_id})
 
+    # ---- S84: a paused job's context
+
+    def _paused_file(self, card_id: str) -> Path:
+        return self.paths.workspace / PAUSED_DIR / ("%s.json" % card_id)
+
+    def _bin_paused(self, card_id: str) -> dict | None:
+        """S84: a job's pause point to the Deleted bin (DP22), as Start again and Remove drop it. None when there is
+        none. Raises OSError or deleted.BinError, the file left where it was."""
+        f = self._paused_file(card_id)
+        if not f.exists():
+            return None
+        return deleted.put(self.paths, "paused", card_id, "workspace", "%s/%s.json" % (PAUSED_DIR, card_id),
+                           [(f, "%s.json" % card_id)], extra={"id": card_id})
+
+    def _paused_doc(self, card: _Card) -> tuple[dict | None, str]:
+        """S84: the pause point of a job, when it can be gone on from: the same job file, on the game version and
+        Smithbox build in use now. (None, why) else."""
+        try:
+            doc = json.loads(self._paused_file(card.id).read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            return None, "its saved pause point cannot be read"
+        if not isinstance(doc, dict) or doc.get("format") != PAUSED_FORMAT or card.job is None or \
+                not isinstance(doc.get("at"), int) or not 0 <= doc["at"] < len(card.job.ops):
+            return None, "its saved pause point is not one DataPiler wrote"
+        if doc.get("job_sha256") != card.job.sha256:
+            return None, "the job file changed since it paused"
+        if doc.get("vkey") is None or doc["vkey"] != versions.key_of(self._prov()):
+            return None, "the game, its regulation or Smithbox changed since it paused"
+        return doc, ""
+
+    def _save_paused(self, ctx: _Ctx, card: _Card, at: int) -> bool:
+        """S84: the job's context after its last finished step, to workspace/paused/<job>.json (local: it may hold
+        the game's text, as the workspace does). False, logged, when it cannot be written."""
+        share = None
+        if ctx.share is not None:
+            i, name, data, declared, coverage = ctx.share
+            share = [i, name, data.decode("utf-8"), declared, coverage]
+        doc = {"format": PAUSED_FORMAT, "job": card.id, "job_sha256": ctx.job.sha256, "vkey": ctx.vkey, "at": at,
+               "ops": [dict(o) for o in card.ops[:at]],
+               "ctx": {"tables": {k: [[list(c) for c in cols], [list(r) for r in rows]]
+                                  for k, (cols, rows) in ctx.tables.items()},
+                       "sources": {str(k): [v.table, v.of, v.unique] for k, v in ctx.sources.items()},
+                       "placed": ctx.placed, "names": ctx.names, "plan": ctx.plan, "local": ctx.local,
+                       "share": share, "fetched": ctx.fetched, "unit": ctx.unit,
+                       "reads": {str(k): v for k, v in ctx.reads.items()}, "checked": ctx.checked}}
+        try:
+            f = self._paused_file(card.id)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(f, json.dumps(doc, ensure_ascii=False, default=str).encode("utf-8"))
+            return True
+        except (OSError, TypeError, ValueError) as e:
+            ctx.log.warn("the pause point could not be saved, so the job stops instead: %s", logbook.why(e))
+            return False
+
+    @staticmethod
+    def _restore_paused(ctx: _Ctx, card: _Card, doc: dict) -> int:
+        """S84: a paused job's context back, and its finished steps shown as they ended. The step to go on from."""
+        c = doc["ctx"]
+        ctx.tables = {k: ([tuple(x) for x in cols], [tuple(r) for r in rows]) for k, (cols, rows) in c["tables"].items()}
+        ctx.sources = {int(k): _Source(v[0], v[1], v[2]) for k, v in c["sources"].items()}
+        ctx.placed, ctx.names, ctx.checked = dict(c["placed"]), dict(c["names"]), dict(c["checked"])
+        ctx.plan, ctx.local = list(c["plan"]), list(c["local"])
+        ctx.fetched, ctx.unit = c["fetched"], c["unit"]
+        ctx.reads = {}
+        for k, v in c["reads"].items():
+            if isinstance(v, dict) and isinstance(v.get("kept_from"), str):
+                v["kept_from"] = Path(v["kept_from"])
+            ctx.reads[int(k)] = v
+        sh = c["share"]
+        if sh is not None:
+            cov = {t: (tuple(v) if isinstance(v, list) else v) for t, v in (sh[4] or {}).items()} \
+                if isinstance(sh[4], dict) else sh[4]
+            ctx.share = (sh[0], sh[1], sh[2].encode("utf-8"), sh[3], cov)
+        for k, o in enumerate(doc["ops"]):
+            if k < len(card.ops):
+                card.ops[k].update({x: o.get(x) for x in ("state", "done", "of", "secs")})
+        return doc["at"]
+
     def _bin_stale_progress(self, card_id: str) -> bool:
         """A saved progress of another game or Smithbox, or another job's file, to the Deleted bin (DP22). False, the
         file kept, when it could not go."""
@@ -423,7 +513,8 @@ class Runner:
             card = self._cards.get(job_id) if isinstance(job_id, str) else None
             if card is None:
                 raise ValueError("no such job")
-            return deleted.WORD if (self._folder(card.id) / MAPS_FILE).exists() else deleted.MOVE
+            kept = (self._folder(card.id) / MAPS_FILE).exists() or self._paused_file(card.id).exists()
+            return deleted.WORD if kept else deleted.MOVE
 
     def start_word(self, job_id: str, what: str) -> str | None:
         """DP22 and the owner's rule of 2026-11-14: deleted.WORD when running the job now would move its saved map
@@ -435,7 +526,11 @@ class Runner:
             if card is None:
                 raise ValueError("no such job")
             f = self._folder(card.id) / MAPS_FILE
-            if card.job is None or card.state in ACTIVE or not f.exists():
+            if card.job is None or card.state in ACTIVE:
+                return None
+            if what == "start" and self._paused_file(card.id).exists():
+                return deleted.WORD                       # S84: a pause point goes to the bin too
+            if not f.exists():
                 return None
             if what == "start":
                 return deleted.WORD
@@ -659,7 +754,7 @@ class Runner:
             st = state.get("state")
             if st in ACTIVE:
                 card.state = "stopped"
-            elif st in ("done", "failed", "cancelled", "stopped"):
+            elif st in ("done", "failed", "cancelled", "stopped", "paused"):
                 card.state = st
             ops = state.get("ops")
             if isinstance(ops, list) and len(ops) == len(card.ops) and \
@@ -672,7 +767,7 @@ class Runner:
                             o["state"] = "stopped"
             result = state.get("result")
             card.result = result if isinstance(result, dict) and card.state in (
-                "done", "failed", "cancelled", "stopped") else None
+                "done", "failed", "cancelled", "stopped", "paused") else None
             card.ran = _ran_checked(state.get("ran"))
             if card.ran is None and "ran" not in state and card.state == "done":
                 card.ran = self._ran_from_share(card)
@@ -755,6 +850,27 @@ class Runner:
         _job_log.info("the saved progress of the job %s restored from the Deleted bin", own(jid))
         events.emit("job.state", id=own(jid), state=own(card.state))
 
+    def restore_paused(self, item_id: str, meta: dict) -> None:
+        """S84: a job's pause point from the Deleted bin back in the workspace, for Resume job. Raises
+        deleted.BinError, moving nothing, when the job is not here, is running, or has a pause point of its own."""
+        jid = (meta.get("extra") or {}).get("id")
+        if not paths_mod.name_ok(jid):
+            raise deleted.BinError(deleted.NO_ITEM)
+        with self._cv:
+            card = self._cards.get(jid)
+            if card is None:
+                raise deleted.BinError("Not restored: the job %s is not here. Restore the job first. %s"
+                                       % (jid, deleted.KEPT))
+            if card.state in ACTIVE:
+                raise deleted.BinError("Not restored: the job %s is running. Restore where it paused once it has "
+                                       "stopped. %s" % (jid, deleted.KEPT))
+            f = self._paused_file(jid)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            deleted.move_back(self.paths, item_id, meta, {"%s.json" % jid: f},
+                              "Not restored: the job %s has a pause point of its own now." % jid)
+        _job_log.info("the pause point of the job %s restored from the Deleted bin", own(jid))
+        events.emit("job.state", id=own(jid), state=own(card.state))
+
     def add(self, filename: str, raw: bytes) -> tuple[dict, bool]:
         """Keep raw as jobs/<id>/job.json, check it, return (card, again). again is True when the same sha256 is
         here already (its card is returned, nothing duplicated). A refused job is a card too. Never raises for a
@@ -802,22 +918,43 @@ class Runner:
             return card.public(), False
 
     def act(self, job_id: str, what: str, *, confirm_maps: int | None = None) -> dict:
-        """what: "start", "resume", "update", "cancel" or "remove". {"ok": True}, or {"ok": False, "ask": {...}} when
+        """what: "start", "resume", "update", "pause", "cancel" or "remove". {"ok": True}, or {"ok": False, "ask": {...}} when
         Start would load more than ten maps and confirm_maps does not equal that number (S8). S66: "start" begins again
         from the beginning, dropping what an earlier run kept; "resume" goes on from it. DP23 (S71): "update", offered
         while the job's last completed run was on another game version, runs it again as "resume" does, and the run
-        compares what it reads with what that run read. ValueError for an unknown id or what."""
-        if what not in ("start", "resume", "update", "cancel", "remove"):
+        compares what it reads with what that run read. S84: "pause" lets the step running now finish (a map step
+        stops at its next map, its maps kept) and saves the job's context; "resume" then goes on from the next step.
+        ValueError for an unknown id or what."""
+        if what not in ("start", "resume", "update", "pause", "cancel", "remove"):
             raise ValueError("not something a job can do")
         with self._cv:
             card = self._cards.get(job_id) if isinstance(job_id, str) else None
             if card is None:
                 raise ValueError("no such job")
+            if what == "pause":
+                if card.state not in ("running", "waiting") or self._current != ("job", card.id):
+                    return {"ok": False, "error": "Only a running job can pause."}
+                card.pause.set()
+                card.pausing = True
+                step = next((o["op"] for o in card.ops if o["state"] in ("running", "waiting")), None)
+                if card.state == "waiting" or step in MAP_STEPS:
+                    card.cancel.set()           # stops between calls, as Stop does; the maps read are kept (S63)
+                self._save(card)
+                events.emit("job.state", id=own(card.id), state=own(card.state))
+                self._cv.notify_all()
+                return {"ok": True}
             if what in ("start", "resume", "update"):
                 if card.job is None:
                     return {"ok": False, "error": "a refused job cannot start - drop a corrected file"}
                 if card.state in ACTIVE:
                     return {"ok": True}
+                resume_from = None
+                if what == "resume" and self._paused_file(card.id).exists():
+                    doc, why = self._paused_doc(card)
+                    if doc is None:
+                        return {"ok": False, "error": "The job cannot go on from where it paused: %s. Start again "
+                                                      "runs it from the beginning." % why}
+                    resume_from = doc["at"]
                 if what == "update" and self._update_of(card, versions.key_of(self._prov())) is None:
                     return {"ok": False, "error": "Nothing to update: this job last ran on the game version and "
                                                   "Smithbox build in use now."}
@@ -834,6 +971,7 @@ class Runner:
                         "and loading may take a long while. Start it?" % "{:,}".format(maps))}}
                 if what == "start":
                     try:
+                        self._bin_paused(card.id)         # S84: a pause point too, before the maps
                         self._bin_progress(card.id)       # DP22: what was kept goes to the Deleted bin
                     except (OSError, deleted.BinError) as e:
                         _job_log.warn("job %s did not start again: its saved progress could not be moved to the "
@@ -841,8 +979,17 @@ class Runner:
                         return {"ok": False, "error": "The job did not start again: its saved progress could not be "
                                                       "moved to the Deleted bin (%s)." % logbook.why(e)}
                 card.cancel = threading.Event()
-                card.state, card.wait, card.result = "queued", None, None
-                card.ops = _ops_public(card.job)
+                card.pause = threading.Event()
+                card.pausing = False
+                card.resume_from = resume_from
+                card.state, card.wait = "queued", None
+                if resume_from is None:
+                    card.result = None
+                    card.ops = _ops_public(card.job)
+                else:                                     # the steps done before the pause stay done
+                    card.result = None
+                    for o in card.ops[resume_from:]:
+                        o.update(state="waiting", done=0, of=None, secs=None)
                 self._queue.append(("job", card.id))
                 self._save(card)
                 events.emit("job.state", id=own(card.id), state=own("queued"))
@@ -866,6 +1013,7 @@ class Runner:
                 self._cv.notify_all()
                 return {"ok": True}
             try:
+                self._bin_paused(card.id)
                 self._drop_folder(card)
             except (OSError, deleted.BinError) as e:
                 _job_log.warn("job %s not removed: its files could not be moved to the Deleted bin: %s", own(card.id),
@@ -1296,16 +1444,29 @@ class Runner:
             events.emit("job.state", id=own(job_id), state=own(card.state))
             return True
 
-        ctx = _Ctx(job=job, builtin=False, row=None, cancel=cancel, log=jl, on_op=on_op, on_wait=on_wait, card=card)
+        ctx = _Ctx(job=job, builtin=False, row=None, cancel=cancel, log=jl, on_op=on_op, on_wait=on_wait, card=card,
+                   pause=card.pause)
         try:
             jl.info("started: %s operations", logbook.n(len(job.ops)))
             self._open_progress(ctx, job_id)
             self._version_start(ctx)
-            outcome, fail = self._execute(ctx)
+            start = 0
+            if card.resume_from is not None:
+                doc, why = self._paused_doc(card)
+                if doc is not None:
+                    start = self._restore_paused(ctx, card, doc)
+                    jl.info("goes on from op %s, where it paused; the %s operations before it are kept", start,
+                            logbook.n(start))
+                else:
+                    jl.warn("does not go on from where it paused (%s): it runs from the beginning", own(why))
+                    with self._lock:
+                        card.ops = _ops_public(job)
+            outcome, fail = self._execute(ctx, start)
             if outcome == "done" and ctx.progress is not None:
                 ctx.progress.clear()
             version, changes, ran = self._version_done(ctx) if outcome == "done" else (None, None, None)
             secs = time.monotonic() - started
+            saved = self._save_paused(ctx, card, fail["at"]) if outcome == "paused" and fail is not None else False
             with self._lock:
                 card.wait = None
                 if outcome == "done":
@@ -1316,6 +1477,17 @@ class Runner:
                     card.state = "done"
                     jl.info("done in %s s: %s local files, %s", logbook.n(secs), logbook.n(len(ctx.local)),
                             own("a share file" if share else "no share file"))
+                elif outcome == "paused":
+                    assert fail is not None
+                    at = fail["at"]
+                    card.result = {"share": None, "local": list(ctx.local), "failed": None, "kept": self._kept(ctx),
+                                   "paused": {"at": at, "of": len(job.ops)} if saved else None}
+                    card.state = "paused" if saved else "stopped"
+                    for o in card.ops[at:]:
+                        if o["state"] in ("running", "waiting", "cancelled"):
+                            o.update(state="waiting", done=0, of=None, secs=None)
+                    jl.info("paused before op %s of %s, after the step running then finished", at,
+                            logbook.n(len(job.ops)))
                 elif outcome == "failed":
                     assert fail is not None
                     card.result = {"share": None, "local": list(ctx.local), "failed": fail, "kept": self._kept(ctx)}
@@ -1329,7 +1501,16 @@ class Runner:
                     for o in card.ops:
                         if o["state"] in ("running", "waiting"):
                             o["state"] = "cancelled"
+                card.pausing = False
+                card.resume_from = None
                 self._save(card)
+                if outcome == "done":
+                    try:
+                        self._paused_file(job_id).unlink()        # S84: the pause point is used up
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        jl.warn("the used pause point stays in the workspace: %s", logbook.why(e))
             events.emit("job.state", id=own(job_id), state=own(card.state))
         finally:
             jl.close()
@@ -1513,18 +1694,27 @@ class Runner:
 
     # ------------------------------------------------------------------------------------------------ the ops
 
-    def _execute(self, ctx: _Ctx) -> tuple[str, dict | None]:
-        """("done" | "failed" | "cancelled", the failure)."""
+    def _halt(self, ctx: _Ctx, i: int) -> tuple[str, dict | None]:
+        """S84: how a run that stops before step i ends: paused there when the owner paused it, else cancelled."""
+        if ctx.pause is not None and ctx.pause.is_set() and not self._stopping:
+            return "paused", {"at": i}
+        return "cancelled", None
+
+    def _execute(self, ctx: _Ctx, start: int = 0) -> tuple[str, dict | None]:
+        """("done" | "failed" | "cancelled" | "paused", the failure or {"at": the step to go on from}). S84: from step
+        `start` on (a resumed run); a pause takes effect between steps."""
         job = ctx.job
         for i, o in enumerate(job.ops):
+            if i < start:
+                continue
             op = o["op"]
             while True:
-                if ctx.cancel.is_set() or self._stopping:
-                    return "cancelled", None
+                if ctx.pause is not None and ctx.pause.is_set() or ctx.cancel.is_set() or self._stopping:
+                    return self._halt(ctx, i)
                 if op in jobs.LINK_OPS and not self._wait_for_link(ctx.cancel, ctx.on_wait):
-                    return "cancelled", None
+                    return self._halt(ctx, i)
                 if op == "load_maps" and not ctx.builtin and not self._wait_for_build(ctx):
-                    return "cancelled", None
+                    return self._halt(ctx, i)
                 ctx.on_op(i, "running", 0, None, None)
                 t0 = time.monotonic()
                 try:
@@ -1535,8 +1725,9 @@ class Runner:
                         self._cv.wait(WAIT_POLL)
                     continue                               # the link went off: wait, then run this op again
                 except (link_mod.LinkCancelled, _Cancelled):
-                    ctx.on_op(i, "cancelled", 0, None, None)
-                    return "cancelled", None
+                    outcome = self._halt(ctx, i)
+                    ctx.on_op(i, "waiting" if outcome[0] == "paused" else "cancelled", 0, None, None)
+                    return outcome
                 except GuardFailed as e:
                     ctx.on_op(i, "failed", 0, None, round(time.monotonic() - t0, 1))
                     return "failed", {"op": i, "why": _guard_why(e), "check": e.check, "where": e.where or None}
@@ -1684,6 +1875,15 @@ class Runner:
                          "Viewer into a folder inside DataPiler's folder", i)
         return len(rows), n["found"]
 
+    def _plan(self, ctx: _Ctx, i: int, op: str) -> "hardware.Work":
+        """DP29 (S83): what an image step may use now, from the PC's hardware and the Settings caps; logged as counts."""
+        cores, memory_mb = self.work()
+        w = hardware.plan(hardware.scan(), cores, memory_mb)
+        ctx.log.info("op %s %s: up to %s worker processes and %s MB for decoded tiles; PNGs decoded by %s", i, own(op),
+                     logbook.n(w.workers), logbook.n(w.memory // 2 ** 20),
+                     own("Windows' own decoder" if textures.native_decoding() else "DataPiler's own decoder"))
+        return w
+
     def _check_map_tiles(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S78: for each exported tile of a sheet's level, which folder it was found in (numbered), its copies, how
         much differs from its base, and how well it matches the next level. Numbers only; no path reaches the log."""
@@ -1691,8 +1891,10 @@ class Runner:
         try:
             ts = textures.tile_set(self.paths.root, o["sheet"], skip=(self.paths.bin, self.paths.root / "update"),
                                    cancel=ctx.cancel)
+            w = self._plan(ctx, i, "check_map_tiles")
             rows, n = textures.check_level(ts, o["level"], cancel=ctx.cancel,
-                                           progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
+                                           progress=lambda d, t: ctx.on_op(i, "running", d, t, None),
+                                           workers=w.workers, memory=w.memory)
         except textures.Cancelled:
             raise link_mod.LinkCancelled("cancelled") from None
         except ValueError as e:
@@ -1700,9 +1902,12 @@ class Runner:
         except OSError as e:
             raise _Fail("a tile could not be read: %s" % logbook.why(e)) from None
         ctx.tables[o["as"]] = (list(textures.TILE_CHECK_COLUMNS), rows)
+        said = ("found: %s variants outside them" % logbook.n(n["outside_masks"])) if n["masks"] \
+            else "not found for this level"
         ctx.log.info("op %s check_map_tiles: %s tiles at %s positions, found in %s folders; compared with level %s (-1: none nests with it); "
-                     "%s variants look like another image's", i, logbook.n(n["tiles"]), logbook.n(n["positions"]),
-                     logbook.n(n["folders"]), n["near_level"], logbook.n(n["other_image"]))
+                     "%s variants look like another image's; the game's masks %s", i, logbook.n(n["tiles"]),
+                     logbook.n(n["positions"]), logbook.n(n["folders"]), n["near_level"], logbook.n(n["other_image"]),
+                     own(said))
         if not rows:
             ctx.log.warn("op %s check_map_tiles: no exported PNG tile of that sheet and level was found", i)
         return len(rows), len(rows)
@@ -1789,11 +1994,13 @@ class Runner:
         """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to
         workspace/local/<job>/<name>.png on the PC. Never shared; no path reaches the log."""
         ctx.on_op(i, "running", 0, None, None)
+        w = self._plan(ctx, i, "make_map_overview")
         try:
             data, n = textures.overview(self.paths.root, o["sheet"], o["level"], rows_from=o.get("rows_from", "bottom"),
                                         variant=o.get("variant", "revealed"), code=o.get("code"),
                                         check=o.get("check", True), min_match=o.get("min_match", textures.MATCH_MIN),
                                         labels=o.get("labels", False), shrink=o.get("shrink", 1),
+                                        masks=o.get("masks", True), workers=w.workers, memory=w.memory,
                                         skip=(self.paths.bin, self.paths.root / "update"), cancel=ctx.cancel,
                                         progress=lambda d, t: ctx.on_op(i, "running", d, t, None))
         except textures.Cancelled:
@@ -1812,11 +2019,12 @@ class Runner:
             raise _Fail("the workspace image could not be written: %s" % logbook.why(e)) from None
         name = o["name"] + ".png"
         ctx.local.append(name)
-        ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants, %s variants left "
-                     "out as another image's, %s of the old tile set moved to where they match), %s by %s pixels, %s "
-                     "bytes (local, never shared)", own(name), logbook.n(n["tiles"]), logbook.n(n["joined"]),
-                     logbook.n(n["left_out"]), logbook.n(n.get("moved", 0)), logbook.n(n["width"]),
-                     logbook.n(n["height"]), logbook.n(len(data)))
+        how = ("drawn from the game's own masks: %s from a mask's variant" % logbook.n(n["masked"])) if n["masks"] \
+            else "%s joined from several revealed variants" % logbook.n(n["joined"])
+        ctx.log.info("workspace image %s written: %s tiles (%s; %s variants left out as another image's or another "
+                     "layout's; %s tiles outside the level's frame), %s by %s pixels, %s bytes (local, never shared)",
+                     own(name), logbook.n(n["tiles"]), own(how), logbook.n(n["left_out"]), logbook.n(n["outside"]),
+                     logbook.n(n["width"]), logbook.n(n["height"]), logbook.n(len(data)))
         return n["tiles"], n["tiles"]
 
     def _check_fields(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:

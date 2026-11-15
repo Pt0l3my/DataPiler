@@ -13,6 +13,46 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.34 - 2026-11-15
+
+- Changed: the levels' sizes, measured on the game's own overviews (en-0029, S85): level 1 is 0.74857 of level 0 and
+  level 2 0.19875, on every sheet, both from the top left (they were taken as 3/4 and 2,089 / 10,496). Checks of level
+  0 against level 1 no longer drift towards the right and the bottom. Overviews were never affected: each level is drawn
+  on its own grid.
+- Fixed: Stop during a tile check or an overview now waits for the worker processes' running chunks (a few seconds)
+  instead of leaving them reading files in the background.
+
+## 0.2.33 - 2026-11-15
+
+- New: the image steps (tile checks and overviews) use the PC (DP29 (b), S83): worker processes on its cores (every
+  core but one by default), Windows' own PNG decoder (used only after it decodes test images exactly as DataPiler's own
+  does), and decoded tiles kept in memory. Settings has **Cores for image steps** and **Memory for image steps**; the
+  Status page has a **This PC** card with the processor, the memory, the graphics card (shown, never used) and what the
+  image steps use. Results are the same as before, only faster.
+- Changed: `moved` is measured only at levels 0 and 1, where the older layout's shift is a whole number of tiles.
+- Fixed: with the game's masks, each level is measured against its nearest level the game draws (level 0 against
+  1, levels 1 and 2 against each other). en-0029 measured level 2 against the older layout's level 3, so none of it
+  passed on the base map and the underground.
+- New: **Pause** on a running job (S84): the step running finishes (a map step stops at its next map, its maps kept),
+  the job's finished steps are saved in the workspace, and **Resume job** goes on from the next step, also after
+  DataPiler is closed. Start again and Remove send a pause point to the Deleted bin, which can restore it.
+- New: **Stop** (was Cancel) asks before it cuts a running job short, and Extract's Cancel asks too.
+
+## 0.2.32 - 2026-11-15
+
+- New: overviews draw each level as the game does (S82). The game's own mask files, which an `unpack_game_file` job
+  of `71_maptile.mtmskbnd.dcx` writes to the workspace, say for every tile which map pieces touch it; with every piece
+  revealed, the game draws the variant whose code is that mask. DataPiler finds them in its folder and draws each
+  level's frame from them; every other code is another layout's and is left out. `"masks": false` turns this off.
+- New: `check_map_tiles` adds `in_mask`: whether each variant is one the game draws (1), another layout's (0), or
+  not known (-1).
+- Changed: one geometry for every sheet, measured from the masks (S82): level 1 three quarters of level 0 and level
+  2 2,089 / 10,496 of it, both at the top left of their frame (31 and 9 tiles a side). Levels 3 and 4 are an older
+  layout the game no longer draws; they are no longer the reference level.
+- Withdrawn: 0.2.31's moving of the "old tile set" in overviews. The masks show those tiles are today's, and the
+  reference level 3 the older layout's; `moved` now measures a tile 1,024 map units to the left, where the ground of
+  a tile of the older layout lies today.
+
 ## 0.2.31 - 2026-11-15
 
 - New: `unpack_game_file` opens a game file that Smithbox unpacked into DataPiler's folder (DP28, S81): DCX files are

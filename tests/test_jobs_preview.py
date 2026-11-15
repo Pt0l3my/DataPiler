@@ -51,7 +51,8 @@ class PreviewTest(unittest.TestCase):
                        "workspace file `npc-named.json`: 3 tables (local)",
                        "share file `every-op-counts.json`: 2 tables",
                        "workspace image `every-op-overview.png`: the exported map tiles of sheet 0, level 4, each with "
-                       "every piece revealed, from variants that match the sheet's reference level, labelled (local, never shared)"],
+                       "every piece revealed as the game's own masks give it, where DataPiler finds them, else from "
+                       "variants that match the sheet's reference level, labelled (local, never shared)"],
         })
 
     def test_the_other_wordings(self):

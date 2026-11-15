@@ -81,7 +81,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "distinct": {"as": True, "rows": True, "by": True},
     "write_local": {"name": True, "tables": True, "columns": False},
     "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False, "code": False,
-                          "check": False, "min_match": False, "labels": False, "shrink": False},
+                          "check": False, "min_match": False, "labels": False, "shrink": False, "masks": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
@@ -862,7 +862,7 @@ class _Checker:
             self.add(place + ".code", "must be a whole number from 0 to 4294967295", i)
         if (o.get("variant") == "code") != ("code" in o):
             self.add(place + ".code", "is given with variant code, and only then", i)
-        for key in ("check", "labels"):
+        for key in ("check", "labels", "masks"):
             if key in o and not isinstance(o[key], bool):
                 self.add("%s.%s" % (place, key), "must be true or false", i)
         mm = o.get("min_match")
@@ -1229,12 +1229,12 @@ def _line(o: dict) -> str:
             look = "in its base variant"
         elif o.get("variant") == "code":
             look = "in its code %X variant where exported" % o["code"]
-        elif o.get("check", True):
-            look = "with every piece revealed, from variants that match the sheet's reference level"
-            if o["level"] in textures.OLD_LEVELS:
-                look += ", the old tile set's moved to where they match"
         else:
             look = "with every piece revealed"
+            if o.get("masks", True):
+                look += " as the game's own masks give it, where DataPiler finds them, else"
+            look += " from variants that match the sheet's reference level" if o.get("check", True) else \
+                (" from every variant laid" if o.get("masks", True) else "")
         extra = (", shrunk %d times" % o["shrink"] if o.get("shrink", 1) > 1 else "") + (", labelled" if o.get("labels") else "")
         return ("workspace image `%s.png`: the exported map tiles of sheet %d, level %d, each %s%s (local, never shared)"
                 % (o["name"], o["sheet"], o["level"], look, extra))

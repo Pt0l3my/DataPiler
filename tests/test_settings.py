@@ -37,7 +37,20 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(s.as_dict(), {"smithbox_dir": "", "game_dir": "", "project_dir": "", "workspace_dir": "workspace",
                                        "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
                                        "log_max_mb": 2, "log_keep": 5, "mask_paths": False, "map_opengl": True,
+                                       "work_cores": 0, "work_memory_mb": 0,
                                        "recent": {"smithbox_dir": [], "game_dir": [], "project_dir": []}})
+
+    def test_dp29_the_caps_for_image_steps(self):
+        """S83: blank (0) is automatic; otherwise 1 to 256 cores and 256 MB to 1 TB."""
+        self.assertEqual((self.check(work_cores=6).work_cores, self.check(work_memory_mb=2048).work_memory_mb), (6, 2048))
+        for key, bad in (("work_cores", 257), ("work_cores", -1), ("work_cores", "4"), ("work_cores", True),
+                         ("work_memory_mb", 100), ("work_memory_mb", 2 ** 21)):
+            with self.subTest(key=key, bad=bad), self.assertRaises(SettingsError) as cm:
+                self.check(**{key: bad})
+            self.assertEqual(cm.exception.field, key)
+        with self.assertRaises(SettingsError) as cm:
+            self.check(work_cores=300)
+        self.assertIn("blank (automatic)", cm.exception.rule)
 
     def test_the_expansion_is_the_owners_statement(self):
         """P2 (settled S21): yes, no, or not stated yet (blank, at first); nothing else."""

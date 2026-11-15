@@ -156,6 +156,8 @@
       <label for="s_port">Page port <span class="qm" title="Blank for any free one; takes effect at the next start">?</span></label><input type="text" id="s_port" placeholder="(any free one)" spellcheck="false">
       <label for="s_log_max_mb">Log size, MB a file</label><input type="text" id="s_log_max_mb" spellcheck="false">
       <label for="s_log_keep">Log files kept</label><input type="text" id="s_log_keep" spellcheck="false">
+      <label for="s_work_cores">Cores for image steps <span class="qm" title="Worker processes for the tile checks and overviews, one a core. Blank: every core but one, so the PC stays responsive. Status shows what this PC has.">?</span></label><input type="text" id="s_work_cores" placeholder="(automatic: every core but one)" spellcheck="false">
+      <label for="s_work_memory_mb">Memory for image steps, MB <span class="qm" title="Decoded tiles kept in memory, so that none is read twice, shared among the worker processes. Blank: a quarter of the free memory when a step starts.">?</span></label><input type="text" id="s_work_memory_mb" placeholder="(automatic: a quarter of the free memory)" spellcheck="false">
       <label>Server <span class="qm" title="Smithbox's own address - shown, never editable">?</span></label><span class="mono" id="sServer"></span>
       <label>Server link this session</label><span><button id="sLink">Switch on</button> <span class="mute">off at every start</span></span>
       <label>DEBUG to the file this session</label><span><button id="sDebug">Switch on</button> <span class="mute">off at every start</span></span>

@@ -507,12 +507,14 @@ class PageTest(unittest.TestCase):
 
     def test_runs_go_through_the_pop_up_and_update_data_is_offered(self):
         act = self.js[self.js.index("function jobAct("):self.js.index("// DP23: a job's kept versions")]
-        self.assertIn('what === "cancel" ? api("/api/jobs/act", body) : confirmed("/api/jobs/act", body)', act)
+        self.assertIn('what === "cancel" || what === "pause" ? api("/api/jobs/act", body) : confirmed("/api/jobs/act", body)',
+                      act)
         self.assertIn("r.confirmed || word", act)
         card = self.js[self.js.index("function jobCard("):self.js.index("function paintJobs(")]
         self.assertIn('"Update data"', card)
         self.assertIn('jobAct(j, "update")', card)
-        self.assertIn('!kept && !window.confirm("Start this job again from the beginning?")', card)
+        self.assertIn('!kept && !paused && !window.confirm("Start this job again from the beginning?")', card)
+        self.assertIn('if (window.confirm(q)) jobAct(j, "cancel")', card)     # S84: Stop asks first
         self.assertNotIn("go to the Deleted bin and are read again", card)    # no window.confirm for a deletion
         self.assertIn("/api/versions/compare?job=", self.js)
 

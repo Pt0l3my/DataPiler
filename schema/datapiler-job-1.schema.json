@@ -874,7 +874,7 @@
     },
     "op_check_map_tiles": {
       "type": "object",
-      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). moved (per mille, the better of the two matches with the tile measured 1,024 map units to the right, where the old tile set's columns belong). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
+      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). moved (per mille, the better of the two matches with the tile measured 1,024 map units to the left, where the ground of a tile of the game's older layout lies today), in_mask (1 when the code is inside the game's own mask for its place, which the game draws; 0 when it is not, another layout's; -1 when the sheet's mask file was not found or keeps none for the level). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
       "additionalProperties": false,
       "required": [
         "op",
@@ -1194,7 +1194,7 @@
     },
     "op_make_map_overview": {
       "type": "object",
-      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side. variant: revealed (default; each of the tile's widest revealed variants laid over its base variant where it differs, as the game shows every piece found), base (the base variant alone) or code (the file of one code, given as code, where it was exported, and the base elsewhere). check (default true): a revealed variant that matches the sheet's reference level (the coarsest with six tiles a side or more; the reference itself against its nearest level) by less than min_match per mille (default 700) is left out as another image's, and the widest variants inside it are tried instead. shrink (1, 2, 4 or 8; default 1) makes each tile that many times smaller, so that levels 0 and 1 fit. labels (default false): each tile's border, its x and y, and the codes laid (in hex, a score after each) or left out (a minus before).",
+      "description": "One PNG of a sheet's level of the map tiles exported from Smithbox, laid out on the tile grid, written to workspace/local/<job>/<name>.png on the PC. Local only: never shared. rows_from says where tile row 0 sits (bottom by default). At most 4,096 pixels a side. variant: revealed (default; every piece revealed: with masks (default true) and the game's own mask file of the sheet found in DataPiler's folder (unpacked from 71_maptile.mtmskbnd.dcx), the variant whose code is each place's mask, as the game draws it, in the level's frame (41, 31 and 9 tiles a side on the base map), every other code left out as another layout's; else each of the tile's widest revealed variants laid over its base variant where it differs), base (the base variant alone) or code (the file of one code, given as code, where it was exported, and the base elsewhere). check (default true; without the game's masks): a revealed variant that matches the sheet's reference level (of the levels the game draws, the coarsest with six tiles a side or more; the reference itself against its nearest level) by less than min_match per mille (default 700) is left out as another image's, and the widest variants inside it are tried instead. shrink (1, 2, 4 or 8; default 1) makes each tile that many times smaller, so that levels 0 and 1 fit. labels (default false): each tile's border, its x and y, and the codes laid (in hex, a score after each) or left out (a minus before).",
       "additionalProperties": false,
       "required": [
         "op",
@@ -1255,6 +1255,9 @@
             4,
             8
           ]
+        },
+        "masks": {
+          "type": "boolean"
         }
       }
     }

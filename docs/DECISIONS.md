@@ -25,6 +25,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   read anywhere in DataPiler's folder), the owner's request. DP26 (job cards in the owner's own order), the owner's
   request. DP27 (an overview image made on the PC), the owner's choice. DP28 (game files that Smithbox unpacked,
   opened on the PC with the game's own Oodle library), the owner's request and choice.
+  DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
+  choice of (b).
 - **Open.** None.
 
 ## DP1
@@ -506,3 +508,39 @@ regulation. Off Windows, or without the library in the game folder, a KRAK file 
 
 **Owner's words.** "Yes, under those rules (Recommended)" and "Both, in one version".
 
+## DP29
+
+**Using the PC's hardware: cores, memory, the graphics card** · *2026-11-15 · Decided by the owner: (b)*
+
+**The owner's question.** "Can we add hardware resource scan to datapiler, so it could allocate hardware resources for
+certain tasks that could be faster with GPU vs CPU? or with RAM? or run GPU, RAM, CPU simultaneously? the hardware
+resources would be scanned and identified, then you could add hardware preferences to job tasks (which task should
+run on what type of hardware by preference), so datapiler could speed up the process via multiple hardware resources.
+Is that possible and is there a merit to it?"
+
+**What a job spends its time on.** Smithbox's steps (rows, maps, placements) wait on Smithbox itself, which DataPiler
+cannot lend hardware to; the table steps handle thousands of rows in milliseconds. Only the image steps
+(`check_map_tiles`, `make_map_overview`) are heavy, and they are slow because they run in plain Python on one core:
+measured on 2026-11-15, unpacking one 256-pixel PNG tile takes 15 to 60 ms by its row filter and its thumbnail 7 ms,
+so en-0029 takes an estimated 20 to 60 minutes.
+
+**Options.**
+
+- **(a) Automatic use of the PC (recommended).** DataPiler reads the number of cores and the free memory, runs the image
+  steps' tiles in a pool of worker processes (Python's own), lets Windows' built-in decoder unpack the PNGs, and keeps
+  decoded tiles in memory up to a share of the free memory. A Settings line caps the cores (by default all but one,
+  so that the PC stays responsive) and the memory. No graphics card and no hardware field in job files: DataPiler knows
+  what each step needs. No new dependency; the scan's results stay on the PC. Estimated: image jobs 10 to 40 times
+  faster (en-0029 in a few minutes on an eight-core PC).
+- **(b) As (a), plus a hardware view** on the Status page: cores, memory and graphics card, shown on the PC only.
+- **(c) A scheduler across CPU, memory and graphics card**, with per-step hardware preferences in job files. It would
+  need a GPU library (large, with driver and vendor limits, nothing to test it on in CI), and the work, tens of
+  thousands of small images with Python steps between them, would gain little from a graphics card: copying tiny
+  images to it costs about what it saves. It would pay only for large image maths DataPiler does not do.
+
+**Recommended.** (a): most of the possible gain for little complexity; (c) only if a step one day needs heavy maths
+on whole images.
+
+**Decision.** (b), the same day: (a), with the hardware shown on the Status page (0.2.33, S83).
+
+**Owner's words.** "so currently the CPU is only using 1 core for the jobs? let's go with (b)".

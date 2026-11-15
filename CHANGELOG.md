@@ -13,6 +13,24 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.31 - 2026-11-15
+
+- New: `unpack_game_file` opens a game file that Smithbox unpacked into DataPiler's folder (DP28, S81): DCX files are
+  decompressed (KRAK with the game's own Oodle library, loaded from the game folder and never copied) and BND4 binders
+  split, binders inside them too. The inner files go to the job's workspace folder on the PC, never shared; its table
+  is numbers only. A job may not name a key or the regulation, and DataPiler never decrypts an archive.
+- New: the expansion's map has its own geometry (S81): level 2 is level 0 at 2,089 / 10,496, and levels 1 and 2 sit
+  at the top left of their grids.
+- New: overviews of levels 0 and 1 move the old tile set's variants to where they match (S81), so pieces whose
+  variant today's set lacks or gets wrong are drawn there; labels mark them with a plus.
+
+## 0.2.30 - 2026-11-15
+
+- Fixed: level 1 was measured from the bottom of its grid, but its map sits at the top (S80), so almost none of its
+  tiles passed. Levels now carry where their map sits; level 1 is lifted by the gap its grid leaves.
+- New: `check_map_tiles` gives each variant a `moved` score as well: how well it matches 1,024 map units (four
+  level-0 columns) to the right, where the game's old tile set belongs. Levels 0 and 1 hold such a set beside today's.
+
 ## 0.2.29 - 2026-11-15
 
 - Every level of every sheet is checked now, not only levels 2 to 4 (S79): each sheet has a reference level (the

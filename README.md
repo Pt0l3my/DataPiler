@@ -189,7 +189,18 @@ every map piece revealed (or, with `"variant": "base"`, none). Export every vari
 a tile whose pieces never meet is drawn from several of them. Variants that do not match the next zoom level are
 left out as another image's; `"labels": true` writes each tile's position and codes on it, and a job with
 `check_map_tiles` measures every tile of a level, numbers only. `"shrink": 4` makes levels 0 and 1 fit in one
-image.
+image. At levels 0 and 1 the game also keeps an older set of tiles, numbered four or three columns to the left of
+where they belong; an overview moves each to the place it matches.
+
+## Game files unpacked by Smithbox
+
+Some of the game's files, such as the map tiles' masks in `menu/71_maptile.mtmskbnd.dcx`, are packed in a way Smithbox
+unpacks but does not show. Unpack the game (or the folder you need) with Smithbox into a folder inside DataPiler's
+folder, never inside the game's own folder. A job with `unpack_game_file` names one file by its name alone and finds
+it there; DataPiler opens it on your PC and writes its inner files to the job's folder in the workspace. Files packed
+with Oodle (KRAK) are opened with the game's own `oo2core` library from your Game folder, which DataPiler loads while
+it runs and never copies; it never decrypts the game's archives, and refuses to open a key or the regulation. Like
+the rest of the workspace, the unpacked files are game files: they stay on your PC.
 
 ## What it will and won't do
 

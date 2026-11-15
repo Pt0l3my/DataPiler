@@ -56,6 +56,9 @@
             "$ref": "#/$defs/op_check_map_tiles"
           },
           {
+            "$ref": "#/$defs/op_unpack_game_file"
+          },
+          {
             "$ref": "#/$defs/op_join_names"
           },
           {
@@ -871,7 +874,7 @@
     },
     "op_check_map_tiles": {
       "type": "object",
-      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
+      "description": "Measures the map tiles exported from Smithbox of one sheet's level, on the PC: one row per variant with x, y and code from the file's name, folder (the number of the folder it was found in, in walk order), copies, drawn (per mille of pixels that differ from the position's base), like (per mille likeness to the base), near_level (the sheet's reference level it was measured against, the coarsest with six tiles a side or more, or for the reference its nearest level; -1 if none), near_code (the code compared there), near and near_base (per mille match with that level's variant for the same pieces, and with its base). moved (per mille, the better of the two matches with the tile measured 1,024 map units to the right, where the old tile set's columns belong). -9999 where a score cannot be measured. Numbers only: the table may go to a share file.",
       "additionalProperties": false,
       "required": [
         "op",
@@ -895,6 +898,27 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9
+        }
+      }
+    },
+    "op_unpack_game_file": {
+      "type": "object",
+      "description": "Opens a game file that Smithbox unpacked into a folder inside DataPiler's folder, found there by its file name alone (never a path, never a file in the game folder), on the PC: a DCX is decompressed (DFLT with zlib, KRAK with the game's own Oodle library, loaded from the game folder at run time and never copied), a BND4 binder is split, and a DCX or BND4 inside it is opened in turn. The inner files go to workspace/local/<job>/unpacked/<file>/ on the PC, never shared. DataPiler decrypts no archive and holds no key. With as: one row per file, the named file first: file (its place), parent (its binder's row, -1 for the named file), depth, id (its BND4 ID, -1 if none), kind (0 other, 1 BND4, 2 BND3, 3 a split binder's header, 4 TPF, 5 Scaleform movie, 6 DDS, 7 PNG, 8 DCX), packing (0 none, 1 DFLT, 2 KRAK), stored and size (bytes as stored and once decompressed). Numbers only: the table may go to a share file.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "file"
+      ],
+      "properties": {
+        "op": {
+          "const": "unpack_game_file"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "as": {
+          "$ref": "#/$defs/table"
         }
       }
     },

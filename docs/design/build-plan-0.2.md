@@ -44,7 +44,7 @@ this plan names something "to verify", no builder guesses it: §10 lists those p
    run (`python3 -I -m unittest discover -s tests`, and with the brief's venv), then the commit.
 
 Each builder's report to the lead: the files written, the test commands and their last lines, the sweep's result
-(`privsweep.py files FILE...` from EldenNet's `tools/privsweep/`), and any §10 point met.
+(`privsweep.py files FILE...` from the sweep, installed from the owner's private repository), and any §10 point met.
 
 ---
 

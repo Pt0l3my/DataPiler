@@ -32,7 +32,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, deleted, events, fields, fileio, jobs, logbook, paths as paths_mod, textures, versions
+from . import catalogue, deleted, events, fields, fileio, gamefiles, jobs, logbook, paths as paths_mod, textures
+from . import versions
 from . import link as link_mod
 from . import smithbox as smithbox_mod
 from .guard import WORDS as GUARD_WORDS, GuardFailed
@@ -60,8 +61,10 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
-UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "check_map_tiles": "tiles", "make_map_overview": "tiles", "load_maps": "maps", "read_placements": "maps", "join_names": "rows", "unused_names": "names",
-         "filter": "rows", "count": "rows", "distinct": "rows", "write_local": "files", "write_share": "files"}
+UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "check_map_tiles": "tiles",
+         "make_map_overview": "tiles", "unpack_game_file": "files", "load_maps": "maps", "read_placements": "maps",
+         "join_names": "rows", "unused_names": "names", "filter": "rows", "count": "rows", "distinct": "rows",
+         "write_local": "files", "write_share": "files"}
 ACTIVE = ("queued", "waiting", "running")
 
 _extract_log = logbook.get("extract")
@@ -323,9 +326,11 @@ def _local_bytes(job_id: str, tables: list[tuple[str, list[tuple[str, str]], lis
 class Runner:
     def __init__(self, paths: "paths_mod.Paths | Callable[[], paths_mod.Paths]", link: LinkLike, textdb: "TextDB",
                  guard: "Guard", provenance: Callable[[], dict], game: Callable[[], "GameRunning"],
-                 language: Callable[[], str], *, map_opengl: Callable[[], bool] = lambda: False):
+                 language: Callable[[], str], *, map_opengl: Callable[[], bool] = lambda: False,
+                 game_dir: Callable[[], str] = lambda: ""):
         """paths: the Paths, or a callable giving the current ones (Settings can move the workspace and the share
-        folder; the folders are read afresh at each write)."""
+        folder; the folders are read afresh at each write). game_dir: the game folder in Settings, where
+        unpack_game_file finds the game's Oodle library (DP28)."""
         self._paths = paths
         self.link = link
         self.textdb = textdb
@@ -334,6 +339,7 @@ class Runner:
         self.game = game
         self.language = language
         self.map_opengl = map_opengl
+        self.game_dir = game_dir
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
@@ -1585,6 +1591,8 @@ class Runner:
             return self._read_map_tiles(ctx, i, o)
         if op == "check_map_tiles":
             return self._check_map_tiles(ctx, i, o)
+        if op == "unpack_game_file":
+            return self._unpack_game_file(ctx, i, o)
         if op == "make_map_overview":
             return self._make_map_overview(ctx, i, o)
         if op == "load_maps":
@@ -1699,6 +1707,84 @@ class Runner:
             ctx.log.warn("op %s check_map_tiles: no exported PNG tile of that sheet and level was found", i)
         return len(rows), len(rows)
 
+    def _unpack_game_file(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S81 (DP28): a game file that Smithbox unpacked into DataPiler's folder, found by its name and opened on the
+        PC; its inner files written to workspace/local/<job>/unpacked/<file>/, never shared, and one row of numbers per
+        file. KRAK needs the game's own Oodle library, loaded from the game folder and never copied. No path and no
+        inner file's name reaches the log."""
+        ctx.on_op(i, "running", 0, None, None)
+        p = self.paths
+        name = o["file"]
+        game_dir = self.game_dir() or ""
+        try:
+            found, n = gamefiles.find_file(p.root, name, skip=(p.bin, p.root / "update", p.local, p.versions),
+                                           cancel=ctx.cancel)
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        inside = [f for f in found if game_dir and paths_mod.is_inside(f, game_dir)]
+        found = [f for f in found if f not in inside]
+        if inside:
+            ctx.log.warn("op %s unpack_game_file: %s copies in the game folder are left alone", i,
+                         logbook.n(len(inside)))
+        if n["stopped"]:
+            ctx.log.warn("op %s unpack_game_file: the search stopped after %s files; the folder holds more", i,
+                         logbook.n(textures.MAX_FILES))
+        if not found:
+            raise _Fail("no file named %s was found in DataPiler's folder - unpack it with Smithbox into a folder "
+                        "inside DataPiler's folder" % own(name))
+        try:
+            sums = {gamefiles.digest(f) for f in found}
+        except OSError as e:
+            raise _Fail("the file could not be read: %s" % logbook.why(e)) from None
+        if len(sums) > 1:
+            raise _Fail("%s files named %s were found in DataPiler's folder and they differ - keep one"
+                        % (logbook.n(len(found)), own(name)))
+        size = next(iter(sums))[0]
+        if size > gamefiles.MAX_INPUT:
+            raise _Fail("%s is larger than DataPiler opens (%s MiB)" % (own(name),
+                                                                       logbook.n(gamefiles.MAX_INPUT // 2 ** 20)))
+        try:
+            data = found[0].read_bytes()
+        except OSError as e:
+            raise _Fail("the file could not be read: %s" % logbook.why(e)) from None
+        try:
+            out = paths_mod.local_folder(p, "extract" if ctx.builtin else ctx.job.id, "unpacked") \
+                / gamefiles.safe_parts(name, 0)[0]
+        except ValueError:
+            raise _Fail("not a folder name DataPiler writes") from None
+        written = [0, 0]
+
+        def emit(parts: tuple[str, ...], body: bytes) -> None:
+            path = out.joinpath(*parts)
+            if not paths_mod.is_inside(path.parent, out):
+                raise _Fail("an inner file's name points outside its folder")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(path, body)
+            written[0] += 1
+            written[1] += len(body)
+            if written[0] % 50 == 0:
+                ctx.on_op(i, "running", written[0], None, None)
+
+        try:
+            rows = gamefiles.unpack(data, name, emit, oodle=lambda: gamefiles.load_oodle(game_dir), cancel=ctx.cancel)
+        except textures.Cancelled:
+            raise link_mod.LinkCancelled("cancelled") from None
+        except (gamefiles.FormatError, gamefiles.Unavailable) as e:
+            raise _Fail("%s: %s" % (own(name), own(str(e)))) from None
+        except OSError as e:
+            raise _Fail("an inner file could not be written: %s" % logbook.why(e)) from None
+        if "as" in o:
+            ctx.tables[o["as"]] = (list(gamefiles.UNPACK_COLUMNS), rows)
+        binders = sum(1 for r in rows if r[4] == gamefiles.KINDS["bnd4"])
+        packed = {k: sum(1 for r in rows if r[5] == v) for k, v in gamefiles.PACKINGS.items()}
+        ctx.local.append("unpacked/%s/ (%s files)" % (out.name, written[0]))
+        ctx.log.info("op %s unpack_game_file: %s found in DataPiler's folder (%s copies), %s bytes; %s files in it, in "
+                     "%s binders; decompressed: %s DFLT, %s KRAK; %s files written, %s bytes, to the job's workspace "
+                     "folder (local, never shared)", i, own(name), logbook.n(len(found)), logbook.n(size),
+                     logbook.n(len(rows) - 1), logbook.n(binders), logbook.n(packed["dflt"]), logbook.n(packed["krak"]),
+                     logbook.n(written[0]), logbook.n(written[1]))
+        return written[0], len(rows)
+
     def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to
         workspace/local/<job>/<name>.png on the PC. Never shared; no path reaches the log."""
@@ -1727,8 +1813,9 @@ class Runner:
         name = o["name"] + ".png"
         ctx.local.append(name)
         ctx.log.info("workspace image %s written: %s tiles (%s joined from several revealed variants, %s variants left "
-                     "out as another image's), %s by %s pixels, %s bytes (local, never shared)", own(name),
-                     logbook.n(n["tiles"]), logbook.n(n["joined"]), logbook.n(n["left_out"]), logbook.n(n["width"]),
+                     "out as another image's, %s of the old tile set moved to where they match), %s by %s pixels, %s "
+                     "bytes (local, never shared)", own(name), logbook.n(n["tiles"]), logbook.n(n["joined"]),
+                     logbook.n(n["left_out"]), logbook.n(n.get("moved", 0)), logbook.n(n["width"]),
                      logbook.n(n["height"]), logbook.n(len(data)))
         return n["tiles"], n["tiles"]
 
@@ -2135,8 +2222,9 @@ class Runner:
         lin = ctx.job.lineage.get(table)
         if lin is not None and not lin.per_row and list(columns) == ["count"]:
             return None
-        if lin is not None and lin.source_op in ("check_fields", "read_map_tiles", "check_map_tiles"):
-            return None                          # S67, S73: what fields or files are, never rows of a game table
+        if lin is not None and lin.source_op in ("check_fields", "read_map_tiles", "check_map_tiles",
+                                                 "unpack_game_file"):
+            return None                          # S67, S73, S81: what fields or files are, never rows of a game table
         src = ctx.sources.get(lin.source) if lin is not None and lin.source is not None else None
         if lin is None or src is None:
             return (None, 0, UNKNOWN_SOURCE)

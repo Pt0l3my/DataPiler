@@ -23,7 +23,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   version's data kept, re-read and compare), both decided the same day, as recommended.
 - **2026-11-15.** DP24 (fields checked and read in the same job), decided as recommended. DP25 (exported textures
   read anywhere in DataPiler's folder), the owner's request. DP26 (job cards in the owner's own order), the owner's
-  request. DP27 (an overview image made on the PC), the owner's choice.
+  request. DP27 (an overview image made on the PC), the owner's choice. DP28 (game files that Smithbox unpacked,
+  opened on the PC with the game's own Oodle library), the owner's request and choice.
 - **Open.** None.
 
 ## DP1
@@ -484,4 +485,24 @@ uploads for research only, never committed.
 into a share file, and it is research material in the owner's terms of DP21.
 
 **Owner's words.** "yes, build 0.2.25 with the overview image".
+
+## DP28
+
+**Game files that Smithbox unpacked, opened on the PC with the game's own Oodle library** · *2026-11-15 · The owner's
+request and choice*
+
+**The owner's request.** The game's own rule for which map tile shows where is in `71_maptile.mtmskbnd.dcx`, a file
+Smithbox unpacks but whose Texture Viewer does not open, packed with Oodle (KRAK): "what about we add these feature to
+datapiler? I think we have learned a lot from this, can we upgrade datapiler to do these functions?"
+
+**Question.** Recommended: DataPiler opens a game file only once Smithbox has unpacked it into DataPiler's folder,
+with a reader of the DCX and BND4 formats of its own; for KRAK it loads the game's own Oodle library from the game
+folder at run time, and never copies, ships or commits it; it never decrypts an archive and holds no key. Also asked:
+the unpacking and the map work (the expansion's geometry, the old tile set moved to its place) in one version or two.
+
+**Decision.** As recommended, in one version (0.2.31, S81). `unpack_game_file` writes a file's inner files to the
+job's workspace folder on the PC, never shared; its table holds numbers only. A job may not name a key or the
+regulation. Off Windows, or without the library in the game folder, a KRAK file stops the job and says why.
+
+**Owner's words.** "Yes, under those rules (Recommended)" and "Both, in one version".
 

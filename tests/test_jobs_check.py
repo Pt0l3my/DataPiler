@@ -12,7 +12,7 @@ from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
-OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview"
+OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, unpack_game_file, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview"
 
 # Each bad fixture gives exactly one refusal: (where, text).
 EXPECTED = {
@@ -331,7 +331,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.30", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.32", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs

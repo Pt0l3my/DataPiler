@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Collection, Mapping
 
-from . import VERSION, fields, fileio, guard, paths, textures
+from . import VERSION, fields, fileio, gamefiles, guard, paths, textures
 from .link import MAP_RX
 
 # A family of maps by area, as `m10_*`: every map of the project whose id starts `m10_` (S45).
@@ -33,8 +33,9 @@ FORMAT = "datapiler-job/1"
 MAX_BYTES = 256 * 1024
 MAX_DEPTH = 16
 MAX_OPS = 64
-OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles", "join_names", "unused_names", "filter", "count", "distinct",
-       "write_local", "write_share", "make_map_overview")
+OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles",
+       "unpack_game_file", "join_names", "unused_names", "filter", "count", "distinct", "write_local", "write_share",
+       "make_map_overview")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
 BUILTIN_ID_RX = re.compile(r"extract-[a-z][a-z0-9_]{0,55}")     # Extract's own jobs: extract-<row id>
@@ -72,6 +73,7 @@ ARGS: dict[str, dict[str, bool]] = {
     "read_placements": {"as": True, "maps": True},
     "read_map_tiles": {"as": True},
     "check_map_tiles": {"as": True, "sheet": True, "level": True},
+    "unpack_game_file": {"file": True, "as": False},
     "join_names": {"as": True, "rows": True, "key": True, "text": True},
     "filter": {"as": True, "rows": True, "where": False, "ids": False, "key": False, "slots": False},
     "unused_names": {"as": True, "rows": True, "key": True, "text": True},
@@ -83,7 +85,8 @@ ARGS: dict[str, dict[str, bool]] = {
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
-READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles")
+READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles",
+         "unpack_game_file")
 # What check_fields makes (S67): one row per field the job names, by its place in the list - whether the server's
 # answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
 CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
@@ -624,6 +627,23 @@ class _Checker:
             self.tables[as_] = list(textures.TILE_CHECK_COLUMNS)
             self.lineage[as_] = Lineage("aggregate", None, "check_map_tiles", None, (), False, False, "")
 
+    def op_unpack_game_file(self, place: str, i: int, o: dict) -> None:
+        # S81 (DP28): a game file Smithbox unpacked into DataPiler's folder, named by its file name alone and opened
+        # on the PC; its inner files go to the job's workspace folder, never shared. Its table: numbers only.
+        f = o.get("file")
+        if "file" in o and (not isinstance(f, str) or not gamefiles.FILE_RX.fullmatch(f) or f.endswith(".")
+                            or paths.reserved(f.split(".")[0])):
+            self.add(place + ".file", _named(f, "is not a game file's name (letters, digits, _, - and ., up to 128 "
+                                                "characters) - never a path",
+                                             "not a game file's name (letters, digits, _, - and ., up to 128 "
+                                             "characters) - never a path"), i)
+        elif "file" in o and gamefiles.KEY_RX.fullmatch(f):
+            self.add(place + ".file", "names a key or the regulation, which DataPiler never opens (DP28)", i)
+        as_ = self.new_table(place + ".as", o.get("as"), i) if "as" in o else None
+        if as_ is not None:
+            self.tables[as_] = list(gamefiles.UNPACK_COLUMNS)
+            self.lineage[as_] = Lineage("aggregate", None, "unpack_game_file", None, (), False, False, "")
+
     def sheet_level(self, place: str, o: dict, i: int) -> None:
         for key, lo, hi in (("sheet", 0, 99), ("level", 0, 9)):
             v = o.get(key)
@@ -969,6 +989,7 @@ _CHECKS = {
     "read_placements": _Checker.op_read_placements,
     "read_map_tiles": _Checker.op_read_map_tiles,
     "check_map_tiles": _Checker.op_check_map_tiles,
+    "unpack_game_file": _Checker.op_unpack_game_file,
     "join_names": _Checker.op_join_names,
     "unused_names": _Checker.op_unused_names,
     "filter": _Checker.op_filter,
@@ -1172,6 +1193,10 @@ def _line(o: dict) -> str:
     if op == "check_map_tiles":
         return ("the exported map tiles of sheet %d, level %d, measured on the PC: for each, its folder's number, how much "
                 "differs from its base and how well it matches the sheet's reference level - numbers only" % (o["sheet"], o["level"]))
+    if op == "unpack_game_file":
+        return ("the game file `%s` that Smithbox unpacked, anywhere in DataPiler's folder, opened on the PC: DCX "
+                "decompressed (KRAK with the game's own Oodle library, loaded from the game folder, never copied) and "
+                "BND4 binders split - never an archive decrypted" % o["file"])
     if op == "unused_names":
         return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
@@ -1206,6 +1231,8 @@ def _line(o: dict) -> str:
             look = "in its code %X variant where exported" % o["code"]
         elif o.get("check", True):
             look = "with every piece revealed, from variants that match the sheet's reference level"
+            if o["level"] in textures.OLD_LEVELS:
+                look += ", the old tile set's moved to where they match"
         else:
             look = "with every piece revealed"
         extra = (", shrunk %d times" % o["shrink"] if o.get("shrink", 1) > 1 else "") + (", labelled" if o.get("labels") else "")
@@ -1231,6 +1258,9 @@ def preview(job: Job) -> dict[str, list[str]]:
         op = o["op"]
         key = "reads" if op in READS else "computes" if op in COMPUTES else "writes"
         out[key].append(_line(o))
+        if op == "unpack_game_file":
+            out["writes"].append("workspace folder `unpacked/%s`: the file's inner files (local, never shared)"
+                                 % o["file"])
     return out
 
 
@@ -1250,6 +1280,9 @@ def columns_of(job: Job) -> dict[str, list[tuple[str, str]]]:
             tables[o["as"]] = list(textures.COLUMNS)
         elif op == "check_map_tiles":
             tables[o["as"]] = list(textures.TILE_CHECK_COLUMNS)
+        elif op == "unpack_game_file":
+            if "as" in o:
+                tables[o["as"]] = list(gamefiles.UNPACK_COLUMNS)
         elif op == "join_names":
             tables[o["as"]] = tables[o["rows"]] + list(JOIN_COLUMNS)
         elif op == "unused_names":

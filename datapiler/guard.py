@@ -198,6 +198,8 @@ def fixed_words() -> frozenset[str]:
     from . import textures
     words.update(c for c, _ in textures.COLUMNS)         # S73: read_map_tiles's columns
     words.update(c for c, _ in textures.TILE_CHECK_COLUMNS)  # S78: check_map_tiles's columns
+    from . import gamefiles
+    words.update(c for c, _ in gamefiles.UNPACK_COLUMNS)    # S81: unpack_game_file's columns
     return frozenset(words)
 
 

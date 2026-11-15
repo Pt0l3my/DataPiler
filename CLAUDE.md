@@ -7,8 +7,9 @@ Smithbox, for EldenNet's research (EldenNet O54 to O57). Its decisions are in [d
 ## Privacy and safety: the sweep comes first
 
 - Nothing is pushed or uploaded before the privacy and safety sweep passes. The sweep is the owner's `privsweep`, kept
-  in EldenNet under `tools/privsweep/` and installed as git's global pre-push gate. If `~/.config/privsweep` is
-  missing, run `python3 -I tools/privsweep/privsweep.py install` in the EldenNet checkout first. Sweep by hand anything
+  only in the owner's private Skyrizz repository under `tools/privsweep/`, never in a public one (owner,
+  2026-11-15), and installed as git's global pre-push gate. If `~/.config/privsweep` is missing, run
+  `python3 -I tools/privsweep/privsweep.py install` in the Skyrizz checkout first. Sweep by hand anything
   the gate doesn't cover, such as a file sent to the owner or a published page.
 - Never bypass it: no `--no-verify`, no change to `core.hooksPath`, no HOME or GIT_CONFIG override.
 - Never commit or upload anything personal about the owner (DP3, in the owner's words: "never expose any delicate

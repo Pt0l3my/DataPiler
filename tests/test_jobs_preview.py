@@ -35,7 +35,10 @@ class PreviewTest(unittest.TestCase):
                       "the map tiles exported from Smithbox, anywhere in DataPiler's folder: sheet, level, column, "
                       "row, code and size - no image is opened beyond its size",
                       "the exported map tiles of sheet 0, level 4, measured on the PC: for each, its folder's number, "
-                      "how much differs from its base and how well it matches the sheet's reference level - numbers only"],
+                      "how much differs from its base and how well it matches the sheet's reference level - numbers only",
+                      "the game file `99_invented.testbnd.dcx` that Smithbox unpacked, anywhere in DataPiler's folder, "
+                      "opened on the PC: DCX decompressed (KRAK with the game's own Oodle library, loaded from the game "
+                      "folder, never copied) and BND4 binders split - never an archive decrypted"],
             "computes": ["join npc with the character names - local",
                          "the entries of the character names that no row of npc names by nameId - local",
                          "keeps the rows of npc_named where teamType >= 6 and teamType <= 30 and npcType in 3 values "
@@ -43,7 +46,9 @@ class PreviewTest(unittest.TestCase):
                          "counts the rows of npc_kept per teamType and named, where nameId > -1",
                          "counts the rows of placed",
                          "distinct model of placed"],
-            "writes": ["workspace file `npc-named.json`: 3 tables (local)",
+            "writes": ["workspace folder `unpacked/99_invented.testbnd.dcx`: the file's inner files (local, never "
+                       "shared)",
+                       "workspace file `npc-named.json`: 3 tables (local)",
                        "share file `every-op-counts.json`: 2 tables",
                        "workspace image `every-op-overview.png`: the exported map tiles of sheet 0, level 4, each with "
                        "every piece revealed, from variants that match the sheet's reference level, labelled (local, never shared)"],

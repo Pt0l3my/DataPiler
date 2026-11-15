@@ -28,8 +28,8 @@ FILE_RX = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\.json")
 SAFE_NAME_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 WORKSPACE_FILES = ("textdb.sqlite",)
 WORKSPACE_MOVES = ("The workspace moves at the next start; until then DataPiler keeps using the one it has. It does "
-                   "not move its files: before you start it again, move textdb.sqlite, inbox, imported, local and bin "
-                   "from the old workspace into the new one, or the text exports are to be imported again.")
+                   "not move its files: before you start it again, move textdb.sqlite, inbox, imported, local, bin and "
+                   "versions from the old workspace into the new one, or the text exports are to be imported again.")
 PROJECT_ASK = ("Is the project open in Smithbox the project folder set in Settings? DataPiler cannot yet see which "
                "project Smithbox has open, and the server link must never read a project in the game's own folder. "
                "OK switches the link on; you are asked once a session.")
@@ -42,6 +42,12 @@ DATA_ASK = "Move %s to the Deleted bin? It is collected data: type DELETE to go 
 TEXT_ASK = ("Move the import %s (%s) to the Deleted bin? Jobs stop using its texts until you restore it or import it "
             "again. It is collected data: type DELETE to go on.")
 ERASE_ASK = "Erase %s for good? This cannot be undone: type DELETE to go on."
+# The owner's rule of 2026-11-14: a run that would move saved map progress to the Deleted bin asks for DELETE too.
+START_ASK = ("Start the job %s again from the beginning? Its saved map progress is collected data: it moves to the "
+             "Deleted bin and the maps are read again. Type DELETE to go on. To go on from it, choose Resume job.")
+STALE_ASK = ("The job %s holds saved map progress of another game version or job file, which this run cannot use: it "
+             "moves to the Deleted bin. It is collected data: type DELETE to go on.")
+RUN_BUTTONS = {"start": "Start again", "resume": "Resume job", "update": "Update data"}
 EMPTY_ASK = "Erase everything in the Deleted bin for good (%s)? This cannot be undone: type DELETE to go on."
 LEVELS = logbook.LEVELS
 ONE_KEYS = ("smithbox_dir", "game_dir", "project_dir", "expansion", "mask_paths", "map_opengl")
@@ -169,7 +175,8 @@ class Api:
         self._passed: dict[str, tuple[tuple[int, int, int], bool, int | None]] = {}
         self._text_gen = 0
         self._unsub = [events.subscribe(t, self._bump)
-                       for t in ("inbox.import", "local.written", "share.written", "bin.changed")]
+                       for t in ("inbox.import", "local.written", "share.written", "bin.changed",
+                                 "versions.changed")]
         self._unsub.append(events.subscribe("textdb.changed", self._on_text))
 
     def close(self) -> None:
@@ -213,6 +220,10 @@ class Api:
             return 200, self.imported()
         if path == "/api/bin":
             return 200, self.bin_list()
+        if path == "/api/versions":
+            return 200, self.versions(query.get("job", ""))
+        if path == "/api/versions/compare":
+            return 200, self.compare(query.get("job", ""), query.get("a", ""), query.get("b", ""))
         # UPDATE's routes (build plan 0.2 §3.3): forwarded as they are, and nothing else of api.py reaches update.py.
         if path == "/api/update":
             if self.updates is None:
@@ -664,9 +675,33 @@ class Api:
                 got = body.get("confirm")
                 if got != word and got != deleted.WORD:
                     return _ask("Remove the job?", (JOB_ASK_KEPT if word == deleted.WORD else JOB_ASK) % jid, word)
+            elif what in RUN_BUTTONS:
+                # The owner's rule of 2026-11-14: a run that would move saved map progress to the Deleted bin (Start
+                # again always; Resume job and Update data when it is of another version) wants DELETE typed in
+                word = self.runner.start_word(jid, what)
+                if word is not None and body.get("confirm") != deleted.WORD:
+                    return _ask("Delete the saved progress?", (START_ASK if what == "start" else STALE_ASK) % jid,
+                                deleted.WORD, RUN_BUTTONS[what])
             return self.runner.act(jid, what, confirm_maps=confirm)
         except ValueError:
             raise Bad("no such job, or not something a job can do") from None
+
+    # ------------------------------------------------------------------------------------------------ versions (DP23)
+
+    def versions(self, job: str) -> dict:
+        """GET /api/versions?job=: the game versions a job has kept reads for. Local only."""
+        try:
+            return self.runner.versions_of(job)
+        except ValueError:
+            raise Bad("not a job id") from None
+
+    def compare(self, job: str, a: str, b: str) -> dict:
+        """GET /api/versions/compare?job=&a=&b=: what changed in a job's kept reads from version a to version b, by
+        row id and by map. Local only: it is made now and written nowhere."""
+        try:
+            return self.runner.compare_versions(job, a, b)
+        except ValueError:
+            raise Bad("pick two versions this job has kept reads for") from None
 
     def _area(self, body: dict) -> Path:
         area = body.get("area")

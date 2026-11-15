@@ -128,6 +128,12 @@ def _move(src: Path, dst: Path) -> None:
     os.unlink(src)
 
 
+def move_file(src: Path, dst: Path) -> None:
+    """The bin's move, for DP23's version folders (versions.keep_outputs): one plain file to a name not taken, across
+    drives copied, compared and then removed. Raises FileExistsError, BinError for a link, OSError."""
+    _move(src, dst)
+
+
 def _erase_folder(folder: Path) -> None:
     shutil.rmtree(folder)
 

@@ -27,6 +27,24 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
   the saved progress to the bin, and so does a run that finds progress saved on another game version.
 - New endpoints: `GET /api/bin`, `POST /api/bin/restore`, `/api/bin/erase`, `/api/bin/empty` and
   `/api/outputs/remove`; `/api/jobs/act` (remove) and `/api/imported/remove` take `confirm`.
+- Game updates (DP23, S71). Every job run that completes keeps what it read (each `fetch_rows` and `read_placements`
+  table, numbers only, with the provenance) for its game version, in the workspace's new `versions` folder, one folder
+  per version (game version, regulation hash, Smithbox build), never removed. A job whose last run was on another
+  version says so on its card ("Game updated since this ran: v1.16.0.0 (ab12cd34) → ...") and offers **Update data**:
+  it reads again (maps resumable as before), compares with the last version's read by row id for params and map by map
+  for placements, rebuilds the outputs from the new reads, and shows a line per table on the card ("422 → 425 rows: 3
+  added, 2 changed, 0 removed, ..."), with a change report of the ids in the workspace. When only the game's exe
+  changed (the same regulation and Smithbox build), the param's kept rows are used and not read again.
+- Before a run on a new version writes anything, the job's outputs of the last version (its workspace files and its
+  share file) move into that version's folder, so every version's outputs stay. Nothing of the reads or the reports
+  reaches a share file.
+- **Compare versions…** on a job card compares any two versions it kept, by `GET /api/versions` and
+  `GET /api/versions/compare`; `/api/jobs/act` takes `update`.
+- By the owner's rule, **Start again** on a job holding saved map progress now asks for `DELETE` typed in, as the
+  progress moves to the Deleted bin; so do Resume job and Update data when the saved progress is of another game
+  version. The API refuses those runs without it. Start again without saved progress keeps its plain question.
+- A map job started while the provenance is incomplete no longer stops with an internal error: it keeps no map
+  progress and leaves the saved progress where it is.
 
 ## 0.2.20 - 2026-11-14
 

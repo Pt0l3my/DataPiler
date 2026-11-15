@@ -125,7 +125,7 @@ change you just made may not show yet.
 
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
-first, then moves the saved progress to the Deleted bin (below) and starts from the beginning. A whole map job runs
+you to type `DELETE`, then moves the saved progress to the Deleted bin (below) and starts from the beginning. A whole map job runs
 in one go; Smithbox's Vulkan build, which keeps graphics memory for every map it has loaded, once brought a graphics
 driver down with about 700, which is why map jobs run on its OpenGL build (below).
 
@@ -143,7 +143,8 @@ free what the loaded maps hold.
 
 Nothing DataPiler collected is erased by a removal (DP22). **Remove** on a job card asks first, in a pop-up; removing
 collected data (a share file or a workspace file with **Delete…** on Outputs, an import with **Remove** on Imported, a
-job that holds saved map progress) asks you to type `DELETE`. Either way, what you remove moves to the **Deleted** tab,
+job that holds saved map progress, or that progress itself when **Start again** would drop it) asks you to type
+`DELETE`. Either way, what you remove moves to the **Deleted** tab,
 the bin, in the workspace's `bin` folder, and stays there until you erase it.
 
 - **Restore** puts an item back where it came from, as it was: a job with its state and saved progress, a share file
@@ -151,6 +152,30 @@ the bin, in the workspace's `bin` folder, and stays there until you erase it.
   something of the same name is there now; it never overwrites.
 - **Erase…** (one item) and **Empty bin…** (every item) erase for good, once you type `DELETE`.
 - The bin holds game text when it holds an import or a workspace file: like the rest of the workspace, never share it.
+
+## Game updates
+
+DataPiler sees a game update in what it records with every run: the game's version, regulation.bin's sha256 and
+Smithbox's build (DP23). Each job run that completes keeps what it read, for that version, in the workspace's
+`versions` folder: one folder per version, such as `v1.16.0.0-ab12cd34`, which DataPiler never removes.
+
+- A job whose last run was on another version says so on its card: "Game updated since this ran: v1.16.0.0
+  (ab12cd34) → v1.16.1.0 (cd34ef56)". **Update data** runs it again and compares what it reads with what the last run
+  read: a param row by row (by row id), a map job map by map. Map jobs read every map again (Smithbox cannot tell which
+  maps a patch changed without loading them), and Resume job goes on if one stops partway. The job's outputs are
+  rebuilt from the new reads.
+- The card then shows a line per table, such as "npc (NpcParam): 10,000 → 10,050 rows: 50 added, 2 changed, 0
+  removed, 9,998 unchanged". The change report, with the ids of what changed, is in
+  `versions/<new version>/<job>/changes/`.
+- When only the game's exe changed (the same regulation and Smithbox build), a param cannot have changed: its rows from
+  the last version are used and not read again. A new Smithbox build reads the params again, as it may read the same
+  data differently.
+- Before the new run writes anything, the job's outputs of the last version (its workspace files and its share file)
+  move into that version's folder, `versions/<old version>/<job>/outputs/`, so every version's outputs stay.
+- **Compare versions…** on a job card compares any two versions the job kept.
+- Jobs run before 0.2.21 kept no reads: run them once before the game updates, so there is something to compare with.
+- Like the rest of the workspace, the `versions` folder holds the game's data and stays on your PC; nothing of the
+  reads or reports reaches a share file.
 
 ## What it will and won't do
 

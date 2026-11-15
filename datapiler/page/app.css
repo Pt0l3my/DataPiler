@@ -99,6 +99,13 @@ tr.off td { opacity: .5; }
 .result { margin-top: 8px; }
 .result .kept { margin-top: 6px; color: var(--ok); }
 .result .bad { color: var(--err); }
+/* DP23: a game update, the changes it brought, and two versions compared */
+.update { margin-top: 8px; color: var(--warn); }
+.result .changes { margin-top: 6px; }
+.vpick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.vpick select { background: var(--card2); border: 1px solid var(--edge); color: var(--text); border-radius: 6px; padding: 4px 6px; }
+.vreport .vtable { margin-top: 8px; }
+.vreport .mono { font-size: 12px; overflow-wrap: anywhere; }
 
 /* Outputs */
 .files { list-style: none; padding: 0; margin: 0; }

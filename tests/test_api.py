@@ -82,6 +82,11 @@ class FakeRunner:
             raise ValueError("unknown")
         return "move"
 
+    def start_word(self, job_id, what):
+        if job_id != JOB_ID:
+            raise ValueError("unknown")
+        return None
+
     def run_extract(self, rows, *, load_maps=False, confirm_maps=None):
         if any(r not in ("character_rows", "map_placements") for r in rows):
             raise ValueError("unknown row")

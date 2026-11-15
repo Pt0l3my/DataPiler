@@ -50,6 +50,7 @@ class FakeLink:
         self.loaded = ["m99_00_00_00", "m99_00_00_01"]
         self.every_map: list[str] | None = None   # every map of the project, when a test sets it
         self.extra_placements: list[tuple[int, int]] = []   # (entity id, row) added to each map's placements
+        self.map_extra: dict[str, list[tuple[int, int]]] = {}   # DP23: (entity id, row) added to one map's
         self.fail: Exception | None = None
         self.drop_at: int | None = None          # the link goes off after this many rows, once
         self.started = threading.Event()
@@ -154,7 +155,7 @@ class FakeLink:
         return [link.Placement(map=link.map_key(map_id), entity_id=9001000 + i, npc_param_id=9000000 + i,
                                talk_id=9000000 + i, model=9990 + i % 3) for i in range(3)] + \
             [link.Placement(map=link.map_key(map_id), entity_id=e, npc_param_id=r, talk_id=-1, model=9999)
-             for e, r in self.extra_placements]
+             for e, r in self.extra_placements + self.map_extra.get(map_id, [])]
 
 
 def wait_for(pred, timeout: float = 6.0) -> bool:

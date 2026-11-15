@@ -151,12 +151,16 @@ function askRemove(ask) {
   });
 }
 // Posts the request; while the API asks for a confirmation (DP22), shows the pop-up and posts it again with the answer.
-// Resolves with the API's last answer, or {ok: false, cancelled: true} when the pop-up was closed.
+// Resolves with the API's last answer, or {ok: false, cancelled: true} when the pop-up was closed; an answer to a
+// confirmed request carries what was typed in as `confirmed`, for a request that has to be sent again.
 function confirmed(path, body) {
   return api(path, body).then((r) => {
     if (!r || r.ok || !r.ask || !r.ask.word) return r;
     return askRemove(r.ask).then((c) => c == null ? { ok: false, cancelled: true }
-      : confirmed(path, Object.assign({}, body, { confirm: c })));
+      : confirmed(path, Object.assign({}, body, { confirm: c })).then((x) => {
+        if (x && typeof x === "object" && x.confirmed == null) x.confirmed = c;
+        return x;
+      }));
   });
 }
 // While on, poll()'s failures never show "DataPiler has stopped" (an update's restart; until the page reloads), and
@@ -414,14 +418,62 @@ function keptNote(k) {
   else t += "Resume job goes on from there.";
   return t;
 }
-function jobAct(j, what, confirm) {
+function jobAct(j, what, confirm, word) {
   const body = { id: j.id, what: what, confirm_maps: confirm == null ? null : confirm };
-  // DP22: Remove asks in the page's pop-up (DELETE typed in when the job holds saved progress); the job goes to the bin
-  (what === "remove" ? confirmed("/api/jobs/act", body) : api("/api/jobs/act", body)).then((r) => {
+  if (word) body.confirm = word;
+  // DP22: Remove asks in the page's pop-up (DELETE typed in when the job holds saved progress); the job goes to the bin.
+  // A run that would move saved map progress to the bin (Start again; Resume job or Update data with progress of
+  // another version) asks for DELETE in the same pop-up: the API says when.
+  (what === "cancel" ? api("/api/jobs/act", body) : confirmed("/api/jobs/act", body)).then((r) => {
     if (r.ok) { if (what === "remove") note("Moved to the Deleted bin: " + j.id + ".", true); poll(); return; }
     if (r.cancelled) return;
-    if (r.ask && !r.ask.word) { if (window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps); return; }
+    if (r.ask && !r.ask.word) { if (window.confirm(r.ask.text)) jobAct(j, what, r.ask.maps, r.confirmed || word); return; }
     if (r.error) note(r.error);
+  }).catch((e) => note(e.message));
+}
+// DP23: a job's kept versions, any two compared (local only: nothing of it reaches a share file)
+const IDS_SHOWN = 60;
+function idList(ids) {
+  if (!ids || !ids.length) return null;
+  const t = ids.slice(0, IDS_SHOWN).map((x) => typeof x === "number" ? String(x) : x).join(", ");
+  return t + (ids.length > IDS_SHOWN ? " and " + fmtN(ids.length - IDS_SHOWN) + " more" : "");
+}
+function paintReport(box, rep) {
+  clear(box);
+  add(box, el("div", "mute", "From " + rep.from.label + " to " + rep.to.label + ". Ids are row ids for params and map ids for maps; the report is local only."));
+  (rep.tables || []).forEach((t) => {
+    const d = el("div", "vtable");
+    add(d, el("div", null, t.line));
+    [["Added", t.added], ["Changed", t.changed], ["Removed", t.removed], ["Not read", t.not_read]].forEach((x) => {
+      const ids = idList(x[1]);
+      if (ids) add(d, el("div", "mono mute", x[0] + ": " + ids));
+    });
+    add(box, d);
+  });
+  if (!(rep.tables || []).length) add(box, el("div", "mute", "Neither version kept a read of this job."));
+}
+function openCompare(j) {
+  api("/api/versions?job=" + encodeURIComponent(j.id)).then((r) => {
+    const vs = r.versions || [];
+    const h = overlay("Compare versions: " + j.id, { wide: true });
+    if (vs.length < 2) { add(h.body, el("div", "mute", "This job has kept reads of one version so far: run it on another to compare.")); return; }
+    const pick = (at) => {
+      const s = el("select");
+      vs.forEach((v, k) => { const o = el("option", null, v.label + " - since " + v.since); o.value = v.id; if (k === at) o.selected = true; add(s, o); });
+      return s;
+    };
+    const a = pick(vs.length - 2), b = pick(vs.length - 1), out = el("div", "vreport");
+    const go = el("button", "pri", "Compare");
+    go.addEventListener("click", () => {
+      if (a.value === b.value) { clear(out); add(out, el("div", "mute", "Pick two different versions.")); return; }
+      api("/api/versions/compare?job=" + encodeURIComponent(j.id) + "&a=" + encodeURIComponent(a.value) + "&b=" + encodeURIComponent(b.value))
+        .then((rep) => paintReport(out, rep)).catch((e) => { clear(out); add(out, el("div", "bad", e.message)); });
+    });
+    add(h.body, add(el("div", "vpick"), el("span", "mute", "From"), a, el("span", "mute", "to"), b, go), out);
+    const close = el("button", null, "Close");
+    close.addEventListener("click", () => h.close());
+    add(h.foot, close);
+    go.click();
   }).catch((e) => note(e.message));
 }
 // S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
@@ -500,24 +552,35 @@ function jobCard(j) {
       add(res, el("div", "bad", t));
     }
     if (keptOf(j)) add(res, el("div", "kept", keptNote(keptOf(j))));
+    // DP23: what changed since the last version, and where the change report is kept
+    const ch = j.result.changes;
+    if (ch) {
+      const d = el("div", "changes");
+      add(d, el("div", null, "Changes since " + ch.from + ":"));
+      (ch.lines || []).forEach((t) => add(d, el("div", null, t)));
+      if (ch.report) add(d, el("div", "mute", "Change report (workspace, local only): " + ch.report));
+      add(res, d);
+    }
     add(c, res);
   }
+  if (j.update) add(c, el("div", "update", j.update.text + ". Update data reads the data again and compares it with the last run's."));
   const act = el("div", "actions");
   const canStart = ["checked", "cancelled", "stopped", "failed", "done"].indexOf(j.state) >= 0;
   const canCancel = ["queued", "waiting", "running"].indexOf(j.state) >= 0;
   const kept = keptOf(j);
+  if (canStart && j.update) { const b = el("button", kept ? null : "pri", "Update data"); b.addEventListener("click", () => jobAct(j, "update")); add(act, b); }
   if (canStart && kept) { const b = el("button", "pri", "Resume job"); b.addEventListener("click", () => jobAct(j, "resume")); add(act, b); }
   if (canStart) {
-    const b = el("button", kept ? null : "pri", j.state === "checked" ? "Start" : "Start again");
+    const b = el("button", kept || j.update ? null : "pri", j.state === "checked" ? "Start" : "Start again");
     b.addEventListener("click", () => {
-      // S66: starting again from the beginning is asked first; it drops what an earlier run kept.
-      if (j.state !== "checked" && !window.confirm(kept
-        ? "Start this job again from the beginning? The " + fmtN(kept.maps) + " maps kept from the last run go to the Deleted bin and are read again. To go on from them, choose Resume job instead."
-        : "Start this job again from the beginning?")) return;
+      // S66: starting again from the beginning is asked first. With saved progress, which it moves to the Deleted
+      // bin, the API asks instead, in the page's pop-up with DELETE typed in (the owner's rule of 2026-11-14).
+      if (j.state !== "checked" && !kept && !window.confirm("Start this job again from the beginning?")) return;
       jobAct(j, "start");
     });
     add(act, b);
   }
+  if (j.versions >= 2) { const b = el("button", null, "Compare versions…"); b.addEventListener("click", () => openCompare(j)); add(act, b); }
   if (canCancel) { const b = el("button", null, "Cancel"); b.addEventListener("click", () => jobAct(j, "cancel")); add(act, b); }
   if (!canCancel) { const b = el("button", null, "Remove"); b.addEventListener("click", () => jobAct(j, "remove")); add(act, b); }
   add(c, act);

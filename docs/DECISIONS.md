@@ -33,7 +33,8 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   server link's chip says whether the link is established), the owner's request, built in 0.2.38. DP34 (an About
   block on each job card, and its columns folded under Details), the owner's request, built in 0.2.39. DP35
   (DataPiler as the workbench and the replay harness, reading the game through EldenNet's devkit), decided as
-  recommended.
+  recommended. DP36 (EldenNet's derivation round offline as a DataPiler job, and EldenNet's in-game numbers compared
+  with Smithbox's reading of the files), the owner's request (EldenNet O89).
 - **Open.** None.
 
 ## DP1
@@ -695,3 +696,33 @@ longer holds.
 *Later (2026-11-15):* EldenNet's O79: the devkit ships as part of EldenNet, its features behind Developer mode, so
 DataPiler uses it from the EldenNet install, and development builds of the devkit until EldenNet ships. EldenNet's
 O76: its launcher will also run EldenNet's engine off game, as the replay harness does here.
+
+## DP36
+
+**DataPiler's part in EldenNet's derivation round, and a check against Smithbox** · *2026-11-16 · Decided by the
+owner*
+
+**Question.** EldenNet's game-access layer needs facts about the owner's build of the game, found on the owner's PC
+(EldenNet O89). Asked how, the owner asked whether DataPiler could do it, and for "a feature to analyse presence of
+data in smithbox as well to compare". **Options:** (a) **DataPiler takes the offline round and the comparison**
+(recommended): a job runs EldenNet's devkit tool on the game's executable with the game closed, and later DataPiler
+compares EldenNet's in-game numbers with Smithbox's reading of the files; (b) the offline round now, the comparison
+later; (c) neither: both rounds stay in EldenNet's own tools.
+
+**Decision.** (a), within EldenNet's O73 (only EldenNet reads the game's memory) and O75 (the devkit's safe limits):
+- **The offline round (R0).** A job runs EldenNet's devkit tool (`probe-exe --derive`) on the game's executable while
+  the game is closed. Before anything is written to a share, the guard checks that the result holds only numbers,
+  offsets and wildcarded patterns of at most 64 bytes: no code dump, text, param or path (request 0001's guard,
+  extended for this file). The job packs the result for the owner to send. DataPiler reads the file only, never the
+  game's memory.
+- **The comparison.** After EldenNet's in-game probe session (R1, run from EldenNet's launcher), DataPiler imports its
+  numbers-only file and compares the param and text ids and counts that EldenNet read in game with what Smithbox
+  reads from the files through the server link (DP4: read calls only, with the game closed). The result is
+  numbers-only (matches, misses, counts) and passes the guard. Smithbox's labels are never facts, only numbers from
+  the owner's own data (EldenNet O48).
+
+**Owner's words.** "can this be done by datapiler? or could it be part of it? perhaps we could add this and then also
+a feature to analyse presence of data in smithbox as well to compare."; then "Yes, DataPiler + Smithbox check
+(Recommended)".
+
+**Follows from.** EldenNet O48, O73 to O75 and O89; DP4, DP35. EldenNet's roadmap S7.11.h and i.

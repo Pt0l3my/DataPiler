@@ -13,6 +13,19 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.40 - 2026-11-16
+
+- New: two text sets for jobs, **the weapon names** (`weapon_names`) and **the armour names** (`protector_names`), for
+  EldenNet's gear names (its game data's gap 3; S97). Their text entries are leads, as the character and place names'
+  were: 11 and 12 in the base game (EldenNet's research, ER01), and 321 and 421, 322 and 422 in the expansion's two
+  layers, by the pattern the character and place names follow. `join_names` checks them against your own data each
+  time, as it checks every set: if fewer than half of the rows find a name, the job stops and says so. They come from
+  the item exports you have already imported, so nothing new needs exporting.
+- New: `fetch_rows` reads **EquipParamWeapon** and **EquipParamProtector** by their row ids alone, the numbers those
+  names are kept under.
+- Jobs en-0041 (the weapon and armour rows, and the names no row uses), en-0042 (the weapon rows each layer names) and
+  en-0043 (the armour rows each layer names) use them; each shares counts only.
+
 ## 0.2.39 - 2026-11-15
 
 - New: an **About** block at the top of every checked job's card, before a run, while it runs and after (DP34, S95).

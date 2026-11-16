@@ -16,6 +16,9 @@ FIELD_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 PARAMS: dict[str, dict[str, str]] = {
     "NpcParam": {"id": "int", "nameId": "int", "teamType": "int", "npcType": "int"},
     "TalkParam": {"id": "int", "msgId": "int"},
+    # S97 (0.2.40): weapons and armour by their row ids alone, which the weapon and armour names are numbered by.
+    "EquipParamWeapon": {"id": "int"},
+    "EquipParamProtector": {"id": "int"},
     "WorldMapPlaceNameParam": {
         "id": "int", "disableParam_NT": "int", "worldMapPieceId": "int", "textId": "int", "areaNo": "int",
         "gridXNo": "int", "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number"
@@ -68,6 +71,8 @@ PARAMS: dict[str, dict[str, str]] = {
 REFERENCES: dict[str, tuple[str, ...]] = {
     "NpcParam": ("nameId",),
     "TalkParam": ("msgId",),
+    "EquipParamWeapon": (),
+    "EquipParamProtector": (),
     "WorldMapPlaceNameParam": ("worldMapPieceId", "textId"),
     "BonfireWarpParam": ("eventflagId", "bonfireEntityId", "bonfireSubCategoryId", "clearedEventFlagId", "iconId", "forbiddenIconId", "textId1", "textEnableFlagId1", "textDisableFlagId1", "altIconId"),
     "WorldMapPointParam": ("eventFlagId", "distViewEventFlagId", "clearedEventFlagId", "iconId", "altIconId", "distViewIconId", "distViewId", "textId1"),

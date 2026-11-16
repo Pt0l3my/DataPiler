@@ -50,6 +50,7 @@ class FakeLink:
                                   "npcType": i % 3, "hitHeight": 1.5 + i / 10, "isGhost": bool(i % 2)}
                     for i in range(20)}
         self.talk = {9000000 + i: {"msgId": 9500000 + i if i % 2 == 0 else -1} for i in range(10)}
+        self.weapons = {9200000 + 100 * i: {} for i in range(12)}   # S97: invented weapon rows, by row id alone
         self.loaded = ["m99_00_00_00", "m99_00_00_01"]
         self.every_map: list[str] | None = None   # every map of the project, when a test sets it
         self.extra_placements: list[tuple[int, int]] = []   # (entity id, row) added to each map's placements
@@ -73,7 +74,8 @@ class FakeLink:
             return {9100000 + i: {"disableParam_NT": 0, "worldMapPieceId": i, "textId": -1, "areaNo": 60,
                                   "gridXNo": 40 + i, "gridZNo": 36, "posX": 1.5 * i, "posY": 0.0, "posZ": -2.0}
                     for i in range(4)}
-        return {"NpcParam": self.npc, "TalkParam": self.talk}.get(param, {9000000: {}, 9000001: {}})
+        return {"NpcParam": self.npc, "TalkParam": self.talk,
+                "EquipParamWeapon": self.weapons}.get(param, {9000000: {}, 9000001: {}})
 
     def list_param_rows(self, param):
         self._check()
@@ -1535,4 +1537,52 @@ class CardsTest(RunnerBase):
         self.r.add("a.json", fixture("job-files", "good-example.json"))
         cards = self.r.cards()
         self.assertTrue(cards and all(isinstance(c.get("added"), (int, float)) for c in cards))
+
+
+class GearNamesTest(RunnerBase):
+    """S97 (0.2.40): the weapon and armour names, joined by row id and counted per layer (jobs en-0041 to en-0043).
+    The invented export names 9 of the 12 invented weapon rows and holds 2 names no row uses."""
+
+    def setUp(self):
+        super().setUp()
+        self.gear = mock.patch.dict(textdb.TEXT_SETS, {"weapon_names": (("item_dlc02", 9003),)})
+        self.gear.start()
+        weapons = sorted(self.link.weapons)
+        entries = [{"ID": rid, "Text": "Corrow blade %d" % k} for k, rid in enumerate(weapons[:9])]
+        entries += [{"ID": 9300000, "Text": "An unused blade"}, {"ID": 9300100, "Text": "Another unused blade"}]
+        export = {"FmgWrappers": [{"ID": 9003, "Name": "Invented weapons", "Fmg": {"Entries": entries}}]}
+        self.db.import_export(export, container="item_dlc02", language="engus", sha256="1" * 64)
+
+    def tearDown(self):
+        self.gear.stop()
+        super().tearDown()
+
+    def share_doc(self, name: str) -> dict:
+        return json.loads((self.p.share / (name + ".json")).read_bytes())
+
+    def test_the_weapon_rows_each_layer_names(self):
+        self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "weapons", "param": "EquipParamWeapon", "fields": ["id"]},
+            {"op": "join_names", "as": "named", "rows": "weapons", "key": "id", "text": "weapon_names"},
+            {"op": "filter", "as": "with_name", "rows": "named", "where": {"named": True}},
+            {"op": "count", "as": "per_layer", "rows": "with_name", "by": ["layer"]},
+            {"op": "write_share", "name": "weapon-names", "tables": ["per_layer"],
+             "columns": {"per_layer": ["layer", "count"]}}]))
+        doc = self.share_doc("weapon-names")
+        self.assertEqual(sum(r[1] for r in doc["tables"][0]["rows"]), 9)
+        self.assertNotIn("blade", json.dumps(doc))   # names stay in the workspace
+
+    def test_the_names_no_weapon_row_uses(self):
+        self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "weapons", "param": "EquipParamWeapon", "fields": ["id"]},
+            {"op": "count", "as": "rows_total", "rows": "weapons"},
+            {"op": "unused_names", "as": "unused", "rows": "weapons", "key": "id", "text": "weapon_names"},
+            {"op": "count", "as": "unused_per_layer", "rows": "unused", "by": ["layer"]},
+            {"op": "write_share", "name": "gear-unused", "tables": ["rows_total", "unused_per_layer"],
+             "columns": {"rows_total": ["count"], "unused_per_layer": ["layer", "count"]}}]))
+        doc = self.share_doc("gear-unused")
+        tables = {t["name"]: t["rows"] for t in doc["tables"]}
+        self.assertEqual(tables["rows_total"], [[12]])
+        self.assertEqual(sum(r[1] for r in tables["unused_per_layer"]), 2)
+        self.assertNotIn("blade", json.dumps(doc))
 

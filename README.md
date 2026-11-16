@@ -288,9 +288,9 @@ share them only for the research they were made for, never publicly.
   DataPiler's own folder.
 - **Mask paths on this page** (Settings, off by default) shows your folders on the page as the placeholders the logs
   use, for screenshots, the folder names the picker lists included.
-- The names' text ids (which part of Smithbox's text exports holds the character and place names) come from
-  EldenNet's research and are checked against your own data each time a job joins names: if fewer than half of the
-  names it looks up are found there, the job stops and says so.
+- The names' text ids (which part of Smithbox's text exports holds the character, place, weapon and armour names)
+  come from EldenNet's research and are checked against your own data each time a job joins names: if fewer than
+  half of the names it looks up are found there, the job stops and says so.
 - Its page answers only on `127.0.0.1`, to itself, with a token made at each start, and loads nothing from
   elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<WORKSPACE>`).
 - Jobs are data, never code: a closed set of operations, checked when they are dropped, run only on Start.

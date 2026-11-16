@@ -333,7 +333,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.40", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.41", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -459,7 +459,7 @@ class BossOpsTest(unittest.TestCase):
         j = check(job([NPC, un, share("un", cols={"un": ["nameId", "layer"]})]))
         self.assertEqual(j.lineage["un"].kind, "narrowed")
         self.assertEqual(jobs.columns_of(j)["un"], list(jobs.UNUSED_COLUMNS))
-        self.assertEqual(self.refused_at([NPC, dict(un, text="weapon_names"), share("un", cols={"un": ["nameId"]})])[0][0],
+        self.assertEqual(self.refused_at([NPC, dict(un, text="goods_names"), share("un", cols={"un": ["nameId"]})])[0][0],
                          "ops[1].text")
         self.assertEqual(self.refused_at([NPC, dict(un, key="nope"), share("un", cols={"un": ["nameId"]})])[0][0],
                          "ops[1].key")
@@ -613,3 +613,30 @@ class AboutTest(unittest.TestCase):
         j = check(fixture("good-about.json"))
         self.assertEqual((j.id, j.needs, len(j.ops)), ("test-0005-about", "0.2.39", 40))
         self.assertIn("\n", j.about)
+
+
+class GearNamesTest(unittest.TestCase):
+    """S97 (0.2.40): weapons and armour by row id, and their name sets."""
+
+    WEAPONS = {"op": "fetch_rows", "as": "w", "param": "EquipParamWeapon", "fields": ["id"]}
+    ARMOUR = {"op": "fetch_rows", "as": "a", "param": "EquipParamProtector", "fields": ["id"]}
+
+    def test_the_gear_params_and_their_name_sets_pass(self):
+        for rows, text in ((self.WEAPONS, "weapon_names"), (self.ARMOUR, "protector_names")):
+            with self.subTest(text=text):
+                check(job([rows,
+                           {"op": "join_names", "as": "n", "rows": rows["as"], "key": "id", "text": text},
+                           {"op": "filter", "as": "f", "rows": "n", "where": {"named": True}},
+                           {"op": "count", "as": "c", "rows": "f", "by": ["layer"]},
+                           share("c", cols={"c": ["layer", "count"]})]))
+
+    def test_a_gear_field_other_than_the_row_id_is_refused(self):
+        refused = refusals(job([{"op": "fetch_rows", "as": "w", "param": "EquipParamWeapon",
+                                 "fields": ["id", "weight"]}]))
+        self.assertTrue(any(r.where.startswith("ops[0].fields") for r in refused), refused)
+
+    def test_a_name_set_datapiler_does_not_have_is_refused(self):
+        refused = refusals(job([self.WEAPONS,
+                                {"op": "join_names", "as": "n", "rows": "w", "key": "id", "text": "goods_names"}]))
+        self.assertTrue(any(r.where == "ops[1].text" for r in refused), refused)
+

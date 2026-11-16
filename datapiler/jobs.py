@@ -44,7 +44,7 @@ FIELD_RX = fields.FIELD_RX
 NAME_RX = paths.NAME_RX
 NEEDS_RX = re.compile(r"\d+\.\d+(\.\d+)?")
 QUOTE_RX = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
-TEXTS = guard.NAME_SETS                  # ("character_names", "place_names")
+TEXTS = guard.NAME_SETS                  # character, place, weapon and armour names (S97)
 COMPARE = ("eq", "ne", "lt", "le", "gt", "ge")
 
 # P5 (build plan §10): none of the seven allowed calls lists every map, so `load_maps` with "all" is refused in 0.1
@@ -118,7 +118,8 @@ DP8_RULE = ("a share file holds ids and numbers only for rows a job picked for a
             "columns that hold no ids")
 TYPE_WORDS = {"int": "whole numbers", "number": "numbers", "bool": "flags (true or false)",
               "text_local": "local text"}
-TEXT_WORDS = {"character_names": "the character names", "place_names": "the place names"}
+TEXT_WORDS = {"character_names": "the character names", "place_names": "the place names",
+              "weapon_names": "the weapon names", "protector_names": "the armour names"}
 
 _PARAM_LIST = ", ".join(fields.PARAMS)
 _OP_LIST = ", ".join(OPS)

@@ -164,3 +164,13 @@ class CheckScopeTest(unittest.TestCase):
             finally:
                 db.close()
 
+
+class GearSetsTest(unittest.TestCase):
+    """S97 (0.2.40): the weapon and armour names' leads, in every item container, newest layer first."""
+
+    def test_the_gear_sets_and_their_wrappers(self):
+        for name, wrappers in (("weapon_names", (421, 321, 11)), ("protector_names", (422, 322, 12))):
+            with self.subTest(name=name):
+                self.assertEqual(textdb.TEXT_SETS[name],
+                                 tuple((c, wid) for c in textdb.LEAD_CONTAINERS for wid in wrappers))
+

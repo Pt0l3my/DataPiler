@@ -245,6 +245,8 @@
           "enum": [
             "NpcParam",
             "TalkParam",
+            "EquipParamWeapon",
+            "EquipParamProtector",
             "WorldMapPlaceNameParam",
             "BonfireWarpParam",
             "WorldMapPointParam",
@@ -355,6 +357,68 @@
                       "enum": [
                         "id",
                         "msgId"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "EquipParamWeapon"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "param"
+            ],
+            "properties": {
+              "param": {
+                "const": "EquipParamProtector"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "id"
                       ]
                     },
                     {
@@ -915,6 +979,8 @@
           "enum": [
             "NpcParam",
             "TalkParam",
+            "EquipParamWeapon",
+            "EquipParamProtector",
             "WorldMapPlaceNameParam",
             "BonfireWarpParam",
             "WorldMapPointParam",
@@ -1088,7 +1154,9 @@
         "text": {
           "enum": [
             "character_names",
-            "place_names"
+            "place_names",
+            "weapon_names",
+            "protector_names"
           ]
         }
       }
@@ -1326,7 +1394,9 @@
         "text": {
           "enum": [
             "character_names",
-            "place_names"
+            "place_names",
+            "weapon_names",
+            "protector_names"
           ]
         }
       }

@@ -28,7 +28,9 @@ from . import events, logbook
 # Which wrappers of which containers hold each text set: "character_names" -> ((container, wrapper id), ...).
 # ER01's leads (EldenNet's research, §8.2; build plan §10, P3; settled S22): the item containers hold the character
 # names in the wrappers 18, 328 and 428 (the base game and the expansion's two layers) and the place names in 19, 329
-# and 429. They are leads, not facts: join_names uses a set only once at least half (VERIFY_SHARE) of the
+# and 429. S97 (0.2.40): the weapon names in 11 and the armour names in 12, ER01's leads for the base game, and in 321
+# and 421, 322 and 422 by the pattern the character and place names follow (310 and 410 above the base game's), for
+# EldenNet's gear names (its game data's gap 3); job en-0041 checks them. They are leads, not facts: join_names uses a set only once at least half (VERIFY_SHARE) of the
 # non-negative name numbers of the rows it joins resolve in it, with the owner's own data, and fails with the reason
 # otherwise; the share file's provenance records the share that resolved. The live container and the newest layer
 # come first, as the game reads them, so the first text for an id is the one the game shows.
@@ -36,6 +38,8 @@ LEAD_CONTAINERS = ("item_dlc02", "item_dlc01", "item")
 LEADS: dict[str, tuple[int, ...]] = {
     "character_names": (428, 328, 18),
     "place_names": (429, 329, 19),
+    "weapon_names": (421, 321, 11),
+    "protector_names": (422, 322, 12),
 }
 VERIFY_SHARE = 0.5
 TEXT_SETS: dict[str, tuple[tuple[str, int], ...]] = {

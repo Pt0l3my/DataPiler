@@ -54,7 +54,7 @@ WORDS = {1: "the share file's shape", 2: "a value that is not a number, a flag o
             "that game table's rows, or one without its row counts"}
 
 # The text sets join_names knows (jobs.TEXTS is this tuple), each a key of provenance.names.
-NAME_SETS = ("character_names", "place_names")
+NAME_SETS = ("character_names", "place_names", "weapon_names", "protector_names")
 # Who said whether the expansion is installed: the owner, in Settings (P2). A file check is a hint on Status only.
 EXPANSION_SOURCES = ("owner",)
 

@@ -1059,11 +1059,11 @@ function copyForSharing() {
 }
 
 // ---- Settings
-const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "expansion", "port", "log_max_mb", "log_keep", "work_cores", "work_memory_mb"];
+const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "devkit_dir", "language", "expansion", "port", "log_max_mb", "log_keep", "work_cores", "work_memory_mb"];
 const NUMS = { port: true, log_max_mb: true, log_keep: true, work_cores: true, work_memory_mb: true };
 const BLANK_ZERO = { port: true, work_cores: true, work_memory_mb: true };   // blank: any free port, or automatic
-// The five folder fields: drawn read-only as their masks while Mask paths on this page is on, and left out of Save.
-const PATH_FIELDS = { smithbox_dir: true, game_dir: true, project_dir: true, workspace_dir: true, share_dir: true };
+// The six folder fields: drawn read-only as their masks while Mask paths on this page is on, and left out of Save.
+const PATH_FIELDS = { smithbox_dir: true, game_dir: true, project_dir: true, workspace_dir: true, share_dir: true, devkit_dir: true };
 function masked() { return !!(SETTINGS && SETTINGS.settings && SETTINGS.settings.mask_paths); }
 function loadSettings() {
   return api("/api/settings").then((r) => {

@@ -152,6 +152,7 @@
     <div class="card"><div class="form">
       <label for="s_workspace_dir">Workspace <span class="qm" title="Local only: it holds game text. Relative to DataPiler's folder, or a full path">?</span></label><input type="text" id="s_workspace_dir" spellcheck="false">
       <label for="s_share_dir">Share folder <span class="qm" title="Only files that passed the guard. Outside the workspace">?</span></label><input type="text" id="s_share_dir" spellcheck="false">
+      <label for="s_devkit_dir">EldenNet devkit folder <span class="qm" title="The folder where you unpacked EldenNet's devkit package: it holds eldennet-engine.exe, gal\leads.toml and SHA256SUMS. A job's probe_exe step runs that tool on the game's executable with the game closed (DP36). DataPiler never bundles it. A full path on this PC; blank until you need it.">?</span></label><input type="text" id="s_devkit_dir" placeholder="(not set)" spellcheck="false">
       <label for="s_language">Text language <span class="qm" title="Smithbox's code, e.g. engus">?</span></label><input type="text" id="s_language" spellcheck="false">
       <label for="s_port">Page port <span class="qm" title="Blank for any free one; takes effect at the next start">?</span></label><input type="text" id="s_port" placeholder="(any free one)" spellcheck="false">
       <label for="s_log_max_mb">Log size, MB a file</label><input type="text" id="s_log_max_mb" spellcheck="false">

@@ -35,7 +35,7 @@ MAX_DEPTH = 16
 MAX_OPS = 64
 OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles",
        "unpack_game_file", "join_names", "unused_names", "filter", "count", "distinct", "write_local", "write_share",
-       "make_map_overview")
+       "make_map_overview", "probe_exe")
 
 ID_RX = re.compile(r"[a-z0-9][a-z0-9-]{2,63}")
 BUILTIN_ID_RX = re.compile(r"extract-[a-z][a-z0-9_]{0,55}")     # Extract's own jobs: extract-<row id>
@@ -84,10 +84,12 @@ ARGS: dict[str, dict[str, bool]] = {
     "make_map_overview": {"name": True, "sheet": True, "level": True, "rows_from": False, "variant": False, "code": False,
                           "check": False, "min_match": False, "labels": False, "shrink": False, "masks": False},
     "write_share": {"name": True, "tables": True, "columns": True, "notes": False},
+    # S98 (DP36): EldenNet's devkit tool on the game's executable, with the game closed; its report is the share file
+    "probe_exe": {"name": True},
 }
 LINK_OPS = ("fetch_rows", "check_fields", "load_maps", "read_placements")
 READS = ("fetch_rows", "check_fields", "load_maps", "read_placements", "read_map_tiles", "check_map_tiles",
-         "unpack_game_file")
+         "unpack_game_file", "probe_exe")
 # What check_fields makes (S67): one row per field the job names, by its place in the list - whether the server's
 # answer has it, and its type as fields.type_code numbers it. Field names never go into the table; values never do.
 CHECK_COLUMNS: tuple[tuple[str, str], ...] = (("field", "int"), ("present", "bool"), ("type", "int"))
@@ -934,6 +936,26 @@ class _Checker:
                     else:
                         seen.add(x)
 
+    def op_probe_exe(self, place: str, i: int, o: dict) -> None:
+        # S98 (DP36): the derivation's offline round R0. EldenNet's devkit tool reads the game's executable with the
+        # game closed; its report, checked by its own lint and by the guard, is the job's one share file. Nothing in
+        # the job names the tool, the game or a path: the folders come from Settings.
+        if self.share_at is not None:
+            self.add(place, "a job writes one share file at most - ops[%d] writes one already" % self.share_at, i)
+        else:
+            self.share_at = i
+        name = self.file_name(place + ".name", o["name"], i) if "name" in o else None
+        if name is not None:
+            owner = self.share_names.get(name)
+            if owner is not None and owner != self.job_id:
+                self.add(place + ".name", "`%s` is the share file of the job `%s` already" % (name, owner)
+                         if ID_RX.fullmatch(str(owner)) or BUILTIN_ID_RX.fullmatch(str(owner))
+                         else "`%s` is the share file of another job already" % name, i)
+            elif self.share_at == i:
+                self.share_name = name
+        if self.builtin:
+            self.add(place, "probe_exe runs in a job of the owner's, never in Extract", i)
+
 
 # ------------------------------------------------------------------------------------------------ lineage (DP8)
 
@@ -1020,6 +1042,7 @@ _CHECKS = {
     "write_local": _Checker.op_write_local,
     "write_share": _Checker.op_write_share,
     "make_map_overview": _Checker.op_make_map_overview,
+    "probe_exe": _Checker.op_probe_exe,
 }
 
 
@@ -1184,6 +1207,14 @@ UNPACK_READ = ("the game file `%s` that Smithbox unpacked, anywhere in DataPiler
                "decompressed (KRAK with the game's own Oodle library, loaded from the game folder, never copied) and "
                "BND4 binders split - never an archive decrypted")
 UNPACK_WRITE = "workspace folder `unpacked/%s`: the file's inner files (local, never shared)"
+# probe_exe's sentences (S98, DP36): one in Reads, two in Writes.
+PROBE_READ = ("the game's executable, eldenring.exe in the game folder, read by EldenNet's devkit tool (probe-exe "
+              "--derive, with the leads file of its package) while the game is closed - never the game's memory")
+PROBE_WRITE = ("share file `%s.json`: the devkit's derivation report as the tool wrote it - numbers, fixed words, the "
+               "leads' labels and patterns of at most 64 bytes - once the devkit's lint and the guard pass it")
+PROBE_RUN = "probe-exe-run"         # the workspace file that says which tool and leads made the report
+PROBE_LOCAL = ("workspace file `%s.json`: the devkit tool's and the leads file's sha256s and the exit codes (local)"
+               % PROBE_RUN)
 
 
 def conditions(where: Mapping[str, object]) -> str:
@@ -1231,6 +1262,8 @@ def _line(o: dict) -> str:
                 "differs from its base and how well it matches the sheet's reference level - numbers only" % (o["sheet"], o["level"]))
     if op == "unpack_game_file":
         return UNPACK_READ % o["file"]
+    if op == "probe_exe":
+        return PROBE_READ
     if op == "unused_names":
         return "the entries of %s that no row of %s names by %s - local" % (TEXT_WORDS[o["text"]], o["rows"], o["key"])
     if op == "join_names":
@@ -1294,6 +1327,8 @@ def preview(job: Job) -> dict[str, list[str]]:
         out[key].append(_line(o))
         if op == "unpack_game_file":
             out["writes"].append(UNPACK_WRITE % o["file"])
+        elif op == "probe_exe":
+            out["writes"].extend([PROBE_WRITE % o["name"], PROBE_LOCAL])
     return out
 
 
@@ -1423,6 +1458,8 @@ def summary(job: Job) -> str:
             reads.append("the names and sizes of the exported map tiles")
         elif op == "check_map_tiles":
             reads.append("measurements of the map tiles of " + _sheet_levels(ops))
+        elif op == "probe_exe":
+            reads.append("the game's executable through EldenNet's devkit, with the game closed")
     if files:
         reads.append(_files_words(files))     # last: its list of maps ends the sentence
     if reads:
@@ -1441,9 +1478,11 @@ def summary(job: Job) -> str:
             computes.append(_plural(n, "count", "counts"))
         elif op == "distinct":
             computes.append(_plural(n, "distinct list", "distinct lists"))
-    writes = ["the share file %s.json" % o["name"] for o in by.get("write_share", [])]
+    writes = ["the share file %s.json" % o["name"] for o in by.get("write_share", []) + by.get("probe_exe", [])]
     for op, ops in by.items():
-        if op == "unpack_game_file":
+        if op == "probe_exe":
+            writes.append(_plural(len(ops), "local file", "local files"))
+        elif op == "unpack_game_file":
             writes.append(_plural(len(files), "local folder", "local folders"))
         elif op == "write_local":
             writes.append(_plural(len(ops), "local file", "local files"))
@@ -1452,7 +1491,8 @@ def summary(job: Job) -> str:
     return "%s. %s. %s." % (
         _cap(" and ".join(clauses)) if clauses else "Reads nothing",
         "Computes " + _and(computes) if computes else "Computes nothing",
-        ("Writes " + _and(writes) + ("" if "write_share" in by else ", none shared")) if writes else "Writes nothing")
+        ("Writes " + _and(writes) + ("" if "write_share" in by or "probe_exe" in by else ", none shared")) if writes
+        else "Writes nothing")
 
 
 def about_block(job: Job) -> dict:
@@ -1501,6 +1541,10 @@ def details(job: Job) -> dict[str, list[dict]]:
         elif op == "make_map_overview":
             put(col, line, o["name"] + ".png", o["name"] + ".png",
                 ("%s workspace images", "of " + line.split(": ", 1)[1]))
+        elif op == "probe_exe":
+            put(col, line)
+            put("writes", PROBE_WRITE % o["name"])
+            put("writes", PROBE_LOCAL)
         else:
             put(col, line)
 

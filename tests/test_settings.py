@@ -37,7 +37,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(s.as_dict(), {"smithbox_dir": "", "game_dir": "", "project_dir": "", "workspace_dir": "workspace",
                                        "share_dir": "share", "language": "engus", "expansion": "", "port": 0,
                                        "log_max_mb": 2, "log_keep": 5, "mask_paths": False, "map_opengl": True,
-                                       "work_cores": 0, "work_memory_mb": 0, "link_auto": False,
+                                       "work_cores": 0, "work_memory_mb": 0, "link_auto": False, "devkit_dir": "",
                                        "recent": {"smithbox_dir": [], "game_dir": [], "project_dir": []}})
 
     def test_dp29_the_caps_for_image_steps(self):
@@ -165,6 +165,19 @@ class SettingsTest(unittest.TestCase):
         self.refused("share_dir", workspace_dir="workspace", share_dir="workspace/share")
         self.refused("workspace_dir", workspace_dir="share/ws", share_dir="share")
         self.assertEqual(self.check(workspace_dir="ws", share_dir="out").share_dir, "out")
+
+    def test_s98_the_devkit_folder(self):
+        """DP36: blank, or a full path on this PC, from which a job's probe_exe runs EldenNet's devkit tool."""
+        self.assertEqual(self.check().devkit_dir, "")
+        kit = str(self.base / "Devkit")
+        self.assertEqual(self.check(devkit_dir=kit).devkit_dir, kit)
+        e = self.refused("devkit_dir", devkit_dir="devkit")
+        self.assertIn("full folder path", e.rule)
+        for folder in ("\\\\nas.invalid\\share\\kit", "//nas.invalid/share/kit"):
+            with self.subTest(folder=folder):
+                self.refused("devkit_dir", devkit_dir=folder)
+        e = self.refused("devkit_dir", devkit_dir="//nas.invalid/share/kit")
+        self.assertIn("on this PC", e.rule)
 
     def test_the_workspace_stays_on_this_pc(self):
         """It holds the game's text (design §1): never a UNC path or a mapped network drive."""

@@ -88,6 +88,9 @@
           },
           {
             "$ref": "#/$defs/op_make_map_overview"
+          },
+          {
+            "$ref": "#/$defs/op_probe_exe"
           }
         ]
       }
@@ -1467,6 +1470,23 @@
         },
         "masks": {
           "type": "boolean"
+        }
+      }
+    },
+    "op_probe_exe": {
+      "type": "object",
+      "description": "The derivation's offline round R0 (DP36; EldenNet O89). Waits while the game runs, then runs EldenNet's devkit tool from the EldenNet devkit folder in Settings (never bundled with DataPiler; eldennet-engine.exe and gal/leads.toml, both matching the package's SHA256SUMS) on the game's executable, eldenring.exe in the game folder in Settings: probe-exe --derive, then lint --report on its report. The tool reads the executable file only, never the game's memory, and stops if the game starts. The report, derive.json as the tool wrote it (numbers, fixed words, the leads' labels and patterns of at most 64 bytes), goes to share/<name>.json once the guard passes it, in its form for a derivation report; workspace/local/<job>/probe-exe-run.json records the tool's and the leads' sha256s and the exit codes. It writes the job's one share file, as write_share does; nothing in the job names a path.",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name"
+      ],
+      "properties": {
+        "op": {
+          "const": "probe_exe"
+        },
+        "name": {
+          "$ref": "#/$defs/file_name"
         }
       }
     }

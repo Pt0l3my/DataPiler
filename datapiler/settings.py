@@ -52,6 +52,7 @@ class Settings:
     work_cores: int = 0                 # DP29 (S83): worker processes for the image steps; 0: every core but one
     work_memory_mb: int = 0             # DP29 (S83): memory for decoded tiles; 0: a quarter of the free memory
     link_auto: bool = False             # DP31 (S90): the server link switched on by itself once Smithbox's server answers
+    devkit_dir: str = ""                # DP36 (S98): the folder where the owner unpacked EldenNet's devkit package
     recent: dict = field(default_factory=_no_recent, compare=True, hash=False)   # key -> tuple, newest first
 
     def as_dict(self) -> dict:
@@ -126,6 +127,7 @@ _LABEL = {
     "map_opengl": "Map jobs on Smithbox's OpenGL build only",
     "work_cores": "the cores for image steps", "work_memory_mb": "the memory for image steps",
     "link_auto": "Link to Smithbox's server by itself",
+    "devkit_dir": "the EldenNet devkit folder",
     "recent": "the folders used before",
 }
 
@@ -151,11 +153,14 @@ def check(raw: Mapping[str, object], *, root: Path | None = None) -> Settings:
                                 "not a setting DataPiler knows")
     d = Settings()
     vals: dict[str, object] = {}
-    for key in ("smithbox_dir", "game_dir", "project_dir"):
+    for key in ("smithbox_dir", "game_dir", "project_dir", "devkit_dir"):
         v = _text(raw, key, getattr(d, key))
         if v and not _absolute(v):
             raise SettingsError(key, "%s must be a full folder path, or blank" % _LABEL[key])
         vals[key] = v
+    # DP36 (S98): DataPiler runs the devkit's tool from this folder, so it is a folder on this PC, never a share.
+    if _network(vals["devkit_dir"]):
+        raise SettingsError("devkit_dir", "the EldenNet devkit folder must be on this PC, never a network folder")
     for key in ("workspace_dir", "share_dir"):
         v = _text(raw, key, getattr(d, key))
         if not v:

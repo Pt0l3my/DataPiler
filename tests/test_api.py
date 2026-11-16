@@ -151,9 +151,10 @@ class FakeGuard:
         self.fail = {}          # file bytes -> the check that fails on them
         self.calls = 0
 
-    def check(self, data, *, declared, coverage=None):
+    def check(self, data, *, declared, coverage=None, labels=None):
         self.calls += 1
         self.coverage = coverage
+        self.labels = labels
         bad = self.fail.get(bytes(data))
         return [CheckResult(i, n, i != bad, "(file)" if i == bad else None)
                 for i, n in enumerate(("Shape", "Values", "Text", "The owner", "Size", "Coverage"), 1)]
@@ -850,7 +851,7 @@ class FoldersApiTest(ApiBase):
         self.assertEqual(r["expansion"]["found"], [{"value": "yes", "sources": ["steam_manifest"],
                                                      "tags": ["Steam's app manifest"], "in_use": False,
                                                      "detail": "DLC app 9000020 installed"}])
-        self.assertEqual(r["shown"], {"workspace_dir": "workspace", "share_dir": "share"})
+        self.assertEqual(r["shown"], {"workspace_dir": "workspace", "share_dir": "share", "devkit_dir": ""})
         self.assertNotIn("recent", r["settings"])
         self.assertFalse(r["settings"]["mask_paths"])
 

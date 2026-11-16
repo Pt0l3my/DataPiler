@@ -365,9 +365,11 @@ class Api:
         except fileio.TooLarge:
             return None, [{"check": 5, "name": "Size", "ok": False, "where": "(file)"}]
         from . import guard as guard_mod
-        coverage = guard_mod.counts_for(self.live.paths.share_counts, f.name, fileio.sha256_bytes(data))
+        sha = fileio.sha256_bytes(data)
+        coverage = guard_mod.counts_for(self.live.paths.share_counts, f.name, sha)
+        labels = guard_mod.labels_for(self.live.paths.share_counts, f.name, sha)     # S98: a derivation report's
         checks = [{"check": r.check, "name": r.name, "ok": r.ok, "where": r.where}
-                  for r in self.guard.check(data, declared=self._declared(data), coverage=coverage)]
+                  for r in self.guard.check(data, declared=self._declared(data), coverage=coverage, labels=labels)]
         return data, checks
 
     @staticmethod
@@ -839,7 +841,8 @@ class Api:
         sess = self.live.session
         return {"settings": cfg, "server": SERVER, "session": {"link": sess.link, "debug": sess.debug},
                 "folders": folders, "expansion": {"found": exp, "notes": self._notes("expansion")},
-                "shown": {k: dirs_mod.shown(getattr(s, k), mask_on) for k in ("workspace_dir", "share_dir")}}
+                "shown": {k: dirs_mod.shown(getattr(s, k), mask_on)
+                          for k in ("workspace_dir", "share_dir", "devkit_dir")}}
 
     def _found(self, want: str) -> list:
         if self.folders is None:
@@ -1082,6 +1085,7 @@ def set_masks(live: Live) -> None:
 
     logbook.set_masks(
         folders={"<GAME>": full(s.game_dir), "<SMITHBOX>": full(s.smithbox_dir), "<PROJECT>": full(s.project_dir),
+                 "<DEVKIT>": full(s.devkit_dir),
                  "<WORKSPACE>": str(p.workspace.resolve()), "<SHARE>": str(p.share.resolve()),
                  "<DATAPILER>": str(Path(live.root).resolve())},
         home=_safe(b.home), user=_safe(b.user_name), pc=_safe(b.pc_name))

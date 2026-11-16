@@ -169,7 +169,8 @@ def _entries(folders: Mapping[str, str | None]) -> list[tuple[int, str, str]]:
 
 
 def set_masks(*, folders: Mapping[str, str | None], home: str | None, user: str | None, pc: str | None) -> None:
-    """folders maps "<GAME>", "<SMITHBOX>", "<PROJECT>", "<WORKSPACE>", "<SHARE>", "<DATAPILER>" to a folder (or None).
+    """folders maps "<GAME>", "<SMITHBOX>", "<PROJECT>", "<DEVKIT>", "<WORKSPACE>", "<SHARE>", "<DATAPILER>" to a folder
+    (or None).
     Rebuilds the mask: each folder in either slash, any case, and its 8.3 short form (winapi short_path), with the
     candidates Detect found this session (learn_found) as <FOUND>, all longest first, each ending where its name
     ends (a sibling that only adds to a named folder's name is its own <FOUND>; a found folder inside a named one

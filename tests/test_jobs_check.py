@@ -12,7 +12,7 @@ from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
-OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, unpack_game_file, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview"
+OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, unpack_game_file, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview, probe_exe"
 
 # Each bad fixture gives exactly one refusal: (where, text).
 EXPECTED = {
@@ -80,11 +80,20 @@ class ExampleTest(unittest.TestCase):
         self.assertIsNone(job.needs)
 
     def test_every_op_passes(self):
+        # probe_exe writes the job's one share file, as write_share does here: the R0 job is its own fixture (S98)
         job = check(fixture("good-every-op.json"))
         self.assertEqual(job.maps, 2)
         self.assertEqual(job.needs, "0.1")
         self.assertEqual([o["op"] for o in job.ops].count("count"), 2)
-        self.assertEqual(set(o["op"] for o in job.ops), set(jobs.OPS))
+        self.assertEqual(set(o["op"] for o in job.ops) | {"probe_exe"}, set(jobs.OPS))
+
+    def test_s98_the_r0_job_passes(self):
+        job = check(fixture("good-probe-exe.json"))
+        self.assertEqual(job.id, "en-0044-derive-r0")
+        self.assertEqual(job.share_name, "derive-r0")
+        self.assertEqual(job.needs, "0.2.41")
+        self.assertFalse(job.uses_link)
+        self.assertEqual(job.ops, ({"op": "probe_exe", "name": "derive-r0"},))
 
     def test_a_built_in_id_passes_only_as_built_in(self):
         doc = example()
@@ -333,7 +342,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.41", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.42", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs

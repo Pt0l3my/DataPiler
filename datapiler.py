@@ -128,7 +128,8 @@ class RealParts:
         return runner_mod.Runner(lambda: live.paths, link, textdb, guard, status.provenance, status.game_running,
                                  lambda: live.settings.language, map_opengl=lambda: live.settings.map_opengl,
                                  game_dir=lambda: live.settings.game_dir,
-                                 work=lambda: (live.settings.work_cores, live.settings.work_memory_mb))
+                                 work=lambda: (live.settings.work_cores, live.settings.work_memory_mb),
+                                 devkit_dir=lambda: live.settings.devkit_dir)
 
     def inbox(self, live: Live, textdb):
         from datapiler import catalogue, inbox as inbox_mod

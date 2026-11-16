@@ -17,6 +17,8 @@ Smithbox, for EldenNet's research (EldenNet O54 to O57). Its decisions are in [d
   local paths, local endpoint addresses or IPs. Examples and tests use placeholders and invented data.
 - Commit identities are noreply addresses only; use the environment's default git identity. No model identifiers of
   the assistant in files, apart from the commit trailer.
+- No `Claude-Session` link in commit messages or pull requests (owner, 2026-11-16): it points to a private
+  transcript and tells readers nothing. The `Co-Authored-By` trailer stays.
 
 ## Game data
 

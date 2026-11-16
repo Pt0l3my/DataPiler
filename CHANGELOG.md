@@ -13,6 +13,24 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.41 - 2026-11-16
+
+- New: a job step, **`probe_exe`**, for EldenNet's derivation round R0 (DP36; EldenNet O89; S98). It runs EldenNet's
+  devkit tool on the game's executable with the game closed: `probe-exe --derive` with the leads file of the devkit's
+  package, then the tool's own `lint --report`. It waits while the game runs and stops the tool if the game starts or
+  you cancel. Each exit code is said in plain words, and nothing is shared when one stops the job. The tool's report
+  becomes the job's share file as the tool wrote it, once the guard passes it; `probe-exe-run.json` in the job's
+  workspace folder records the tool's and the leads file's sha256s and the exit codes. Pack 7z takes both.
+- New: the guard knows **a derivation report**: the six checks in their form for EldenNet's `derive.json`, with
+  DataPiler's own copy of the report's vocabulary. Only numbers, flags, the report's fixed words, the leads' labels
+  and code patterns of at most 64 bytes (with their wildcards, and never reading as text) pass; no path, name or text
+  has a place in it. The leads' labels are kept with the file, so Outputs and Pack check it again later.
+- New: **EldenNet devkit folder** in Settings: the folder where you unpacked EldenNet's devkit package. DataPiler never
+  bundles the tool, checks it and the leads file against the package's `SHA256SUMS` before each run, and shows the
+  folder as `<DEVKIT>` in its logs.
+- Job en-0044 (`en-0044-derive-r0.json`) runs R0 and leaves its report ready for Pack 7z; the README says, step by
+  step, what to do.
+
 ## 0.2.40 - 2026-11-16
 
 - New: two text sets for jobs, **the weapon names** (`weapon_names`) and **the armour names** (`protector_names`), for

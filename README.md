@@ -262,10 +262,40 @@ above the job's, no times. Each archive is read back whole before it is offered,
 it. **Open packed folder** opens the folder (Windows). The workspace's files are game files and research material:
 share them only for the research they were made for, never publicly.
 
+## EldenNet's derivation round R0 (EldenNet's devkit, with the game closed)
+
+EldenNet needs a few facts about your build of the game before it can run in it: where certain parts of the game's
+program are. The first round, R0, finds what it can from the game's executable file alone, with the game closed
+(DP36; EldenNet's decision O89). DataPiler runs EldenNet's own devkit tool for it; it never bundles that tool.
+
+1. Unpack `EldenNet-devkit-R0.zip` into a folder of your own, outside the game's folder. It holds
+   `eldennet-engine.exe`, `gal\leads.toml` (what to look for: names and shapes, never bytes), `README-R0.txt` and
+   `SHA256SUMS`. Leave its files as they are: DataPiler checks the tool and the leads file against `SHA256SUMS`
+   before it runs anything.
+2. In Settings, set **EldenNet devkit folder** to that folder and press Save. The game folder must be set too.
+3. Close the game. Drop the job `en-0044-derive-r0.json` on Jobs and press **Start**. While the game runs, the job
+   waits and says so; if the game starts during the run, the tool is stopped and nothing is shared.
+4. The job runs the tool's `probe-exe` on `eldenring.exe`, then the tool's own `lint` on its report, then the guard.
+   It takes a minute or two. The card ends as done, and the log has the tool's one-line summary.
+5. Press **Pack 7z** on the card and send the archive from the packed folder. It holds two files: the share file
+   `derive-r0.json` (the tool's report as it wrote it: numbers, fixed words, the leads' labels and code patterns of
+   at most 64 bytes with their addresses wildcarded) and `probe-exe-run.json` (which tool and leads made it, by
+   their sha256s, and the exit codes).
+
+What the tool does: it reads the executable file and the leads file, writes one report into an empty folder of the
+workspace, and ends. It never starts the game, never reads the game's memory, never changes a game file and uses no
+network. A report that is not complete is normal in R0: what is missing is listed in it for the in-game round, R1.
+If the job stops, its card says why in plain words: for example the devkit folder not set, a file that does not match
+`SHA256SUMS`, the tool's exit code (2 to 6, each named), or the lint or the guard refusing the report; nothing is
+shared then.
+
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any
   game file, and uses none of Smithbox's me3 features.
+- Of other projects' programs it runs only EldenNet's devkit tool: from the folder you set, in a job's `probe_exe`
+  step, with the game closed, and only once the tool matches its package's `SHA256SUMS` (DP36). It never bundles
+  that tool.
 - The game's text and data stay on your PC, in the **workspace** folder, which Settings refuses to put on a network
   share or a mapped network drive. What DataPiler writes for sharing, in the **share** folder, holds numbers, counts
   and its own labels only, and ids only for rows a job picked for a purpose: the named characters, matched with their
@@ -292,7 +322,8 @@ share them only for the research they were made for, never publicly.
   come from EldenNet's research and are checked against your own data each time a job joins names: if fewer than
   half of the names it looks up are found there, the job stops and says so.
 - Its page answers only on `127.0.0.1`, to itself, with a token made at each start, and loads nothing from
-  elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<WORKSPACE>`).
+  elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<DEVKIT>`,
+  `<WORKSPACE>`).
 - Jobs are data, never code: a closed set of operations, checked when they are dropped, run only on Start.
 - It writes only inside its own folder, and into the workspace and share folders if you move them in Settings. Its
   one use of the internet after the first start is the Update… button, when you press it, and pip after your Y when

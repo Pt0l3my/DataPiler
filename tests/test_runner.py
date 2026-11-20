@@ -18,7 +18,7 @@ from dataclasses import replace
 
 from _packs import FakeOodle, bnd4_bytes, dcx_bytes, menu_like
 
-from datapiler import catalogue, deleted, events, gamefiles, guard, jobs, link, logbook, paths, runner, textdb, textures
+from datapiler import catalogue, deleted, events, gamefiles, guard, jobs, link, logbook, paths, runner, sevenzip, textdb, textures
 from datapiler.game import GameRunning
 from datapiler.logbook import own
 
@@ -50,6 +50,7 @@ class FakeLink:
                                   "npcType": i % 3, "hitHeight": 1.5 + i / 10, "isGhost": bool(i % 2)}
                     for i in range(20)}
         self.talk = {9000000 + i: {"msgId": 9500000 + i if i % 2 == 0 else -1} for i in range(10)}
+        self.weapons = {9200000 + 100 * i: {} for i in range(12)}   # S97: invented weapon rows, by row id alone
         self.loaded = ["m99_00_00_00", "m99_00_00_01"]
         self.every_map: list[str] | None = None   # every map of the project, when a test sets it
         self.extra_placements: list[tuple[int, int]] = []   # (entity id, row) added to each map's placements
@@ -73,7 +74,8 @@ class FakeLink:
             return {9100000 + i: {"disableParam_NT": 0, "worldMapPieceId": i, "textId": -1, "areaNo": 60,
                                   "gridXNo": 40 + i, "gridZNo": 36, "posX": 1.5 * i, "posY": 0.0, "posZ": -2.0}
                     for i in range(4)}
-        return {"NpcParam": self.npc, "TalkParam": self.talk}.get(param, {9000000: {}, 9000001: {}})
+        return {"NpcParam": self.npc, "TalkParam": self.talk,
+                "EquipParamWeapon": self.weapons}.get(param, {9000000: {}, 9000001: {}})
 
     def list_param_rows(self, param):
         self._check()
@@ -463,6 +465,125 @@ class JobRunTest(RunnerBase):
         for t, d in self.events:
             for v in d.values():
                 self.assertTrue(v is None or isinstance(v, (bool, int, float, logbook.Own)), (t, d))
+
+
+class PackTest(RunnerBase):
+    """S87 (DP30): a finished job's share file and workspace folder packed into 7z to upload, in a thread of its own;
+    invented files only."""
+
+    COLS = [c for c, _ in gamefiles.UNPACK_COLUMNS]
+    JID = "test-0087-pack"
+
+    def done_job(self) -> dict:
+        self.put_game_file(menu_like(("Serevan_m00.testmsk", "Serevan_m01.testmsk")), "99_invented.testmskbnd.dcx")
+        ops = [{"op": "unpack_game_file", "file": "99_invented.testmskbnd.dcx", "as": "masks"},
+               {"op": "write_share", "name": "masks", "tables": ["masks"], "columns": {"masks": self.COLS}}]
+        raw = json.dumps({"format": "datapiler-job/1", "id": self.JID, "title": "Pack (invented)", "ops": ops}).encode()
+        with mock.patch.object(gamefiles, "load_oodle", return_value=FakeOodle()):
+            return self.run_job(raw)
+
+    def packed(self) -> dict:
+        self.assertTrue(wait_for(lambda: self.card(self.JID)["packing"] is None and self.card(self.JID)["packed"]),
+                        self.card(self.JID))
+        return self.card(self.JID)["packed"]
+
+    def test_s87_the_share_file_and_the_workspace_folder_go_into_one_archive(self):
+        self.done_job()
+        self.assertEqual(self.r.pack(self.JID, share_ok=lambda f: True), {"ok": True})
+        done = self.packed()
+        self.assertNotIn("error", done)
+        self.assertEqual([x["name"] for x in done["parts"]], [self.JID + ".7z"])
+        part = self.p.packed / (self.JID + ".7z")
+        self.assertEqual(done["parts"][0]["size"], part.stat().st_size)
+        got = {}
+        listed = sevenzip.check([part], sink=lambda n, b: got.setdefault(n, bytearray()).extend(b))
+        names = sorted(n for n, _ in listed)
+        self.assertIn(self.JID + "/masks.json", names)
+        inner = self.JID + "/unpacked/99_invented.testmskbnd.dcx/menu/Invented/mask/Serevan_m01.testmsk"
+        self.assertIn(inner, names)
+        self.assertEqual(bytes(got[inner]), bytes([1]) * 41)
+        self.assertEqual(bytes(got[self.JID + "/masks.json"]), (self.p.share / "masks.json").read_bytes())
+        self.assertEqual(done["files"], len(names))
+        for n in names:                                    # relative names only: nothing of the PC's folders
+            self.assertTrue(n.startswith(self.JID + "/"), n)
+            self.assertNotIn(str(self.p.root), n)
+
+    def test_s87_a_share_file_failing_the_guard_now_stops_the_pack(self):
+        self.done_job()
+        r = self.r.pack(self.JID, share_ok=lambda f: False)
+        self.assertFalse(r["ok"])
+        self.assertIn("does not pass the guard now", r["error"])
+        self.assertFalse(self.p.packed.exists() and any(self.p.packed.iterdir()))
+        self.assertIsNone(self.card(self.JID)["packing"])
+
+    def test_s87_only_a_finished_job_is_packed(self):
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0087-new", "title": "Not run (invented)",
+                          "ops": [{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}]}).encode()
+        card, _ = self.r.add("job.json", raw)
+        r = self.r.pack(card["id"], share_ok=lambda f: True)
+        self.assertEqual(r, {"ok": False, "error": "Only a finished job can be packed."})
+        with self.assertRaises(ValueError):
+            self.r.pack("no-such-job", share_ok=lambda f: True)
+
+    def test_s87_a_job_with_no_files_left_has_nothing_to_pack(self):
+        self.done_job()
+        (self.p.share / "masks.json").unlink()
+        import shutil
+        shutil.rmtree(self.p.local / self.JID)
+        r = self.r.pack(self.JID, share_ok=lambda f: True)
+        self.assertEqual(r, {"ok": False, "error": "This job made no files to pack."})
+
+    def test_s87_no_run_or_removal_while_packing(self):
+        self.done_job()
+        with self.r._cv:
+            self.r._cards[self.JID].packing = {"done": 0, "of": 1}
+        for what in ("start", "resume", "update", "remove"):
+            r = self.r.act(self.JID, what)
+            self.assertFalse(r["ok"], what)
+            self.assertIn("being packed", r["error"])
+        self.assertEqual(self.r.pack(self.JID, share_ok=lambda f: True), {"ok": True})     # already under way
+        with self.r._cv:
+            self.r._cards[self.JID].packing = None
+
+    def test_s87_packing_again_replaces_the_earlier_pack(self):
+        self.done_job()
+        self.r.pack(self.JID, share_ok=lambda f: True)
+        first = self.packed()
+        stale = self.p.packed / (self.JID + ".7z.002")
+        stale.write_bytes(b"left from an older, larger pack")
+        with self.r._cv:
+            self.r._cards[self.JID].packed = None
+        self.r.pack(self.JID, share_ok=lambda f: True)
+        again = self.packed()
+        self.assertEqual([x["name"] for x in again["parts"]], [x["name"] for x in first["parts"]])
+        self.assertFalse(stale.exists())
+
+    def test_s87_the_log_names_no_file(self):
+        self.done_job()
+        _, seq = logbook.lines_after(0, limit=0)
+        self.r.pack(self.JID, share_ok=lambda f: True)
+        self.packed()
+        lines, _ = logbook.lines_after(seq)
+        self.assertTrue(any("packed into 1 7z part(s)" in x["msg"] for x in lines), lines)
+        for x in lines:
+            for word in ("Serevan", "masks.json", str(self.p.root)):
+                self.assertNotIn(word, x["msg"])
+
+
+class DoneNowTest(RunnerBase):
+    """S92: the page leaves a job finished since DataPiler started unfolded; one finished in an earlier run folds."""
+
+    def test_s92_a_job_finished_in_this_run_is_done_now_and_not_after_a_restart(self):
+        self.put_game_file()
+        raw = json.dumps({"format": "datapiler-job/1", "id": "test-0092-now", "title": "Done now (invented)",
+                          "ops": [{"op": "unpack_game_file", "file": "99_invented.testbnd.dcx"}]}).encode()
+        card = self.run_job(raw)
+        self.assertTrue(card["done_now"])
+        again = self.new_runner()
+        again.load_folder()
+        self.assertTrue(wait_for(lambda: any(c["id"] == "test-0092-now" for c in again.cards())))
+        later = next(c for c in again.cards() if c["id"] == "test-0092-now")
+        self.assertEqual((later["state"], later["done_now"]), ("done", False))
 
 
 class PauseTest(RunnerBase):
@@ -936,6 +1057,31 @@ class AddAndRemoveTest(RunnerBase):
         dup, _ = self.r.add("w.json", fixture("job-files", "bad-as-twice.json"))
         self.assertTrue(dup["id"].startswith("refused-"))
         self.assertIn("id", [r["where"] for r in dup["refusals"]])
+        for c in (card, bad, dup):                  # S95: no About block and no Details on a refused card
+            self.assertEqual((c["about"], c["details"]), (None, None))
+
+    def test_the_about_block_and_the_details(self):
+        """S95 (DP34): a checked card carries its About block and its Details, the same before a run and after a
+        load of the jobs folder (they are read from the job file again)."""
+        card, _ = self.r.add("about.json", fixture("job-files", "good-about.json"))
+        self.assertEqual(card["state"], "checked")
+        self.assertEqual(card["about"]["text"], "Every model and the placement file of two invented maps, unpacked "
+                                                "on the PC.\nFollows en-0039; the files are invented (DP28, S81).")
+        self.assertEqual(card["about"]["summary"], "Reads 40 game files: m99_07_00_00 (31 models and its placement "
+                                                   "file), m99_04_00_00 (7 and its placement file). Computes nothing. "
+                                                   "Writes 40 local folders, none shared.")
+        self.assertEqual(card["about"]["refs"], ["G27", "WHY§93", "en-0039", "DP28", "S81"])
+        self.assertEqual([(len(v), [len(x.get("names") or []) for x in v]) for v in card["details"].values()],
+                         [(1, [40]), (0, []), (1, [40])])
+        self.assertEqual(len(card["preview"]["reads"]), 40)            # the preview keeps a sentence a step
+        plain, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
+        self.assertEqual((plain["about"]["text"], plain["about"]["refs"]), (None, []))
+        again = self.new_runner()
+        again.load_folder()
+        self.assertEqual({c["id"]: (c["about"], c["details"]) for c in again.cards()},
+                         {c["id"]: (c["about"], c["details"]) for c in self.r.cards()})
+        for f in self.p.jobs.glob("*/state.json"):        # the state kept on disk holds none of it
+            self.assertNotIn("Every model", f.read_text(encoding="utf-8"))
 
     def test_remove(self):
         card, _ = self.r.add("job.json", fixture("job-files", "good-example.json"))
@@ -984,7 +1130,7 @@ class UnpackTest(RunnerBase):
         with mock.patch.object(gamefiles, "load_oodle", return_value=fake):
             card = self.run_job(self.job(ops))
         self.assertEqual(fake.calls, 1)
-        self.assertEqual(card["ops"][0]["done"], 2)
+        self.assertEqual((card["ops"][0]["done"], card["ops"][0]["of"]), (2, 2))    # S88: written of to write
         out = paths.local_folder(self.p, "test-0081-unpack", "unpacked") / "99_invented.testmskbnd.dcx"
         self.assertEqual((out / "menu" / "Invented" / "mask" / "Serevan_m01.testmsk").read_bytes(), bytes([1]) * 41)
         raw = (self.p.share / "masks.json").read_bytes()
@@ -1391,4 +1537,52 @@ class CardsTest(RunnerBase):
         self.r.add("a.json", fixture("job-files", "good-example.json"))
         cards = self.r.cards()
         self.assertTrue(cards and all(isinstance(c.get("added"), (int, float)) for c in cards))
+
+
+class GearNamesTest(RunnerBase):
+    """S97 (0.2.40): the weapon and armour names, joined by row id and counted per layer (jobs en-0041 to en-0043).
+    The invented export names 9 of the 12 invented weapon rows and holds 2 names no row uses."""
+
+    def setUp(self):
+        super().setUp()
+        self.gear = mock.patch.dict(textdb.TEXT_SETS, {"weapon_names": (("item_dlc02", 9003),)})
+        self.gear.start()
+        weapons = sorted(self.link.weapons)
+        entries = [{"ID": rid, "Text": "Corrow blade %d" % k} for k, rid in enumerate(weapons[:9])]
+        entries += [{"ID": 9300000, "Text": "An unused blade"}, {"ID": 9300100, "Text": "Another unused blade"}]
+        export = {"FmgWrappers": [{"ID": 9003, "Name": "Invented weapons", "Fmg": {"Entries": entries}}]}
+        self.db.import_export(export, container="item_dlc02", language="engus", sha256="1" * 64)
+
+    def tearDown(self):
+        self.gear.stop()
+        super().tearDown()
+
+    def share_doc(self, name: str) -> dict:
+        return json.loads((self.p.share / (name + ".json")).read_bytes())
+
+    def test_the_weapon_rows_each_layer_names(self):
+        self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "weapons", "param": "EquipParamWeapon", "fields": ["id"]},
+            {"op": "join_names", "as": "named", "rows": "weapons", "key": "id", "text": "weapon_names"},
+            {"op": "filter", "as": "with_name", "rows": "named", "where": {"named": True}},
+            {"op": "count", "as": "per_layer", "rows": "with_name", "by": ["layer"]},
+            {"op": "write_share", "name": "weapon-names", "tables": ["per_layer"],
+             "columns": {"per_layer": ["layer", "count"]}}]))
+        doc = self.share_doc("weapon-names")
+        self.assertEqual(sum(r[1] for r in doc["tables"][0]["rows"]), 9)
+        self.assertNotIn("blade", json.dumps(doc))   # names stay in the workspace
+
+    def test_the_names_no_weapon_row_uses(self):
+        self.run_job(job_bytes([
+            {"op": "fetch_rows", "as": "weapons", "param": "EquipParamWeapon", "fields": ["id"]},
+            {"op": "count", "as": "rows_total", "rows": "weapons"},
+            {"op": "unused_names", "as": "unused", "rows": "weapons", "key": "id", "text": "weapon_names"},
+            {"op": "count", "as": "unused_per_layer", "rows": "unused", "by": ["layer"]},
+            {"op": "write_share", "name": "gear-unused", "tables": ["rows_total", "unused_per_layer"],
+             "columns": {"rows_total": ["count"], "unused_per_layer": ["layer", "count"]}}]))
+        doc = self.share_doc("gear-unused")
+        tables = {t["name"]: t["rows"] for t in doc["tables"]}
+        self.assertEqual(tables["rows_total"], [[12]])
+        self.assertEqual(sum(r[1] for r in tables["unused_per_layer"]), 2)
+        self.assertNotIn("blade", json.dumps(doc))
 

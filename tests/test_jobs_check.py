@@ -12,7 +12,7 @@ from datapiler import VERSION, fields, jobs
 
 FIXTURES = os.path.join(_repo.ROOT, "tests", "fixtures", "job-files")
 PLANTED = "Quillon Marrowgate"
-OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, unpack_game_file, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview"
+OPS_LIST = "fetch_rows, check_fields, load_maps, read_placements, read_map_tiles, check_map_tiles, unpack_game_file, join_names, unused_names, filter, count, distinct, write_local, write_share, make_map_overview, probe_exe"
 
 # Each bad fixture gives exactly one refusal: (where, text).
 EXPECTED = {
@@ -20,7 +20,7 @@ EXPECTED = {
     "bad-not-object.json": ("(file)", "the file is not a JSON object"),
     "bad-too-deep.json": ("(file)", "the file nests deeper than 16 levels"),
     "bad-wrong-format.json": ("format", "not a format DataPiler reads (it reads datapiler-job/1)"),
-    "bad-unknown-key.json": ("(top level)", "`colour` is not a key of a job (format, id, title, ops, needs)"),
+    "bad-unknown-key.json": ("(top level)", "`colour` is not a key of a job (format, id, title, about, ops, needs)"),
     "bad-duplicate-key.json": ("(top level)", "a key is given twice"),
     "bad-unknown-op.json": ("ops[2].op", "`run_command` is not an operation DataPiler has (%s)" % OPS_LIST),
     "bad-unknown-argument.json": ("ops[0]", "`path` is not an argument of fetch_rows"),
@@ -40,6 +40,8 @@ EXPECTED = {
                                          "name the maps by id"),
     "bad-where-type.json": ("ops[3].where.named", "`named` is a flag - compare it with true or false"),
     "bad-missing-title.json": ("title", "missing - a job has a title of 1 to 120 characters"),
+    "bad-about-control.json": ("about", "must be 1 to 600 characters, with no control characters but the "
+                                        "newline"),
 }
 
 
@@ -78,11 +80,20 @@ class ExampleTest(unittest.TestCase):
         self.assertIsNone(job.needs)
 
     def test_every_op_passes(self):
+        # probe_exe writes the job's one share file, as write_share does here: the R0 job is its own fixture (S98)
         job = check(fixture("good-every-op.json"))
         self.assertEqual(job.maps, 2)
         self.assertEqual(job.needs, "0.1")
         self.assertEqual([o["op"] for o in job.ops].count("count"), 2)
-        self.assertEqual(set(o["op"] for o in job.ops), set(jobs.OPS))
+        self.assertEqual(set(o["op"] for o in job.ops) | {"probe_exe"}, set(jobs.OPS))
+
+    def test_s98_the_r0_job_passes(self):
+        job = check(fixture("good-probe-exe.json"))
+        self.assertEqual(job.id, "en-0044-derive-r0")
+        self.assertEqual(job.share_name, "derive-r0")
+        self.assertEqual(job.needs, "0.2.41")
+        self.assertFalse(job.uses_link)
+        self.assertEqual(job.ops, ({"op": "probe_exe", "name": "derive-r0"},))
 
     def test_a_built_in_id_passes_only_as_built_in(self):
         doc = example()
@@ -331,7 +342,7 @@ class RefusalTest(unittest.TestCase):
                                share_names={"roster-counts": "en-0007-roster-counts"}).share_name, "roster-counts")
 
     def test_needs(self):
-        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.35", False),
+        for needs, ok in (("0.1", True), ("0.1.0", True), ("0.2", True), (VERSION, True), ("0.0.9", True), ("0.2.42", False),
                           ("0.3", False), ("1.0", False)):
             doc = example()
             doc["needs"] = needs
@@ -457,7 +468,7 @@ class BossOpsTest(unittest.TestCase):
         j = check(job([NPC, un, share("un", cols={"un": ["nameId", "layer"]})]))
         self.assertEqual(j.lineage["un"].kind, "narrowed")
         self.assertEqual(jobs.columns_of(j)["un"], list(jobs.UNUSED_COLUMNS))
-        self.assertEqual(self.refused_at([NPC, dict(un, text="weapon_names"), share("un", cols={"un": ["nameId"]})])[0][0],
+        self.assertEqual(self.refused_at([NPC, dict(un, text="goods_names"), share("un", cols={"un": ["nameId"]})])[0][0],
                          "ops[1].text")
         self.assertEqual(self.refused_at([NPC, dict(un, key="nope"), share("un", cols={"un": ["nameId"]})])[0][0],
                          "ops[1].key")
@@ -541,7 +552,9 @@ class MapCoordsTest(unittest.TestCase):
         self.assertEqual(set(fields.MAP_PARAMS), {"BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam",
                                                   "WorldMapPieceParam", "WorldMapLegacyConvParam", "MapNameTexParam",
                                                   "MapNameTexParam_m61", "MapPieceTexParam", "MapPieceTexParam_m61",
-                                                  "MapGridCreateHeightLimitInfo"})
+                                                  "MapGridCreateHeightLimitInfo", "WeatherLotTexParam",
+                                                  "WeatherLotTexParam_m61", "MimicryEstablishmentTexParam",
+                                                  "MimicryEstablishmentTexParam_m61"})   # S89
 
 
 class SameJobCheckTest(unittest.TestCase):
@@ -562,4 +575,77 @@ class SameJobCheckTest(unittest.TestCase):
         self.assertEqual([r.where for r in refusals(job([chk, rd]))], ["ops[1].fields[1]"])
         chk2 = dict(chk, param="MapNameTexParam")
         self.assertEqual([r.where for r in refusals(job([rd, chk2]))], ["ops[0].fields[1]"])
+
+
+
+class AboutTest(unittest.TestCase):
+    """S95 (DP34): `about`, optional, plain text of 1 to 600 characters with no control character but the newline;
+    refused like the title, its value never quoted."""
+
+    def with_about(self, about) -> bytes:
+        doc = example()
+        doc["about"] = about
+        doc["needs"] = "0.2.39"
+        return json.dumps(doc).encode()
+
+    def test_taken(self):
+        for about in ("x", "Two lines:\nthe second one.", "x" * jobs.MAX_ABOUT, "Ünïcode and § kept (WHY§93)",
+                      "<b>not markup</b> & no entity"):
+            with self.subTest(about=about[:20]):
+                self.assertEqual(check(self.with_about(about)).about, about)
+        self.assertIsNone(check(fixture("good-example.json")).about)
+        self.assertEqual(jobs.TOP_KEYS["about"], False)
+
+    def test_refused_naming_the_rule(self):
+        rule = "must be 1 to 600 characters, with no control characters but the newline"
+        self.assertEqual(jobs.ABOUT_RULE, rule)
+        for about in ("", "x" * (jobs.MAX_ABOUT + 1), "a\tb", "a\r\nb", "a\x00b", "a\x1bb", "a\x7fb", "a\x85b",
+                      "a\x9fb", 7, None, True, ["a list"], {"an": "object"}):
+            with self.subTest(about=repr(about)[:20]):
+                got = refusals(self.with_about(about))
+                self.assertEqual([(r.where, r.text, r.op) for r in got], [("about", rule, None)])
+
+    def test_never_quoted(self):
+        for v in (PLANTED + "\t", PLANTED * 40):                 # a tab; 720 characters
+            got = refusals(self.with_about(v))
+            self.assertEqual(len(got), 1)
+            self.assertNotIn(PLANTED, got[0].text + got[0].where)
+
+    def test_a_refused_about_leaves_the_rest_checked(self):
+        doc = json.loads(self.with_about("a\tb"))
+        doc["colour"] = 1
+        got = refusals(json.dumps(doc).encode())
+        self.assertEqual([r.where for r in got], ["(top level)", "about"])
+        self.assertEqual(got[0].text, "`colour` is not a key of a job (format, id, title, about, ops, needs)")
+
+    def test_the_fixture(self):
+        j = check(fixture("good-about.json"))
+        self.assertEqual((j.id, j.needs, len(j.ops)), ("test-0005-about", "0.2.39", 40))
+        self.assertIn("\n", j.about)
+
+
+class GearNamesTest(unittest.TestCase):
+    """S97 (0.2.40): weapons and armour by row id, and their name sets."""
+
+    WEAPONS = {"op": "fetch_rows", "as": "w", "param": "EquipParamWeapon", "fields": ["id"]}
+    ARMOUR = {"op": "fetch_rows", "as": "a", "param": "EquipParamProtector", "fields": ["id"]}
+
+    def test_the_gear_params_and_their_name_sets_pass(self):
+        for rows, text in ((self.WEAPONS, "weapon_names"), (self.ARMOUR, "protector_names")):
+            with self.subTest(text=text):
+                check(job([rows,
+                           {"op": "join_names", "as": "n", "rows": rows["as"], "key": "id", "text": text},
+                           {"op": "filter", "as": "f", "rows": "n", "where": {"named": True}},
+                           {"op": "count", "as": "c", "rows": "f", "by": ["layer"]},
+                           share("c", cols={"c": ["layer", "count"]})]))
+
+    def test_a_gear_field_other_than_the_row_id_is_refused(self):
+        refused = refusals(job([{"op": "fetch_rows", "as": "w", "param": "EquipParamWeapon",
+                                 "fields": ["id", "weight"]}]))
+        self.assertTrue(any(r.where.startswith("ops[0].fields") for r in refused), refused)
+
+    def test_a_name_set_datapiler_does_not_have_is_refused(self):
+        refused = refusals(job([self.WEAPONS,
+                                {"op": "join_names", "as": "n", "rows": "w", "key": "id", "text": "goods_names"}]))
+        self.assertTrue(any(r.where == "ops[1].text" for r in refused), refused)
 

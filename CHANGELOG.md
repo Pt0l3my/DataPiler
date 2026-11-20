@@ -13,6 +13,102 @@ All notable changes to DataPiler. Versions follow `VERSION` in `datapiler/__init
 
 
 
+## 0.2.41 - 2026-11-16
+
+- New: a job step, **`probe_exe`**, for EldenNet's derivation round R0 (DP36; EldenNet O89; S98). It runs EldenNet's
+  devkit tool on the game's executable with the game closed: `probe-exe --derive` with the leads file of the devkit's
+  package, then the tool's own `lint --report`. It waits while the game runs and stops the tool if the game starts or
+  you cancel. Each exit code is said in plain words, and nothing is shared when one stops the job. The tool's report
+  becomes the job's share file as the tool wrote it, once the guard passes it; `probe-exe-run.json` in the job's
+  workspace folder records the tool's and the leads file's sha256s and the exit codes. Pack 7z takes both.
+- New: the guard knows **a derivation report**: the six checks in their form for EldenNet's `derive.json`, with
+  DataPiler's own copy of the report's vocabulary. Only numbers, flags, the report's fixed words, the leads' labels
+  and code patterns of at most 64 bytes (with their wildcards, and never reading as text) pass; no path, name or text
+  has a place in it. The leads' labels are kept with the file, so Outputs and Pack check it again later.
+- New: **EldenNet devkit folder** in Settings: the folder where you unpacked EldenNet's devkit package. DataPiler never
+  bundles the tool, checks it and the leads file against the package's `SHA256SUMS` before each run, and shows the
+  folder as `<DEVKIT>` in its logs.
+- Job en-0044 (`en-0044-derive-r0.json`) runs R0 and leaves its report ready for Pack 7z; the README says, step by
+  step, what to do.
+
+## 0.2.40 - 2026-11-16
+
+- New: two text sets for jobs, **the weapon names** (`weapon_names`) and **the armour names** (`protector_names`), for
+  EldenNet's gear names (its game data's gap 3; S97). Their text entries are leads, as the character and place names'
+  were: 11 and 12 in the base game (EldenNet's research, ER01), and 321 and 421, 322 and 422 in the expansion's two
+  layers, by the pattern the character and place names follow. `join_names` checks them against your own data each
+  time, as it checks every set: if fewer than half of the rows find a name, the job stops and says so. They come from
+  the item exports you have already imported, so nothing new needs exporting.
+- New: `fetch_rows` reads **EquipParamWeapon** and **EquipParamProtector** by their row ids alone, the numbers those
+  names are kept under.
+- Jobs en-0041 (the weapon and armour rows, and the names no row uses), en-0042 (the weapon rows each layer names) and
+  en-0043 (the armour rows each layer names) use them; each shares counts only.
+
+## 0.2.39 - 2026-11-15
+
+- New: an **About** block at the top of every checked job's card, before a run, while it runs and after (DP34, S95).
+  It holds the job's own description, when its file has one; a line DataPiler counts from the job's steps, such as
+  "Reads 40 game files: m12_07_00_00 (31 models and its placement file), m12_04_00_00 (7 and its placement file).
+  Computes nothing. Writes 40 local folders, none shared."; and the codes its title and description cite (such as
+  WHY§93, DP28, S81, G27, O48, ER05§8 or en-0036), as small chips of plain text.
+- Changed: a card's Reads / Computes / Writes columns are under **Details (N steps)**, folded at first (S95). Unfolded,
+  steps whose sentences differ only by the name they quote are one item, with the count and the names in a list that
+  wraps ("40 game files … that Smithbox unpacked, …"), and steps whose sentences are the same word for word are one
+  item ("2 steps: …"). Each card's Details stays open or closed while the page is open; folding the card, **Fold all**
+  and **Unfold all** leave it as it was.
+- Changed: a finished card is short (S96). Once no step is running and none has failed, the steps' lines (op 0, op 1,
+  …) are under **Details** too, below the columns; while a job is queued, waits or runs, and when a step has failed,
+  they stay in view as before, so a running or failed step is never hidden. The **Workspace** line gives a count, such
+  as "Workspace: 40 folders, local, never shared", and its list of folders and files is under Details.
+- New: a job file may have an `about`: plain text of 1 to 600 characters, where a newline starts a new line and no
+  other control character is taken; anything else is refused, naming the rule. A job that has one says
+  `"needs": "0.2.39"`, as older versions refuse the key. The schema has it.
+
+## 0.2.38 - 2026-11-15
+
+- Changed: the top bar's server link chip says whether the link is established, not only whether it is on (DP33,
+  S94). With the link on it reads **Server link connected** (green) once Smithbox's server answers, **Server link on:
+  waiting for Smithbox** (amber) while Smithbox is not running, and **Server link on: no answer** (red) while Smithbox
+  runs but its server does not answer, or did not answer the last call; the chip's tooltip says when the server last
+  answered, or why not. While the game runs it reads **Server link on: not used while the game runs** and claims no
+  connection. The Server link card on Status has the same line under its state. The answer comes from the check
+  Status already makes every few seconds (a connection to the server's port, closed at once, never while the game
+  runs) and from the link's own calls: nothing new is sent to Smithbox.
+
+## 0.2.37 - 2026-11-15
+
+- Changed: the Update pop-up's drop zone is a box titled **Drop a DataPiler update here** with an **Add file** button,
+  shown in every state from the moment the pop-up opens (S93). A file dropped anywhere on the pop-up counts, and it
+  stops a check or a download that is under way.
+- Changed: jobs that finished since DataPiler started stay unfolded, their results in view (S92); jobs finished before
+  still start folded, and your own fold or unfold of a card still wins.
+
+## 0.2.36 - 2026-11-15
+
+- New: install from a file (DP32, S91). The Update pop-up has a zone to drop a DataPiler release zip on, and
+  **Choose file…**. DataPiler checks the zip as it checks a download (its shape, every file against the zip's own
+  manifest, the version inside, never an older one), shows its sha256 in full to compare with the one given with the
+  file, and **Install and restart** installs it as it installs a download.
+- New: **Link to Smithbox's server by itself** in Settings (DP31, S90), off at first. With it on, DataPiler switches the
+  server link on once Smithbox's server answers, the game is closed and the project folder passes its check, and again
+  if the link closed, unless you switched the link off yourself in that session. It stands for the question whether
+  Smithbox has your project open.
+- New: jobs can read the map-information images' other two colour keys, weather and mimicry, with the expansion's, and
+  share their rows for research under DP21's label (S89).
+
+## 0.2.35 - 2026-11-15
+
+- New: **Pack 7z** on a finished job's title row (DP30, S87). It packs the job's share file (only while it passes all
+  six checks now) and every file in the job's workspace folder into a 7z archive in the workspace's `packed` folder,
+  ready to upload: `<job id>.7z`, or parts `<job id>.7z.001`, `.002` and on when the archive is larger than 29.9 MB,
+  which 7-Zip opens from the first. The files go in under the job's id, with no times and nothing about the PC; each
+  archive is read back whole before it is offered, and packing a job again replaces its earlier archive. **Open packed
+  folder** opens the folder (Windows).
+- Changed: finished jobs start folded to their title row (DP30, S86). Folding or unfolding a card yourself is remembered
+  in the browser and wins.
+- Fixed: an unpack step counts the files it writes, so en-0032's steps read "2 of 2 files" (S88); the binder it opened
+  was counted as a third.
+
 ## 0.2.34 - 2026-11-15
 
 - Changed: the levels' sizes, measured on the game's own overviews (en-0029, S85): level 1 is 0.74857 of level 0 and

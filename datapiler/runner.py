@@ -32,9 +32,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Protocol, Sequence
 
-from . import catalogue, deleted, events, fields, fileio, gamefiles, hardware, jobs, logbook
+from . import catalogue, deleted, devkit, events, fields, fileio, gamefiles, hardware, jobs, logbook, sevenzip
 from . import paths as paths_mod, textures
 from . import versions
+from . import derive as derive_mod
+from . import game as game_mod
 from . import link as link_mod
 from . import smithbox as smithbox_mod
 from .guard import WORDS as GUARD_WORDS, GuardFailed
@@ -62,10 +64,12 @@ LINK_WAITS = {
     "blocked": "the game is running",
     "no_libs": "the server link needs its libraries - restart DataPiler and answer Y",
 }
+# S98 (DP36): probe_exe waits while the game runs; EldenNet's devkit reads the game's executable with the game closed
+GAME_WAIT = "the game is running: EldenNet's devkit reads the game's executable with the game closed - close the game"
 UNITS = {"fetch_rows": "rows", "check_fields": "fields", "read_map_tiles": "tiles", "check_map_tiles": "tiles",
          "make_map_overview": "tiles", "unpack_game_file": "files", "load_maps": "maps", "read_placements": "maps",
          "join_names": "rows", "unused_names": "names", "filter": "rows", "count": "rows", "distinct": "rows",
-         "write_local": "files", "write_share": "files"}
+         "write_local": "files", "write_share": "files", "probe_exe": "steps"}
 ACTIVE = ("queued", "waiting", "running")
 
 _extract_log = logbook.get("extract")
@@ -116,13 +120,20 @@ class _Card:
     pause: threading.Event = field(default_factory=threading.Event)   # S84: stop after the step running now
     pausing: bool = False
     resume_from: int | None = None  # S84: the step a resumed run goes on from, its context read from the paused file
+    packing: dict | None = None     # S87 (DP30): {done, of} bytes while its files are packed into 7z
+    packed: dict | None = None      # S87: the last pack's parts, or its error
+    about: dict | None = None       # S95 (DP34): the About block (jobs.about_block), for a checked job only
+    details: dict | None = None     # S95: the preview's columns with the same sentences merged (jobs.details)
 
     def public(self) -> dict:
         return {"id": self.id, "title": self.title, "format": jobs.FORMAT if self.format_ok else None,
                 "sha256": self.sha256, "state": self.state,
                 "refusals": [{"op": r.op, "where": r.where, "text": r.text} for r in self.refusals],
-                "preview": self.preview, "wait": self.wait, "ops": [dict(o) for o in self.ops],
+                "preview": self.preview, "about": self.about, "details": self.details,
+                "wait": self.wait, "ops": [dict(o) for o in self.ops],
                 "pausing": self.pausing,
+                "packing": dict(self.packing) if self.packing else None,
+                "packed": json.loads(json.dumps(self.packed)) if self.packed else None,
                 "result": json.loads(json.dumps(self.result)) if self.result is not None else None,
                 "added": self.added}          # S54: the page sorts the newest first by it
 
@@ -337,11 +348,15 @@ class Runner:
                  guard: "Guard", provenance: Callable[[], dict], game: Callable[[], "GameRunning"],
                  language: Callable[[], str], *, map_opengl: Callable[[], bool] = lambda: False,
                  game_dir: Callable[[], str] = lambda: "",
-                 work: Callable[[], tuple[int, int]] = lambda: (1, 0)):
+                 work: Callable[[], tuple[int, int]] = lambda: (1, 0),
+                 devkit_dir: Callable[[], str] = lambda: "",
+                 devkit_launch: Callable[[Path], list[str]] = lambda tool: [str(tool)]):
         """paths: the Paths, or a callable giving the current ones (Settings can move the workspace and the share
         folder; the folders are read afresh at each write). game_dir: the game folder in Settings, where
         unpack_game_file finds the game's Oodle library (DP28). work: the Settings caps for the image steps (cores,
-        memory MB; 0 automatic), DP29; the default, one core, keeps a runner without Settings in this process."""
+        memory MB; 0 automatic), DP29; the default, one core, keeps a runner without Settings in this process.
+        devkit_dir (S98, DP36): the EldenNet devkit folder in Settings, where probe_exe finds the devkit's tool;
+        devkit_launch: the command that starts that tool, its path as it is (tests start a stand-in through Python)."""
         self._paths = paths
         self.link = link
         self.textdb = textdb
@@ -352,9 +367,12 @@ class Runner:
         self.map_opengl = map_opengl
         self.game_dir = game_dir
         self.work = work
+        self.devkit_dir = devkit_dir
+        self.devkit_launch = devkit_launch
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._cards: dict[str, _Card] = {}
+        self._done_now: set[str] = set()   # S92: jobs whose run finished since DataPiler started
         self._order: list[str] = []                 # S74: the owner's order of the job cards
         self._queue: deque[tuple[str, str]] = deque()
         self._current: tuple[str, str] | None = None
@@ -452,8 +470,8 @@ class Runner:
         the game's text, as the workspace does). False, logged, when it cannot be written."""
         share = None
         if ctx.share is not None:
-            i, name, data, declared, coverage = ctx.share
-            share = [i, name, data.decode("utf-8"), declared, coverage]
+            i, name, data, declared, coverage, labels = ctx.share
+            share = [i, name, data.decode("utf-8"), declared, coverage, sorted(labels) if labels is not None else None]
         doc = {"format": PAUSED_FORMAT, "job": card.id, "job_sha256": ctx.job.sha256, "vkey": ctx.vkey, "at": at,
                "ops": [dict(o) for o in card.ops[:at]],
                "ctx": {"tables": {k: [[list(c) for c in cols], [list(r) for r in rows]]
@@ -489,7 +507,8 @@ class Runner:
         if sh is not None:
             cov = {t: (tuple(v) if isinstance(v, list) else v) for t, v in (sh[4] or {}).items()} \
                 if isinstance(sh[4], dict) else sh[4]
-            ctx.share = (sh[0], sh[1], sh[2].encode("utf-8"), sh[3], cov)
+            labels = frozenset(sh[5]) if len(sh) > 5 and isinstance(sh[5], list) else None
+            ctx.share = (sh[0], sh[1], sh[2].encode("utf-8"), sh[3], cov, labels)
         for k, o in enumerate(doc["ops"]):
             if k < len(card.ops):
                 card.ops[k].update({x: o.get(x) for x in ("state", "done", "of", "secs")})
@@ -625,7 +644,8 @@ class Runner:
                          refusals=[jobs.Refusal("id", "the job's folder does not match its id", None)],
                          preview=None, state="refused", ops=[], added=added)
         return _Card(id=job.id, sha256=sha, title=job.title, format_ok=True, job=job, refusals=[],
-                     preview=jobs.preview(job), state="checked", ops=_ops_public(job), added=added)
+                     preview=jobs.preview(job), state="checked", ops=_ops_public(job), added=added,
+                     about=jobs.about_block(job), details=jobs.details(job))
 
     # ------------------------------------------------------------------------------------------------ jobs
 
@@ -931,6 +951,8 @@ class Runner:
             card = self._cards.get(job_id) if isinstance(job_id, str) else None
             if card is None:
                 raise ValueError("no such job")
+            if card.packing is not None and what in ("start", "resume", "update", "remove"):
+                return {"ok": False, "error": "The job's files are being packed; wait until that finishes."}
             if what == "pause":
                 if card.state not in ("running", "waiting") or self._current != ("job", card.id):
                     return {"ok": False, "error": "Only a running job can pause."}
@@ -1027,6 +1049,91 @@ class Runner:
             events.emit("job.state", id=own(card.id), state=own("removed"))
             return {"ok": True}
 
+    # ------------------------------------------------------------------------------------------------ pack (S87)
+
+    def pack(self, job_id: str, *, share_ok: Callable[[Path], bool]) -> dict:
+        """S87 (DP30): packs a finished job's files into a 7z archive in the workspace's packed folder, cut into parts of
+        at most 29.9 MB when it is larger, ready to upload: its share file, only while it passes the guard now
+        (share_ok), and every file of its own workspace folder (local research material, which the owner shares by
+        hand). It runs in a thread of its own; the card shows its progress, then its parts. {"ok": True}, or
+        {"ok": False, "error": ...}. ValueError for an unknown id."""
+        with self._cv:
+            card = self._cards.get(job_id) if isinstance(job_id, str) else None
+            if card is None:
+                raise ValueError("no such job")
+            if card.packing is not None:
+                return {"ok": True}
+            if card.state != "done":
+                return {"ok": False, "error": "Only a finished job can be packed."}
+            share = (card.result or {}).get("share")
+            cid = card.id
+        entries: list[tuple[str, Path]] = []
+        name = share.get("name") if isinstance(share, dict) else None
+        if isinstance(name, str) and name.endswith(".json") and paths_mod.name_ok(name[:-5]):
+            f = paths_mod.share_file(self.paths, name[:-5])
+            if f.is_file():
+                if not share_ok(f):
+                    return {"ok": False, "error": "The job's share file does not pass the guard now, so nothing was "
+                                                  "packed: never share it. Running the job again writes it afresh."}
+                entries.append(("%s/%s" % (cid, f.name), f))
+        local = self.paths.local / cid
+        try:
+            if local.is_dir():
+                for f in sorted(local.rglob("*")):
+                    if f.is_file() and not f.is_symlink():
+                        entries.append(("%s/%s" % (cid, f.relative_to(local).as_posix()), f))
+            total = sum(f.stat().st_size for _, f in entries)
+        except OSError as e:
+            return {"ok": False, "error": "The job's files could not be read: %s." % logbook.why(e)}
+        if not entries:
+            return {"ok": False, "error": "This job made no files to pack."}
+        with self._cv:
+            if card.packing is not None:
+                return {"ok": True}
+            if card.state != "done":
+                return {"ok": False, "error": "Only a finished job can be packed."}
+            card.packing = {"done": 0, "of": total}
+            card.packed = None
+        events.emit("job.state", id=own(cid), state=own(card.state))
+        threading.Thread(target=self._pack_run, args=(card, entries, total), name="datapiler-pack",
+                         daemon=True).start()
+        return {"ok": True}
+
+    def _pack_run(self, card: _Card, entries: list[tuple[str, Path]], total: int) -> None:
+        t0 = time.monotonic()
+        last = [0.0]
+
+        def progress(done: int, of: int) -> None:
+            now = time.monotonic()
+            if now - last[0] >= 0.25 or done >= of:
+                last[0] = now
+                with self._cv:
+                    card.packing = {"done": done, "of": of}
+
+        try:
+            parts = sevenzip.write(entries, self.paths.packed, card.id, progress=progress)
+            sizes = [p.stat().st_size for p in parts]
+            packed = {"parts": [{"name": p.name, "size": n} for p, n in zip(parts, sizes)], "files": len(entries),
+                      "bytes": total, "size": sum(sizes), "at": time.time()}
+            _job_log.info("job %s: %s files, %s bytes, packed into %s 7z part(s), %s bytes in all, in the workspace's "
+                          "packed folder (local) in %s s", own(card.id), logbook.n(len(entries)), logbook.n(total),
+                          logbook.n(len(parts)), logbook.n(sum(sizes)), logbook.n(round(time.monotonic() - t0, 1)))
+        except sevenzip.PackError as e:
+            packed = {"error": "The files could not be packed: %s." % e, "at": time.time()}
+            _job_log.warn("job %s: its files could not be packed: %s", own(card.id), own(str(e)))
+        except OSError as e:
+            packed = {"error": "The files could not be packed: %s." % logbook.why(e), "at": time.time()}
+            _job_log.warn("job %s: its files could not be packed: %s", own(card.id), logbook.why(e))
+        except Exception as e:
+            packed = {"error": "The files could not be packed: an internal error (%s)." % logbook.why(e),
+                      "at": time.time()}
+            _job_log.error("job %s: packing failed: an internal error (%s)", own(card.id), logbook.why(e))
+        with self._cv:
+            card.packing = None
+            card.packed = packed
+            self._cv.notify_all()
+        events.emit("job.state", id=own(card.id), state=own(card.state))
+
     def cards(self) -> list[dict]:
         """/api/state "jobs", in the order they were added. S66: a result's "kept" (what Resume goes on from) is
         shown only while its file is still there."""
@@ -1038,6 +1145,7 @@ class Runner:
         pos = {cid: k for k, cid in enumerate(getattr(self, "_order", []))}
         for c, card in listed:
             c["pos"] = pos.get(c["id"])          # S74: its place in the owner's order; None: newer than the order
+            c["done_now"] = c["id"] in self._done_now and c.get("state") == "done"   # S92: finished this session
             # DP23 (S71): the version its data is of, an update line when the game has changed since, and how many
             # versions it kept reads for (two or more can be compared)
             ran = card.ran
@@ -1351,6 +1459,31 @@ class Runner:
                     return False
                 self._cv.wait(WAIT_POLL)
 
+    def _wait_for_game(self, cancel: threading.Event, say: Callable[[str | None], None]) -> bool:
+        """S98: wait until the game is closed (a check that raises counts as running). False when cancelled or
+        stopping."""
+        said: str | None = None
+        while True:
+            if cancel.is_set() or self._stopping:
+                return False
+            if not self._game_runs():
+                if said is not None:
+                    say(None)
+                return True
+            if said is None:
+                say(GAME_WAIT)
+                said = GAME_WAIT
+            with self._cv:
+                if cancel.is_set() or self._stopping:
+                    return False
+                self._cv.wait(WAIT_POLL)
+
+    def _game_runs(self) -> bool:
+        try:
+            return bool(self.game().running)
+        except Exception:
+            return True
+
     def _build_reason(self) -> str | None:
         """DP20 (S64): with the setting on, why a map job may not load maps now: Smithbox runs as its Vulkan build and
         not as its OpenGL build. None when it may, or when the process list cannot be read."""
@@ -1475,6 +1608,7 @@ class Runner:
                                    "changes": changes}
                     card.ran = ran
                     card.state = "done"
+                    self._done_now.add(card.id)    # S92: the page leaves it unfolded this session
                     jl.info("done in %s s: %s local files, %s", logbook.n(secs), logbook.n(len(ctx.local)),
                             own("a share file" if share else "no share file"))
                 elif outcome == "paused":
@@ -1561,6 +1695,8 @@ class Runner:
         try:
             local = [(paths_mod.local_file(p, ctx.job.id, o["name"]), o["name"] + ".json")
                      for o in ctx.job.ops if o["op"] == "write_local"]
+            if any(o["op"] == "probe_exe" for o in ctx.job.ops):        # S98: the run's record
+                local.append((paths_mod.local_file(p, ctx.job.id, jobs.PROBE_RUN), jobs.PROBE_RUN + ".json"))
             if ctx.job.share_name:
                 share = (paths_mod.share_file(p, ctx.job.share_name), ctx.job.share_name + ".json")
                 entry = counts_entry(p.share_counts, share[1])
@@ -1715,6 +1851,8 @@ class Runner:
                     return self._halt(ctx, i)
                 if op == "load_maps" and not ctx.builtin and not self._wait_for_build(ctx):
                     return self._halt(ctx, i)
+                if op == "probe_exe" and not self._wait_for_game(ctx.cancel, ctx.on_wait):
+                    return self._halt(ctx, i)
                 ctx.on_op(i, "running", 0, None, None)
                 t0 = time.monotonic()
                 try:
@@ -1751,9 +1889,10 @@ class Runner:
                                  logbook.n(secs))
                 break
         if ctx.share is not None:
-            i, name, data, declared, coverage = ctx.share
+            i, name, data, declared, coverage, labels = ctx.share
             try:
-                written = self.guard.write(self.paths.share, name, data, declared=declared, coverage=coverage)
+                written = self.guard.write(self.paths.share, name, data, declared=declared, coverage=coverage,
+                                           labels=labels)
             except GuardFailed as e:
                 ctx.share = None
                 ctx.on_op(i, "failed", 0, None, None)
@@ -1765,7 +1904,7 @@ class Runner:
                                   "check": None, "where": None}
             try:
                 from .guard import record_counts
-                record_counts(self.paths.share_counts, written.name, written.sha256, coverage)
+                record_counts(self.paths.share_counts, written.name, written.sha256, coverage, labels)
             except (OSError, ValueError) as e:
                 ctx.log.warn("the share file's row counts could not be kept, so Outputs lists it apart until the job "
                              "runs again: %s", logbook.why(e))
@@ -1786,6 +1925,8 @@ class Runner:
             return self._unpack_game_file(ctx, i, o)
         if op == "make_map_overview":
             return self._make_map_overview(ctx, i, o)
+        if op == "probe_exe":
+            return self._probe_exe(ctx, i, o)
         if op == "load_maps":
             maps = self._resolve_maps(o["maps"])
             t0 = time.monotonic()
@@ -1988,7 +2129,116 @@ class Runner:
                      "folder (local, never shared)", i, own(name), logbook.n(len(found)), logbook.n(size),
                      logbook.n(len(rows) - 1), logbook.n(binders), logbook.n(packed["dflt"]), logbook.n(packed["krak"]),
                      logbook.n(written[0]), logbook.n(written[1]))
-        return written[0], len(rows)
+        return written[0], written[0]      # S88: the files written, of the files to write
+
+    def _probe_exe(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
+        """S98 (DP36; EldenNet O89): the derivation's offline round R0. EldenNet's devkit tool, from the folder in
+        Settings and checked by its SHA256SUMS, reads the game's executable with the game closed and writes its report
+        into an empty folder of the workspace; its lint checks the report; the guard checks it in its form for a
+        derivation report; it becomes the job's share file as the tool wrote it, with a local record of the run. Three
+        steps: the tool, its lint, the guard. No path reaches a log line, an event or a file; the tool's own lines
+        reach the job's log only in their own shape (devkit.shown)."""
+        steps = 3
+        ctx.on_op(i, "running", 0, steps, None)
+        if ctx.builtin:
+            raise _Fail("probe_exe runs in a job of the owner's, never in Extract")
+        try:
+            kit = devkit.locate(self.devkit_dir() or "")
+        except devkit.DevkitError as e:
+            raise _Fail(e.why) from None
+        exe = game_mod.exe_path(self.game_dir() or "")
+        if exe is None:
+            raise _Fail("eldenring.exe is not in the game folder set in Settings: set the game's Game folder there")
+        work = self.paths.workspace / devkit.WORK_DIR
+        out = work / devkit.OUT
+        self._clear_work(work)
+        try:
+            work.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise _Fail("the devkit's working folder could not be made in the workspace: %s" % logbook.why(e)) from None
+        ctx.log.info("op %s probe_exe: EldenNet's devkit tool (sha256 %s), with its leads (sha256 %s, %s labels), "
+                     "reads the game's executable with the game closed", i, own(kit.tool_sha256[:12]),
+                     own(kit.leads_sha256[:12]), logbook.n(len(kit.labels)))
+        try:
+            probe = self._devkit_run(ctx, kit, ["probe-exe", str(exe), "--derive", "--leads", str(kit.leads), "--out",
+                                                str(out)], work, devkit.PROBE_TIMEOUT)
+            self._devkit_lines(ctx, i, probe)
+            if probe.code not in (0, 1):
+                raise _Fail(devkit.probe_words(probe.code))
+            try:
+                data = fileio.read_limited(out, derive_mod.MAX_BYTES)
+            except fileio.TooLarge:
+                raise _Fail("the devkit's report is larger than 256 KiB, more than a derivation report holds, so "
+                            "nothing is shared") from None
+            except OSError as e:
+                raise _Fail("the devkit tool ended (exit code %d) but its report could not be read: %s"
+                            % (probe.code, logbook.why(e))) from None
+            ctx.on_op(i, "running", 1, steps, None)
+            lint = self._devkit_run(ctx, kit, ["lint", "--report", str(out)], work, devkit.LINT_TIMEOUT)
+            self._devkit_lines(ctx, i, lint)
+            if lint.code != 0:
+                raise _Fail(devkit.lint_words(lint.code))
+        finally:
+            self._clear_work(work)
+        ctx.on_op(i, "running", 2, steps, None)
+        results = self.guard.check(data, declared={}, coverage={}, labels=kit.labels)
+        if not all(r.ok for r in results):
+            # The guard logs the refusal and writes nothing.
+            self.guard.write(self.paths.share, o["name"], data, declared={}, coverage={}, labels=kit.labels)
+        self._before_write(ctx)
+        record = {"format": "datapiler-probe-exe/1", "job": {"id": ctx.job.id, "sha256": ctx.job.sha256},
+                  "datapiler": jobs.VERSION, "date": time.strftime("%Y-%m-%d"),
+                  "tool": {"sha256": kit.tool_sha256}, "leads": {"sha256": kit.leads_sha256, "labels": len(kit.labels)},
+                  "probe_exit": probe.code, "lint_exit": lint.code, "complete": probe.code == 0,
+                  "report": {"name": o["name"] + ".json", "size": len(data), "sha256": fileio.sha256_bytes(data)}}
+        try:
+            path = paths_mod.local_file(self.paths, ctx.job.id, jobs.PROBE_RUN)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fileio.write_atomic(path, (json.dumps(record, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+        except (OSError, ValueError) as e:
+            raise _Fail("the run's record could not be written to the workspace: %s" % logbook.why(e)) from None
+        ctx.local.append(jobs.PROBE_RUN + ".json")
+        ctx.share = (i, o["name"], data, {}, {}, kit.labels)
+        ctx.log.info("op %s probe_exe: the report (%s bytes) is %s; the devkit's lint and the guard passed it",
+                     i, logbook.n(len(data)), own("complete" if probe.code == 0 else
+                                                  "incomplete: what the in-game round R1 finds is listed in it"))
+        return steps, steps
+
+    def _devkit_run(self, ctx: _Ctx, kit: "devkit.Kit", args: list[str], work: Path, timeout: float) -> "devkit.Result":
+        """One run of the devkit's tool (devkit.run), its stops in DataPiler's words."""
+        try:
+            return devkit.run(list(self.devkit_launch(kit.tool)) + args, cwd=work, cancel=ctx.cancel,
+                              game_running=self._game_runs, timeout=timeout)
+        except devkit.Stopped as e:
+            if e.reason == "cancelled":
+                raise _Cancelled() from None
+            if e.reason == "game":
+                raise _Fail("the game started while EldenNet's devkit read its executable, so the tool was stopped and "
+                            "nothing is shared: close the game, then press Start again") from None
+            raise _Fail("EldenNet's devkit tool did not finish within %s minutes and was stopped"
+                        % logbook.n(int(timeout // 60))) from None
+        except OSError as e:
+            raise _Fail("EldenNet's devkit tool could not be started: %s" % logbook.why(e)) from None
+
+    @staticmethod
+    def _devkit_lines(ctx: _Ctx, i: int, result: "devkit.Result") -> None:
+        lines, left = devkit.shown(result.out + result.err)
+        for line in lines:
+            ctx.log.info("op %s probe_exe: the devkit says: %s", i, line)
+        if left:
+            ctx.log.info("op %s probe_exe: %s more lines of the devkit's are not shown", i, logbook.n(left))
+
+    @staticmethod
+    def _clear_work(work: Path) -> None:
+        """Empties the devkit's working folder: the tool's report and its `.part` are gone once the share file holds
+        what passed (or nothing did)."""
+        try:
+            if work.is_dir():
+                for f in work.iterdir():
+                    if f.is_file() or f.is_symlink():
+                        f.unlink()
+        except OSError:
+            pass
 
     def _make_map_overview(self, ctx: _Ctx, i: int, o: dict) -> tuple[int, int | None]:
         """S75: one PNG of a sheet's level of the exported map tiles, each with every piece revealed (S77), written to
@@ -2410,7 +2660,7 @@ class Runner:
         if not all(r.ok for r in results):
             # The guard logs the refusal and writes nothing.
             self.guard.write(self.paths.share, o["name"], data, declared=declared, coverage=coverage)
-        ctx.share = (i, o["name"], data, declared, coverage)
+        ctx.share = (i, o["name"], data, declared, coverage, None)
         return 1, 1
 
     @staticmethod

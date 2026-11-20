@@ -28,3 +28,9 @@
 .up-link { display: inline-block; color: var(--text); background: var(--card2); border: 1px solid var(--edge);
            border-radius: 7px; padding: 5px 12px; text-decoration: none; }
 .up-link:hover { border-color: var(--acc); }
+/* DP32 (S91, S93): the zone for a release zip given by hand: a title and an Add file button */
+.up-drop { margin-top: 14px; padding: 16px 12px; border: 1px dashed var(--acc); border-radius: 10px; text-align: center; }
+.up-drop.up-over { background: rgba(181, 243, 32, .08); border-style: solid; }
+.up-drop-title { font-weight: 700; color: var(--acc); }
+.up-drop-act { margin-top: 10px; }
+.up-sha { word-break: break-all; font-size: 12px; }

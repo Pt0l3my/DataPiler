@@ -67,6 +67,12 @@ and what changed in [CHANGELOG.md](CHANGELOG.md).
   so and offers **R** to go back to the version you had, with its Python environment. It never goes back by itself.
 - **If the Python libraries changed**, the window asks Y again after the restart, as at the first start; the new
   `.venv` is built beside the old one, which stays until the new version's page is up.
+- **From a file:** the pop-up also takes a DataPiler release zip given by hand: drop it on the pop-up (its box reads
+  **Drop a DataPiler update here**), or press **Add file**. It is checked as a download is (its shape, every file
+  against the zip's own manifest, the version
+  inside, never older than the one running), and the pop-up shows its sha256 in full: compare it with the one given
+  with the file before you press **Install and restart**, which then works as above. No release vouches for a file
+  given by hand.
 - **At each start** DataPiler checks its own files against the release's manifest and says in the log which differ.
   It repairs nothing. A copy from the repository has no manifest: it can check for a release, but installs one only by
   hand.
@@ -106,6 +112,22 @@ starts. Smithbox runs that server while `System_Enable_Soapstone_Server` is `tru
 PC can call it while it runs: when you are done, set the switch to `false` in that file and restart Smithbox.
 DataPiler reads the file and never writes it.
 
+With **Link to Smithbox's server by itself** on (Settings; off at first), DataPiler switches the link on for you once
+Smithbox's server answers, the game is closed and the project folder passes its check, at start or later, and again
+if the link has closed. It never does so after you switched the link off yourself in that session. The setting stands
+for the question whether Smithbox has your project open, so turn it on only if Smithbox always opens that project;
+the link's other rules stay as they are.
+
+The **Server link** chip in the top bar says whether the link is established, not only whether it is on. Off, it
+reads **Server link off**. On, it reads **Server link connected** (green) once Smithbox's server answers, **Server
+link on: waiting for Smithbox** (amber) while Smithbox is not running, and **Server link on: no answer** (red) while
+Smithbox runs but its server does not answer, or did not answer the link's last call. Hold the mouse over the chip to
+see when the server last answered, or why it did not (for example, that its switch in `Startup.json` is off); the
+Server link card on Status shows the same line. While the game runs the chip reads **Server link on: not used while
+the game runs**: the link makes no call and checks nothing then. DataPiler learns all this from the check it makes
+every few seconds while its page is open (a connection to the server's port, closed at once, with nothing sent) and
+from the link's own calls; it sends Smithbox nothing new.
+
 **Map jobs** need Smithbox's Visual Map Editor enabled in the project (Projects tab › Available Editors, then Update
 Project and a restart of Smithbox). While a job loads maps, keep Smithbox's window up, not minimised, with its Map
 Editor tab in front: Smithbox takes its load commands only then. The job card shows the maps loaded so far and a guess
@@ -127,6 +149,19 @@ change you just made may not show yet.
 everything the job has done in the workspace; **Resume job** goes on from the next step, also after DataPiler was
 closed, as long as the job file, the game and Smithbox are the same. **Stop** cuts the step short instead, and asks
 first.
+
+Jobs that finished before DataPiler started start folded to their title row; a job that finishes while it runs stays
+unfolded, its results in view. Fold or unfold a card yourself and DataPiler remembers that for the job in this browser.
+
+Each card opens with an **About** block: the job's own description, when its file has one, a line DataPiler counts
+from the job's steps (what it reads, computes and writes, the game files grouped by map, and whether anything is
+shared), and the codes its title and description cite, such as WHY§93, DP28 or en-0036, as small chips. What each
+step reads, computes and writes is under **Details**, folded at first; unfolded, steps that say the same of different
+files are one item, with their count and the files' names. Once no step is running and none has failed, the steps'
+own lines are under Details too, and the **Workspace** line counts the job's folders and files there ("Workspace: 40
+folders, local, never shared"), their list under Details; while a job runs, or after a step failed, the steps' lines
+stay in view. A card's Details stays open or closed while the page is open, whatever you fold or unfold around it. A job's description is its file's `about`: plain text of up to 600
+characters, where a newline starts a new line; a job that has one says `"needs": "0.2.39"`.
 
 A map job keeps each map's characters as soon as it has read them, so if Smithbox, the graphics driver or DataPiler
 stops partway, its card shows the saved progress and **Resume job** goes on where it stopped; **Start again** asks
@@ -214,12 +249,53 @@ folder, never inside the game's own folder. A job with `unpack_game_file` names 
 it there; DataPiler opens it on your PC and writes its inner files to the job's folder in the workspace. Files packed
 with Oodle (KRAK) are opened with the game's own `oo2core` library from your Game folder, which DataPiler loads while
 it runs and never copies; it never decrypts the game's archives, and refuses to open a key or the regulation. Like
-the rest of the workspace, the unpacked files are game files: they stay on your PC.
+the rest of the workspace, the unpacked files are game files: they stay on your PC, unless you pack them yourself to
+share for research (below).
+
+## Packing a finished job's files
+
+A finished job's card has **Pack 7z** on its title row, folded or not. It packs the job's share file (only while it
+passes all six checks) and every file in the job's workspace folder into a 7z archive in the workspace's `packed`
+folder: `<job id>.7z`, or, when the archive is larger than 29.9 MB, parts `<job id>.7z.001`, `.002` and on, which
+7-Zip opens from the first with the others beside it. The files go in under the job's id and nothing else: no folder
+above the job's, no times. Each archive is read back whole before it is offered, and packing the job again replaces
+it. **Open packed folder** opens the folder (Windows). The workspace's files are game files and research material:
+share them only for the research they were made for, never publicly.
+
+## EldenNet's derivation round R0 (EldenNet's devkit, with the game closed)
+
+EldenNet needs a few facts about your build of the game before it can run in it: where certain parts of the game's
+program are. The first round, R0, finds what it can from the game's executable file alone, with the game closed
+(DP36; EldenNet's decision O89). DataPiler runs EldenNet's own devkit tool for it; it never bundles that tool.
+
+1. Unpack `EldenNet-devkit-R0.zip` into a folder of your own, outside the game's folder. It holds
+   `eldennet-engine.exe`, `gal\leads.toml` (what to look for: names and shapes, never bytes), `README-R0.txt` and
+   `SHA256SUMS`. Leave its files as they are: DataPiler checks the tool and the leads file against `SHA256SUMS`
+   before it runs anything.
+2. In Settings, set **EldenNet devkit folder** to that folder and press Save. The game folder must be set too.
+3. Close the game. Drop the job `en-0044-derive-r0.json` on Jobs and press **Start**. While the game runs, the job
+   waits and says so; if the game starts during the run, the tool is stopped and nothing is shared.
+4. The job runs the tool's `probe-exe` on `eldenring.exe`, then the tool's own `lint` on its report, then the guard.
+   It takes a minute or two. The card ends as done, and the log has the tool's one-line summary.
+5. Press **Pack 7z** on the card and send the archive from the packed folder. It holds two files: the share file
+   `derive-r0.json` (the tool's report as it wrote it: numbers, fixed words, the leads' labels and code patterns of
+   at most 64 bytes with their addresses wildcarded) and `probe-exe-run.json` (which tool and leads made it, by
+   their sha256s, and the exit codes).
+
+What the tool does: it reads the executable file and the leads file, writes one report into an empty folder of the
+workspace, and ends. It never starts the game, never reads the game's memory, never changes a game file and uses no
+network. A report that is not complete is normal in R0: what is missing is listed in it for the in-game round, R1.
+If the job stops, its card says why in plain words: for example the devkit folder not set, a file that does not match
+`SHA256SUMS`, the tool's exit code (2 to 6, each named), or the lint or the guard refusing the report; nothing is
+shared then.
 
 ## What it will and won't do
 
 - It reads data from your own game through Smithbox. It never bundles, downloads or redistributes Smithbox or any
   game file, and uses none of Smithbox's me3 features.
+- Of other projects' programs it runs only EldenNet's devkit tool: from the folder you set, in a job's `probe_exe`
+  step, with the game closed, and only once the tool matches its package's `SHA256SUMS` (DP36). It never bundles
+  that tool.
 - The game's text and data stay on your PC, in the **workspace** folder, which Settings refuses to put on a network
   share or a mapped network drive. What DataPiler writes for sharing, in the **share** folder, holds numbers, counts
   and its own labels only, and ids only for rows a job picked for a purpose: the named characters, matched with their
@@ -242,11 +318,12 @@ the rest of the workspace, the unpacked files are game files: they stay on your 
   DataPiler's own folder.
 - **Mask paths on this page** (Settings, off by default) shows your folders on the page as the placeholders the logs
   use, for screenshots, the folder names the picker lists included.
-- The names' text ids (which part of Smithbox's text exports holds the character and place names) come from
-  EldenNet's research and are checked against your own data each time a job joins names: if fewer than half of the
-  names it looks up are found there, the job stops and says so.
+- The names' text ids (which part of Smithbox's text exports holds the character, place, weapon and armour names)
+  come from EldenNet's research and are checked against your own data each time a job joins names: if fewer than
+  half of the names it looks up are found there, the job stops and says so.
 - Its page answers only on `127.0.0.1`, to itself, with a token made at each start, and loads nothing from
-  elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<WORKSPACE>`).
+  elsewhere. Its logs show your folders as placeholders (`<GAME>`, `<SMITHBOX>`, `<PROJECT>`, `<DEVKIT>`,
+  `<WORKSPACE>`).
 - Jobs are data, never code: a closed set of operations, checked when they are dropped, run only on Start.
 - It writes only inside its own folder, and into the workspace and share folders if you move them in Settings. Its
   one use of the internet after the first start is the Update… button, when you press it, and pip after your Y when

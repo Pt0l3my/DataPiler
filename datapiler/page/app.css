@@ -96,6 +96,22 @@ tr.off td { opacity: .5; }
 .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
 .cols3 b { display: block; color: var(--mute); font-size: 11.5px; font-weight: 600; margin-bottom: 3px; }
 .cols3 ul { margin: 0; padding-left: 16px; }
+/* S95 (DP34): a card's About block, and its Reads / Computes / Writes folded under Details */
+.jabout { margin-top: 10px; }
+.jabout > b { display: block; color: var(--mute); font-size: 11.5px; font-weight: 600; margin-bottom: 3px; }
+.jabout-text { white-space: pre-line; margin-bottom: 4px; }
+.jrefs { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 6px; font-size: 12px; }
+.jref { font-size: 11px; padding: 1px 7px; border-radius: 6px; border: 1px solid var(--edge); color: var(--mute); white-space: nowrap; }
+.jdetails { margin-top: 8px; }
+.jdetails .cols3 { margin-bottom: 4px; }
+button.dtoggle { background: none; border: none; padding: 2px 0; color: var(--mute); font-size: 12px; }
+button.dtoggle:hover { color: var(--text); }
+.jnames { display: flex; flex-wrap: wrap; gap: 1px 8px; margin: 3px 0; }
+.jnames code { font-size: 11px; overflow-wrap: anywhere; }
+/* S96: under Details, after the columns: the steps' lines once nothing in them is live, and the workspace's list */
+.jdsec { margin: 8px 0 4px; }
+.jdsec > b { display: block; color: var(--mute); font-size: 11.5px; font-weight: 600; margin-bottom: 3px; }
+.jdsec .oplines { margin-top: 0; }
 .refusals { margin-top: 8px; color: var(--err); }
 .refusals div { padding: 1px 0; }
 .wait { margin-top: 8px; color: var(--warn); }

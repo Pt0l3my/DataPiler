@@ -100,6 +100,10 @@ _INT_VALUES = frozenset(("s8_value", "u8_value", "s16_value", "u16_value", "s32_
                          "u64_value"))
 _INT32 = (-(2 ** 31), 2 ** 31 - 1)
 
+# S94 (DP33): the codes of a call that Smithbox's server gave no answer to: no connection, or none within
+# Link.call_timeout. Any other code is the server's own answer, an error but an answer.
+NO_ANSWER = ("UNAVAILABLE", "DEADLINE_EXCEEDED")
+
 _CHANNEL_OPTIONS = (
     ("grpc.enable_http_proxy", 0),                      # straight to 127.0.0.1, never through a proxy
     ("grpc.enable_retries", 0),
@@ -865,6 +869,7 @@ class Link:
         except Exception as e:
             secs = time.monotonic() - t0
             state = self.state
+            code: str | None = None     # None: the switch or the game ended the call, not Smithbox's server
             if state == "blocked":
                 err: LinkError = LinkBlocked(_BLOCKED)
             elif state != "on":
@@ -873,7 +878,8 @@ class Link:
                 code = _code_name(e) if isinstance(e, grpc.RpcError) else "UNKNOWN"
                 err = LinkCallError(method, code)
                 _log.warn("%s failed: %s", own(method), own(code))
-            events.emit("link.call", method=own(method), n=0, secs=secs, ok=False)
+            events.emit("link.call", method=own(method), n=0, secs=secs, ok=False,
+                        code=own(code) if code is not None else None)
             raise err from None
         secs = time.monotonic() - t0
         try:

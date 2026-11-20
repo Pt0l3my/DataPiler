@@ -185,20 +185,23 @@ function showTab(t) {
 const PILLS = {
   smithbox: { running: ["ok", "Smithbox running"], not_running: ["warn", "Smithbox not running"], not_found: ["err", "Smithbox not found"] },
   game: { closed: ["ok", "Game closed"], running: ["err", "Game running"], unknown: ["warn", "Game: not known"] },
-  link: { off: ["mute", "Server link off"], on: ["warn", "Server link on (this session)"], blocked: ["err", "Server link blocked"],
-          no_libs: ["mute", "Server link: no libraries"] },
+  // S94 (DP33): with its switch on, the link's chip says whether the link is established; never while the game runs
+  link: { off: ["mute", "Server link off"], no_libs: ["mute", "Server link: no libraries"],
+          waiting: ["warn", "Server link on: waiting for Smithbox"], connected: ["ok", "Server link connected"],
+          no_answer: ["err", "Server link on: no answer"], blocked: ["err", "Server link on: not used while the game runs"] },
 };
-function pill(id, kind, value) {
+function pill(id, kind, value, why) {
   const p = (PILLS[kind] || {})[value] || ["mute", kind];
   const e = $(id);
   e.className = "pill " + p[0];
   e.textContent = "● " + p[1];
+  e.title = why ? String(why) : "";
 }
 function paintTop(s) {
   $("ver").textContent = String(s.version || "");          // the full version, 0.2.8 not 0.2 (S56)
   pill("pSmithbox", "smithbox", s.pills.smithbox);
   pill("pGame", "game", s.pills.game);
-  pill("pLink", "link", s.pills.link);
+  pill("pLink", "link", s.pills.link, s.pills.link_why);
   $("block").hidden = !s.block;
   $("block").textContent = s.block || "";
 }
@@ -252,6 +255,9 @@ function cardFor(kind, body) {
 }
 const LINK_WORDS = { off: "Off", on: "On for this session", blocked: "Blocked - the game is running",
                      no_libs: "Off - the server link needs its libraries (grpcio and protobuf, and typing-extensions, which grpcio needs): restart DataPiler and answer Y" };
+// S94 (DP33): the line under it while the link is on, as the top bar's chip has it
+const SERVER_WORDS = { connected: [true, "Connected: Smithbox's server answers"], waiting: ["warn", "Waiting for Smithbox"],
+                       no_answer: [false, "No answer from Smithbox's server"] };
 function linkCard(l, session) {
   const out = [];
   const row = el("div", "check");
@@ -263,6 +269,13 @@ function linkCard(l, session) {
     add(row, el("span", "sub", parts.join(" · ")));
   }
   out.push(row);
+  const sv = l.state === "on" && l.server ? SERVER_WORDS[l.server.state] : null;
+  if (sv) {
+    const r = el("div", "check");
+    add(r, mark(sv[0]), el("span", null, sv[1]));
+    if (l.server.why) add(r, el("span", "sub", l.server.why));
+    out.push(r);
+  }
   if ((l.state === "off" || l.state === "no_libs") && l.would_call && l.would_call.length) {
     const w = el("div", "check");
     add(w, mark(null), el("span", null, "Switched on, it would call:"));
@@ -407,12 +420,86 @@ function jobPill(j) {
   if (j.state === "paused") return el("span", "pill warn", "paused");
   return el("span", "pill mute", j.state);
 }
-function listCol(title, items) {
+// S95 (DP34): the About block at the top of a checked job's card, before a run, during it and after: the job's own
+// words (its `about`), DataPiler's line of what it reads, computes and writes, and the codes its title and words cite,
+// as plain chips (no link: the page asks nothing of elsewhere).
+function aboutBlock(a) {
+  const d = el("div", "jabout");
+  add(d, el("b", null, "About"));
+  if (a.text) add(d, el("div", "jabout-text", a.text));
+  add(d, el("div", "jabout-sum", a.summary));
+  if (a.refs && a.refs.length) {
+    const r = el("div", "jrefs");
+    add(r, el("span", "mute", "References"));
+    a.refs.forEach((x) => { const s = el("span", "jref", x); s.title = "Cited in the job's title or description"; add(r, s); });
+    add(d, r);
+  }
+  return d;
+}
+// S95: one item of Details' columns: a step's sentence, or steps that say the same of different names merged, their
+// names in a compact list that wraps
+function detailItem(it) {
+  const li = add(el("li"), phText(it.text));
+  if (it.names) {
+    const ns = el("div", "jnames");
+    it.names.forEach((n) => add(ns, el("code", null, n)));
+    add(li, ns, phText(it.tail));
+  }
+  return li;
+}
+function detailCol(title, items) {
   const d = el("div"); add(d, el("b", null, title));
   const ul = el("ul");
-  (items || []).forEach((t) => add(ul, add(el("li"), phText(t))));
+  (items || []).forEach((it) => add(ul, detailItem(it)));
   if (!items || !items.length) add(ul, el("li", "mute", "nothing"));
   return add(d, ul);
+}
+// S95: Reads / Computes / Writes under one Details toggle inside the card, folded by default. Whether a card's Details
+// is open is kept while this page is open (not saved), by the same key as the card's fold. It is not DP30's fold of
+// whole cards (S54, S86, S92): folding a card, Fold all and Unfold all leave it as it was. S96: under the columns,
+// the steps' lines once they have nothing live to show (liveSteps), and the list of the job's workspace folders and
+// files, which its Workspace line counts.
+const DETAILS_OPEN = {};
+function detailsBlock(j, steps, local) {
+  const key = foldKey(j), n = (j.ops || []).length;
+  const words = "Details (" + n + (n === 1 ? " step)" : " steps)");
+  const box = el("div", "jdetails");
+  const b = el("button", "dtoggle");
+  b.title = "Show or hide what each step reads, computes and writes" + (steps ? ", how each step went" : "") +
+    (local ? " and the job's workspace folders and files" : "");
+  const body = el("div", "jdbody");
+  const cols = el("div", "cols3");
+  add(cols, detailCol("Reads", j.details.reads), detailCol("Computes", j.details.computes), detailCol("Writes", j.details.writes));
+  add(body, cols);
+  if (steps) add(body, add(el("div", "jdsec"), el("b", null, "Steps"), steps));
+  if (local) {
+    const ns = el("div", "jnames");
+    local.forEach((x) => add(ns, el("code", null, x)));
+    add(body, add(el("div", "jdsec"), el("b", null, "Workspace"), ns));
+  }
+  const show = (on) => {
+    body.hidden = !on;
+    b.textContent = (on ? "▾ " : "▸ ") + words;
+    b.setAttribute("aria-expanded", on ? "true" : "false");
+  };
+  show(!!DETAILS_OPEN[key]);
+  b.addEventListener("click", () => { DETAILS_OPEN[key] = body.hidden; show(DETAILS_OPEN[key]); });
+  return add(box, b, body);
+}
+// S96: the steps' lines stay in view while the job is queued, waits or runs, and while a step is running or has
+// failed; otherwise they are under Details.
+function liveSteps(j) {
+  return ["queued", "waiting", "running"].indexOf(j.state) >= 0 ||
+    (j.ops || []).some((o) => o.state === "running" || o.state === "failed");
+}
+// S96: "40 folders", "2 folders and 3 files": the job's workspace outputs (result.local: a folder is
+// "unpacked/<file>/ (N files)", a file "<name>.json" or "<name>.png")
+function localCount(local) {
+  const folders = local.filter((x) => String(x).indexOf("/") >= 0).length, files = local.length - folders;
+  const parts = [];
+  if (folders) parts.push(fmtN(folders) + (folders === 1 ? " folder" : " folders"));
+  if (files) parts.push(fmtN(files) + (files === 1 ? " file" : " files"));
+  return parts.join(" and ");
 }
 function opLine(o) {
   const parts = ["op " + o.n + " " + o.op + ": " + o.state];
@@ -496,12 +583,64 @@ function openCompare(j) {
   }).catch((e) => note(e.message));
 }
 // S54: each card can fold to its title row; folded cards are remembered in this browser by the job's sha256 or id.
+// S86 (the owner's request of 2026-11-15): a finished job starts folded; the owner's own fold or unfold of a card is
+// remembered and wins. S92 (the owner's, the same day): a job that finished since DataPiler started stays unfolded,
+// its results in view.
 function foldKey(j) { return String(j.sha256 || j.id || ""); }
-function folded() { try { return new Set(JSON.parse(store.get("dp.jobs.folded") || "[]")); } catch (e) { return new Set(); } }
+function keySet(name) { try { return new Set(JSON.parse(store.get(name) || "[]")); } catch (e) { return new Set(); } }
+function folded() { return keySet("dp.jobs.folded"); }
+function unfolded() { return keySet("dp.jobs.unfolded"); }
+function isFolded(j) {
+  const key = foldKey(j);
+  if (unfolded().has(key)) return false;
+  return folded().has(key) || (j.state === "done" && !j.done_now);
+}
 function setFolded(key, on) {
-  const s = folded();
-  if (on) s.add(key); else s.delete(key);
-  store.set("dp.jobs.folded", JSON.stringify([...s].slice(-200)));
+  const f = folded(), u = unfolded();
+  if (on) { f.add(key); u.delete(key); } else { f.delete(key); u.add(key); }
+  store.set("dp.jobs.folded", JSON.stringify([...f].slice(-200)));
+  store.set("dp.jobs.unfolded", JSON.stringify([...u].slice(-200)));
+}
+// S87 (DP30): a finished job's files, packed into 7z to upload: its share file and its workspace folder, in parts of
+// at most 29.9 MB when larger. The button sits on the title row, so a folded card has it too.
+const PACKED_SEEN = {};
+function packBits(j, head) {
+  const has = j.result && (j.result.share || (j.result.local && j.result.local.length));
+  if (j.state !== "done" || !has) return;
+  const pk = j.packing;
+  const b = el("button", "sm", pk ? "Packing… " + (pk.of ? Math.floor(100 * pk.done / pk.of) : 0) + "%" : "Pack 7z");
+  b.title = "Pack this job's share file and its workspace folder into a 7z archive in the workspace's packed folder, " +
+    "in parts of up to 29.9 MB when it is larger, ready to upload. The workspace files are research material: share them only for this project's research.";
+  if (pk) b.disabled = true;
+  b.addEventListener("click", () => {
+    api("/api/jobs/act", { id: j.id, what: "pack", confirm_maps: null }).then((r) => {
+      if (!r.ok) note(r.error || "Not packed.");
+      poll();
+    }).catch((e) => note(e.message));
+  });
+  add(head, b);
+  const done = j.packed;
+  if (!done || pk) return;
+  if (done.error) {
+    const bad = el("span", "pill err", "not packed");
+    bad.title = done.error;
+    add(head, bad);
+  } else {
+    const n = done.parts.length;
+    const pill = el("span", "pill ok", "packed: " + (n === 1 ? "1 part" : n + " parts") + ", " + fmtSize(done.size));
+    pill.title = done.parts.map((x) => x.name + " - " + fmtSize(x.size)).join("\n");
+    add(head, pill);
+    const ob = el("button", "sm", "Open packed folder");
+    ob.title = "Open the workspace's packed folder (Windows)";
+    ob.addEventListener("click", () => api("/api/open", { area: "packed" }).then((r) => { if (!r.ok) note(r.error || "Not opened."); }).catch((e) => note(e.message)));
+    add(head, ob);
+  }
+  if (PACKED_SEEN[j.id] !== done.at) {
+    if (PACKED_SEEN[j.id] !== undefined || Date.now() / 1000 - done.at < 30) {
+      note(done.error ? done.error : "Packed " + j.id + ": " + (done.parts.length === 1 ? done.parts[0].name : done.parts.length + " parts, " + done.parts[0].name + " first") + ", " + fmtSize(done.size) + ", in the workspace's packed folder.", !done.error);
+    }
+    PACKED_SEEN[j.id] = done.at;
+  }
 }
 // S54: where the job is, as a step of its ops and a share of the whole, for every state that has ops.
 function jobProgress(j) {
@@ -519,7 +658,7 @@ function jobProgress(j) {
 }
 function jobCard(j) {
   const key = foldKey(j);
-  const c = el("div", "jobcard" + (folded().has(key) ? " folded" : ""));
+  const c = el("div", "jobcard" + (isFolded(j) ? " folded" : ""));
   c.dataset.jid = j.id;
   const head = el("div", "jhead");
   // S74: drag the grip to move the card above, below or between others; or focus it and use the arrow keys
@@ -544,7 +683,7 @@ function jobCard(j) {
     if (DRAG) { DRAG = null; JOBS_KEY = ""; if (ST) paintJobs(ST); }
   });
   add(head, grip);
-  const fold = el("button", "fold", folded().has(key) ? "▸" : "▾");
+  const fold = el("button", "fold", isFolded(j) ? "▸" : "▾");
   fold.title = "Fold or unfold this job";
   fold.addEventListener("click", () => {
     const on = !c.classList.contains("folded");
@@ -560,23 +699,26 @@ function jobCard(j) {
   const prog = jobProgress(j);
   if (prog) add(head, el("span", "jprog", prog));
   if (j.sha256) add(head, el("span", "mono mute", "sha256 " + short(j.sha256)));
+  packBits(j, head);
   add(c, head);
-  if (j.preview && j.state !== "refused") {
-    const cols = el("div", "cols3");
-    add(cols, listCol("Reads", j.preview.reads), listCol("Computes", j.preview.computes), listCol("Writes", j.preview.writes));
-    add(c, cols);
+  if (j.about && j.state !== "refused") add(c, aboutBlock(j.about));
+  // S96: the steps' lines in view while they are live, else under Details with the workspace's list
+  let steps = null;
+  if (j.ops && j.ops.length && ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped", "paused"].indexOf(j.state) >= 0) {
+    steps = el("div", "oplines");
+    j.ops.forEach((o) => add(steps, opLine(o)));
   }
+  const local = j.result && j.result.local && j.result.local.length ? j.result.local : null;
+  const inDetails = !!j.details && j.state !== "refused";
+  const stepsInView = steps && (!inDetails || liveSteps(j));
+  if (inDetails) add(c, detailsBlock(j, stepsInView ? null : steps, local));
   if (j.refusals && j.refusals.length) {
     const r = el("div", "refusals");
     j.refusals.forEach((x) => add(r, el("div", null, (x.op != null ? "op " + x.op + " - " : "") + x.where + ": " + x.text)));
     add(c, r);
   }
   if (j.wait) add(c, el("div", "wait", "Waits: " + j.wait));
-  if (j.ops && j.ops.length && ["queued", "waiting", "running", "done", "failed", "cancelled", "stopped", "paused"].indexOf(j.state) >= 0) {
-    const ol = el("div", "oplines");
-    j.ops.forEach((o) => add(ol, opLine(o)));
-    add(c, ol);
-  }
+  if (stepsInView) add(c, steps);
   if (j.result) {
     const res = el("div", "result");
     if (j.result.share) {
@@ -586,10 +728,10 @@ function jobCard(j) {
       show.addEventListener("click", () => { showTab("outputs"); openShare(sh.name); });
       add(res, add(line, show));
     }
-    if (j.result.local && j.result.local.length) {
-      // S76: the job's own workspace folder, where its files and images are
+    if (local) {
+      // S76: the job's own workspace folder, where its files and images are. S96: counted; listed under Details
       const row = el("div", "jlocal");
-      add(row, el("span", null, "Workspace: " + j.result.local.join(", ")));
+      add(row, el("span", null, "Workspace: " + (inDetails ? localCount(local) + ", local, never shared" : local.join(", "))));
       const ob = el("button", "sm", "Open folder");
       ob.title = "Open this job's folder in the workspace (Windows)";
       ob.addEventListener("click", () => api("/api/open", { area: "job", job: j.id }).then((r) => { if (!r.ok) note(r.error || "Not opened."); }).catch((e) => note(e.message)));
@@ -917,11 +1059,11 @@ function copyForSharing() {
 }
 
 // ---- Settings
-const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "language", "expansion", "port", "log_max_mb", "log_keep", "work_cores", "work_memory_mb"];
+const FIELDS = ["smithbox_dir", "game_dir", "project_dir", "workspace_dir", "share_dir", "devkit_dir", "language", "expansion", "port", "log_max_mb", "log_keep", "work_cores", "work_memory_mb"];
 const NUMS = { port: true, log_max_mb: true, log_keep: true, work_cores: true, work_memory_mb: true };
 const BLANK_ZERO = { port: true, work_cores: true, work_memory_mb: true };   // blank: any free port, or automatic
-// The five folder fields: drawn read-only as their masks while Mask paths on this page is on, and left out of Save.
-const PATH_FIELDS = { smithbox_dir: true, game_dir: true, project_dir: true, workspace_dir: true, share_dir: true };
+// The six folder fields: drawn read-only as their masks while Mask paths on this page is on, and left out of Save.
+const PATH_FIELDS = { smithbox_dir: true, game_dir: true, project_dir: true, workspace_dir: true, share_dir: true, devkit_dir: true };
 function masked() { return !!(SETTINGS && SETTINGS.settings && SETTINGS.settings.mask_paths); }
 function loadSettings() {
   return api("/api/settings").then((r) => {

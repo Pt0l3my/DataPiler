@@ -83,6 +83,13 @@ class FakeRunner:
             return {"ok": False, "ask": {"maps": 98, "text": "Start loads 98 maps in Smithbox. Go on?"}}
         return {"ok": True}
 
+    def pack(self, job_id, *, share_ok):
+        # S87: the API hands over its guard check; the stand-in applies it to the file the test names
+        if job_id != JOB_ID:
+            raise ValueError("unknown")
+        self.packed_with = share_ok
+        return {"ok": True}
+
     def removal_word(self, job_id):
         if job_id != JOB_ID:
             raise ValueError("unknown")
@@ -144,9 +151,10 @@ class FakeGuard:
         self.fail = {}          # file bytes -> the check that fails on them
         self.calls = 0
 
-    def check(self, data, *, declared, coverage=None):
+    def check(self, data, *, declared, coverage=None, labels=None):
         self.calls += 1
         self.coverage = coverage
+        self.labels = labels
         bad = self.fail.get(bytes(data))
         return [CheckResult(i, n, i != bad, "(file)" if i == bad else None)
                 for i, n in enumerate(("Shape", "Values", "Text", "The owner", "Size", "Coverage"), 1)]
@@ -302,7 +310,9 @@ class ApiTest(ApiBase):
         self.assertEqual(set(s["hardware"]["pc"]), {"logical", "physical", "memory", "free", "cpu", "graphics"})
         self.assertGreaterEqual(s["hardware"]["work"]["workers"], 1)
         self.assertEqual(s["version"], datapiler.VERSION)
-        self.assertEqual(set(s["pills"]), {"smithbox", "game", "link"})
+        self.assertEqual(set(s["pills"]), {"smithbox", "game", "link", "link_why"})         # link_why: S94 (DP33)
+        self.assertEqual((s["pills"]["link"], s["pills"]["link_why"]), ("off", None))
+        self.assertEqual(s["status"]["link"]["server"], {"state": "off", "why": None})
         self.assertEqual(set(s["status"]), {"smithbox", "game", "project", "link"})
         self.assertEqual(s["extract"]["inbox"], [{"file": "export.json", "reason": "not a Smithbox text export"}])
         self.assertEqual(s["jobs"][0]["id"], JOB_ID)
@@ -400,6 +410,48 @@ class ApiTest(ApiBase):
         code, r, _ = self.post("/api/link", {"on": True})                      # asked once only
         self.assertEqual(r, {"ok": True, "state": "on"})
 
+    def test_s90_the_link_switches_on_by_itself_with_its_setting(self):
+        from dataclasses import replace
+        self.assertIsNone(self.api.auto_link_once())                      # the setting is off
+        self.assertEqual(self.post("/api/settings/one", {"key": "link_auto", "value": True})[0], 200)
+        self.assertTrue(self.live.settings.link_auto)
+        self.assertIsNone(self.api.auto_link_once())                      # Smithbox's server does not answer
+        self.assertEqual(self.link.switched, [])
+        self.status._port_answers = lambda: True
+        self.status._port = None
+        with mock.patch.object(self.status, "game_running", return_value=mock.Mock(running=True)):
+            self.assertIsNone(self.api.auto_link_once())                  # the game runs: the link waits
+        self.assertEqual(self.api.auto_link_once(), "on")
+        self.assertEqual(self.link.switched, [True])
+        self.assertTrue(self.live.session.link)
+        self.assertTrue(self.live.session.project_confirmed)             # the setting stands for the question
+        self.assertIsNone(self.api.auto_link_once())                      # on already
+        self.link.close("Smithbox stopped")                                # the link closed by itself...
+        self.assertEqual(self.api.auto_link_once(), "on")                 # ...comes back on by itself
+        _, r, _ = self.post("/api/link", {"on": False})                    # the owner switches it off
+        self.assertEqual(r["state"], "off")
+        self.assertIsNone(self.api.auto_link_once())                      # not on by itself again this session
+        self.assertEqual(self.link.switched, [True, True, False])
+        _, r, _ = self.post("/api/link", {"on": True})                     # by hand: the setting stands for the question
+        self.assertEqual(r, {"ok": True, "state": "on"})
+        self.assertFalse(self.live.session.link_off_by_owner)
+        self.live.settings = replace(self.live.settings, link_auto=False)
+        self.post("/api/link", {"on": False})
+        self.live.session.project_confirmed = False
+        _, r, _ = self.post("/api/link", {"on": True})                     # the setting off: asked again
+        self.assertIn("ask", r)
+
+    def test_s90_the_auto_links_thread_starts_once_and_ends_with_close(self):
+        self.api.AUTO_LINK_SECS = 0.05
+        self.api.start_auto_link()
+        t = self.api._auto_thread
+        self.assertTrue(t.is_alive())
+        self.api.start_auto_link()
+        self.assertIs(self.api._auto_thread, t)
+        self.api.close()
+        t.join(2.0)
+        self.assertFalse(t.is_alive())
+
     def test_a_new_project_folder_is_confirmed_again(self):
         self.post("/api/link", {"on": True, "confirm_project": True})
         self.assertTrue(self.live.session.project_confirmed)
@@ -490,6 +542,22 @@ class ApiTest(ApiBase):
         self.assertEqual(r, {"ok": True})
         with self.assertRaises(Bad):
             self.api.post("/api/jobs/act", {"id": "nobody", "what": "start"})
+
+    def test_s87_pack_hands_the_runner_the_guard_check(self):
+        _, r, _ = self.post("/api/jobs/act", {"id": JOB_ID, "what": "pack", "confirm_maps": None})
+        self.assertEqual(r, {"ok": True})
+        f = self.live.paths.share / "roster-counts.json"
+        f.write_bytes(b'{"tables": []}')
+        self.assertTrue(self.runner.packed_with(f))      # every check passes now
+        self.guard.fail[b'{"tables": []}'] = 6
+        self.assertFalse(self.runner.packed_with(f))     # one fails: the share file is not packed
+        self.guard.fail.clear()
+        with self.assertRaises(Bad):
+            self.api.post("/api/jobs/act", {"id": "nobody", "what": "pack"})
+
+    def test_s87_open_the_packed_folder(self):
+        _, r, _ = self.post("/api/open", {"area": "packed"})
+        self.assertEqual(self.b.opened, str(self.live.paths.packed))
 
     def test_open_folder_off_windows(self):
         _, r, _ = self.post("/api/open", {"area": "share"})
@@ -783,7 +851,7 @@ class FoldersApiTest(ApiBase):
         self.assertEqual(r["expansion"]["found"], [{"value": "yes", "sources": ["steam_manifest"],
                                                      "tags": ["Steam's app manifest"], "in_use": False,
                                                      "detail": "DLC app 9000020 installed"}])
-        self.assertEqual(r["shown"], {"workspace_dir": "workspace", "share_dir": "share"})
+        self.assertEqual(r["shown"], {"workspace_dir": "workspace", "share_dir": "share", "devkit_dir": ""})
         self.assertNotIn("recent", r["settings"])
         self.assertFalse(r["settings"]["mask_paths"])
 

@@ -16,6 +16,9 @@ FIELD_RX = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 PARAMS: dict[str, dict[str, str]] = {
     "NpcParam": {"id": "int", "nameId": "int", "teamType": "int", "npcType": "int"},
     "TalkParam": {"id": "int", "msgId": "int"},
+    # S97 (0.2.40): weapons and armour by their row ids alone, which the weapon and armour names are numbered by.
+    "EquipParamWeapon": {"id": "int"},
+    "EquipParamProtector": {"id": "int"},
     "WorldMapPlaceNameParam": {
         "id": "int", "disableParam_NT": "int", "worldMapPieceId": "int", "textId": "int", "areaNo": "int",
         "gridXNo": "int", "gridZNo": "int", "posX": "number", "posY": "number", "posZ": "number"
@@ -55,6 +58,10 @@ PARAMS: dict[str, dict[str, str]] = {
     "MapPieceTexParam": {"id": "int"},                  # fields read after a same-job check (S72, DP24)
     "MapPieceTexParam_m61": {"id": "int"},              # fields read after a same-job check (S72, DP24)
     "MapGridCreateHeightLimitInfo": {"id": "int"},      # fields read after a same-job check (S72, DP24)
+    "WeatherLotTexParam": {"id": "int"},          # S89: fields read after a same-job check (S72, DP24)
+    "WeatherLotTexParam_m61": {"id": "int"},      # S89: fields read after a same-job check (S72, DP24)
+    "MimicryEstablishmentTexParam": {"id": "int"}, # S89: fields read after a same-job check (S72, DP24)
+    "MimicryEstablishmentTexParam_m61": {"id": "int"}, # S89: fields read after a same-job check (S72, DP24)
 }
 
 # The fields that hold ids of other tables' rows (a name number, a message id), each param's apart from its own row id.
@@ -64,6 +71,8 @@ PARAMS: dict[str, dict[str, str]] = {
 REFERENCES: dict[str, tuple[str, ...]] = {
     "NpcParam": ("nameId",),
     "TalkParam": ("msgId",),
+    "EquipParamWeapon": (),
+    "EquipParamProtector": (),
     "WorldMapPlaceNameParam": ("worldMapPieceId", "textId"),
     "BonfireWarpParam": ("eventflagId", "bonfireEntityId", "bonfireSubCategoryId", "clearedEventFlagId", "iconId", "forbiddenIconId", "textId1", "textEnableFlagId1", "textDisableFlagId1", "altIconId"),
     "WorldMapPointParam": ("eventFlagId", "distViewEventFlagId", "clearedEventFlagId", "iconId", "altIconId", "distViewIconId", "distViewId", "textId1"),
@@ -74,14 +83,20 @@ REFERENCES: dict[str, tuple[str, ...]] = {
     "MapPieceTexParam": (),
     "MapPieceTexParam_m61": (),
     "MapGridCreateHeightLimitInfo": (),
+    "WeatherLotTexParam": (),
+    "WeatherLotTexParam_m61": (),
+    "MimicryEstablishmentTexParam": (),
+    "MimicryEstablishmentTexParam_m61": (),
 }
 
 # The game's map tables (S69, DP21): their fields above were verified on the owner's PC by check_fields (en-0015,
 # 2026-11-14: 91 of 91, each of the type Smithbox's definition gives). By DP21 a job may share their rows whole, for
 # research only, when its write_share carries the label `map_coords`; a share file holding them is never committed.
+# S89 (0.2.36): the map-information images' other two colour keys, weather and mimicry, with the expansion's.
 MAP_PARAMS = ("BonfireWarpParam", "WorldMapPointParam", "WorldMapPlaceNameParam", "WorldMapPieceParam",
               "WorldMapLegacyConvParam", "MapNameTexParam", "MapNameTexParam_m61", "MapPieceTexParam",
-              "MapPieceTexParam_m61", "MapGridCreateHeightLimitInfo")
+              "MapPieceTexParam_m61", "MapGridCreateHeightLimitInfo", "WeatherLotTexParam", "WeatherLotTexParam_m61",
+              "MimicryEstablishmentTexParam", "MimicryEstablishmentTexParam_m61")
 
 # S72 (DP24): the column type a field read after a check_fields of the same job gets, from the type the server named.
 # A text type is never read.

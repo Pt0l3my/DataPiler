@@ -1,0 +1,13 @@
+{
+  "format": "datapiler-job/1",
+  "id": "en-0044-derive-r0",
+  "title": "The derivation's offline round R0 (O89, DP36): EldenNet's devkit reads the game's executable",
+  "about": "EldenNet's game-access layer needs facts about your build of the game: where its singletons, task registration and classes are. This round finds what can be found in the executable file alone, with the game closed. DataPiler runs EldenNet's devkit tool from the folder set in Settings; the tool reads eldenring.exe and writes a report of numbers, fixed words, its own labels and short code patterns with their addresses wildcarded, never the game's memory. The devkit's lint and DataPiler's guard check it; then press Pack 7z and send the archive. An agent reviews it before the in-game round R1.",
+  "needs": "0.2.41",
+  "ops": [
+    {
+      "op": "probe_exe",
+      "name": "derive-r0"
+    }
+  ]
+}

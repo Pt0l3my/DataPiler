@@ -518,6 +518,35 @@ class PageTest(unittest.TestCase):
         self.assertNotIn("go to the Deleted bin and are read again", card)    # no window.confirm for a deletion
         self.assertIn("/api/versions/compare?job=", self.js)
 
+    def test_s86_finished_jobs_start_folded_and_the_owners_own_choice_wins(self):
+        fold = self.js[self.js.index("function isFolded("):self.js.index("function setFolded(")]
+        self.assertIn("if (unfolded().has(key)) return false;", fold)
+        self.assertIn('return folded().has(key) || (j.state === "done" && !j.done_now);', fold)   # S92
+        setf = self.js[self.js.index("function setFolded("):self.js.index("// S87 (DP30)")]
+        self.assertIn("if (on) { f.add(key); u.delete(key); } else { f.delete(key); u.add(key); }", setf)
+        card = self.js[self.js.index("function jobCard("):self.js.index("function paintJobs(")]
+        self.assertIn('"jobcard" + (isFolded(j) ? " folded" : "")', card)
+        self.assertIn('isFolded(j) ? "▸" : "▾"', card)
+
+    def test_s93_the_update_pop_up_has_its_drop_box_in_every_state(self):
+        js = (server.PAGE_DIR / "update.js").read_text(encoding="utf-8")
+        paint = js[js.index("  function paint(v) {"):js.index("  function paintNewer(")]
+        self.assertIn("add(body, fileZone());", paint)
+        self.assertNotIn('"up_to_date", "older", "none", "not_installable", "newer", "failed"].indexOf(s) >= 0) add(body, fileZone', paint)
+        zone = js[js.index("  function fileZone() {"):js.index("  function giveFile(")]
+        self.assertIn('"Drop a DataPiler update here "', zone)
+        self.assertIn('btn("Add file"', zone)
+        self.assertIn("dropTarget(H.box);", js)
+
+    def test_s87_the_pack_button_sits_on_the_title_row_of_a_finished_job(self):
+        pack = self.js[self.js.index("function packBits("):self.js.index("// S54: where the job is")]
+        self.assertIn('if (j.state !== "done" || !has) return;', pack)
+        self.assertIn('what: "pack"', pack)
+        self.assertIn('{ area: "packed" }', pack)
+        self.assertIn("29.9 MB", pack)
+        card = self.js[self.js.index("function jobCard("):self.js.index("function paintJobs(")]
+        self.assertLess(card.index("packBits(j, head);"), card.index("add(c, head);"))
+
 
 if __name__ == "__main__":
     unittest.main()

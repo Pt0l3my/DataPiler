@@ -24,6 +24,14 @@ PORT_CACHE_S = 5.0
 SWITCH_OFF_LINE = ("Smithbox's server is still switched on, and it has no password: set "
                    "System_Enable_Soapstone_Server to false in Smithbox's Startup.json and restart Smithbox.")
 
+# S94 (DP33): what the top bar's link chip and the link card say while the link's switch is on.
+CHECKED_EVERY = "Checked every few seconds while this page is open."
+GAME_RUNS = ("The game is running: the link makes no call, and Smithbox's server is not checked, until the game has "
+             "been closed for a moment.")
+GAME_UNKNOWN = ("The process list could not be read, so the game counts as running: the link makes no call, and "
+                "Smithbox's server is not checked, until the list can be read.")
+GAME_JUST_CLOSED = "The game has closed: the link goes on once it has been closed for a moment."
+
 
 class LinkView(Protocol):
     state: str
@@ -76,27 +84,41 @@ class Status:
         self._root: Path = settings_mod.ROOT
         self._folders = None
         self._lock = threading.Lock()
-        self._port: tuple[float, bool | None] | None = None
+        self._port: tuple[float, bool | None, str] | None = None      # (monotonic, answered, "HH:MM:SS")
         self._was_on = False
         self._calls = 0
         self._last_call: str | None = None
         self._last_methods: list[str] = []
+        # S94 (DP33): since the link's last change of state, when Smithbox's server last answered a call, and the
+        # call it gave no answer to after that (method, code, "HH:MM:SS"), until a call is answered or the port
+        # check sees the server gone
+        self._answered_at: str | None = None
+        self._unanswered: tuple[str, str, str] | None = None
         self._unsub = [events.subscribe("link.call", self._on_call), events.subscribe("link.state", self._on_state)]
 
     # ---------------------------------------------------------------------------------------------- events
 
     def _on_call(self, topic: str, data: dict) -> None:
         method = data.get("method")
+        code = data.get("code")
+        now = time.strftime("%H:%M:%S")
         with self._lock:
             self._calls += 1
-            self._last_call = time.strftime("%H:%M:%S")
+            self._last_call = now
             if isinstance(method, Own) and self._last_methods[-1:] != [str(method)]:
                 self._last_methods = (self._last_methods + [str(method)])[-2:]
+            # S94: an error the server sent is an answer too; a call the switch or the game ended (no code) says
+            # nothing about the server
+            if data.get("ok") is True or (isinstance(code, Own) and str(code) not in link.NO_ANSWER):
+                self._answered_at, self._unanswered = now, None
+            elif isinstance(code, Own):
+                self._unanswered = (str(method) if isinstance(method, Own) else "", str(code), now)
 
     def _on_state(self, topic: str, data: dict) -> None:
-        if data.get("state") in ("on", "blocked"):
-            with self._lock:
+        with self._lock:
+            if data.get("state") in ("on", "blocked"):
                 self._was_on = True
+            self._answered_at, self._unanswered = None, None      # S94: the link's calls start afresh
 
     def close(self) -> None:
         for u in self._unsub:
@@ -158,18 +180,69 @@ class Status:
         except Exception:
             return "off"
 
-    def port_answers(self) -> bool | None:
+    def port_answers(self, *, again_if_unchecked: bool = False) -> bool | None:
+        """LINK's port check, kept PORT_CACHE_S: None when none was made (the game ran). again_if_unchecked makes a
+        kept None count as no check, for the link's chip once the game is closed (S94)."""
         now = time.monotonic()
         with self._lock:
-            if self._port is not None and now - self._port[0] < PORT_CACHE_S:
+            if self._port is not None and now - self._port[0] < PORT_CACHE_S and not (
+                    again_if_unchecked and self._port[1] is None):
                 return self._port[1]
         try:
             v = self._port_answers()
         except Exception:
             v = None
         with self._lock:
-            self._port = (now, v)
+            self._port = (now, v, time.strftime("%H:%M:%S"))
+            if v is False:
+                self._unanswered = None         # S94: the server was gone since; a call it missed before is past
         return v
+
+    def link_server(self, g: GameRunning | None = None) -> tuple[str, str | None]:
+        """S94 (DP33): the link chip's state and the words of its tooltip. off, no_libs (as the link's state), or,
+        with its switch on: blocked while the game runs or counts as running (no check is made then, DP4, and no
+        connection is claimed); else connected when Smithbox's server answered the port check above and no call has
+        gone unanswered since the last one it answered; else waiting when no Smithbox runs, no_answer when one does.
+        Makes no connection of its own: the check is the Smithbox card's, kept PORT_CACHE_S."""
+        state = self._link_state()
+        if state not in ("on", "blocked"):
+            return state, None
+        if g is None:
+            g = self.game_running()
+        if g.running:
+            return "blocked", GAME_UNKNOWN if g.why == game.UNREADABLE else GAME_RUNS
+        if state == "blocked":
+            return "blocked", GAME_JUST_CLOSED
+        port = self.port_answers(again_if_unchecked=True)
+        with self._lock:
+            at = self._port[2] if self._port is not None else time.strftime("%H:%M:%S")
+            answered_at, unanswered = self._answered_at, self._unanswered
+        if port is True and unanswered is not None:
+            method, code, when = unanswered
+            return "no_answer", ("The last call%s, at %s, got no answer (%s), though Smithbox's server answered at "
+                                 "%s. Smithbox may be busy or stuck: its Warning Log may say why. This clears once a "
+                                 "call is answered." % (", " + method if method else "", when, code, at))
+        if port is True:
+            return "connected", ("Smithbox's server answered at %s%s. %s" % (
+                at, ", and the last call at " + answered_at if answered_at else "", CHECKED_EVERY))
+        runs = smithbox.running(self._settings().smithbox_dir)
+        if runs is None:
+            return "waiting", ("Smithbox's server did not answer at %s, and whether Smithbox runs could not be read. "
+                               "%s" % (at, CHECKED_EVERY))
+        if not runs:
+            return "waiting", ("Smithbox is not running, and its server did not answer at %s. Start Smithbox with its "
+                               "server switched on. %s" % (at, CHECKED_EVERY))
+        try:
+            switch = smithbox.read_switch(smithbox.startup_json())
+        except Exception:
+            switch = None
+        if switch is False:
+            return "no_answer", ("Smithbox is running, but its server did not answer at %s: it is switched off. Set "
+                                 "System_Enable_Soapstone_Server to true in Smithbox's Startup.json and restart "
+                                 "Smithbox." % at)
+        return "no_answer", ("Smithbox is running, but its server did not answer at %s. Smithbox may still be "
+                             "starting; if not, check that its server is switched on and restart Smithbox. %s"
+                             % (at, CHECKED_EVERY))
 
     def pills(self) -> dict:
         s = self._settings()
@@ -182,7 +255,8 @@ class Status:
             sb = "not_found"
         g = self.game_running()
         gp = "unknown" if g.why == game.UNREADABLE else ("running" if g.running else "closed")
-        return {"smithbox": sb, "game": gp, "link": self._link_state()}
+        lp, why = self.link_server(g)               # S94 (DP33): on, and established or not
+        return {"smithbox": sb, "game": gp, "link": lp, "link_why": why}
 
     def block_line(self) -> str | None:
         g = self.game_running()
@@ -396,8 +470,10 @@ class Status:
                     after = SWITCH_OFF_LINE
             except Exception:
                 after = None
+        sv, why = self.link_server()                # S94 (DP33): the card says what the top bar's chip says
         return {"state": state, "calls": stats["calls"], "last_call": stats["last_call"],
-                "last_methods": stats["last_methods"], "would_call": would, "after": after}
+                "last_methods": stats["last_methods"], "would_call": would, "after": after,
+                "server": {"state": sv, "why": why}}
 
     # ---------------------------------------------------------------------------------------------- provenance
 

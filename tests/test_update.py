@@ -730,6 +730,106 @@ class Download(Base):
 # ---------------------------------------------------------------------------------------------------------- install
 
 
+class GivenFile(Base):
+    """DP32 (S91): a release zip given by hand, dropped on the pop-up or chosen with its button: checked as a download
+    is, but for the published checksums it has none of, then installed the same way."""
+
+    def give(self, files=None, version="0.3.0", name="DataPiler-0.3.0.zip", raw=None):
+        if raw is None:
+            files = invented_app(version, **{"requirements.lock": b"# datapiler-lock/1\n# newer\n"}) \
+                if files is None else files
+            raw = release_zip(Path(self.tmp.name) / ("given-%s.zip" % version), files).read_bytes()
+        import base64
+        return self.u.from_file({"name": name, "data": base64.b64encode(raw).decode("ascii")}), raw
+
+    def test_a_newer_zip_is_checked_then_installed_as_a_download_is(self):
+        (code, v), raw = self.give()
+        self.assertEqual((code, v["state"]), (200, "ready"), v)
+        self.assertEqual(v["file"], {"name": "DataPiler-0.3.0.zip", "version": "0.3.0", "size": len(raw),
+                                     "sha256": sha(raw)})
+        self.assertEqual([c["id"] for c in v["checks"]], ["given", "version", "shape", "manifest"])
+        self.assertEqual(v["checks"][0]["ok"], "warn")
+        self.assertIn(sha(raw), v["checks"][0]["text"])
+        self.assertTrue(v["plan"]["libs"])
+        self.assertEqual(self.update_files(), ["update/0.3.0/DataPiler-0.3.0.zip"])
+        code, answer, after = self.post(action="install")
+        self.assertEqual((code, answer), (200, {"ok": True, "state": "restarting", "to": "0.3.0"}))
+        self.assertIsNotNone(after)
+        pending = json.loads((self.root / "update" / "pending.json").read_text(encoding="utf-8"))
+        self.assertEqual((pending["zip"], pending["zip_sha256"], pending["to"]),
+                         ("update/0.3.0/DataPiler-0.3.0.zip", sha(raw), "0.3.0"))
+
+    def test_an_older_version_is_refused_and_nothing_kept(self):
+        (code, v), _ = self.give(version="0.1.9", name="old.zip")
+        self.assertEqual((code, v["state"], v["failed"]["kept"]), (200, "failed", False))
+        self.assertIn("older", v["failed"]["text"])
+        self.assertEqual(self.update_files(), [])
+
+    def test_this_version_again_is_allowed_with_a_note(self):
+        (code, v), _ = self.give(version="0.2.0", name="same.zip")
+        self.assertEqual(v["state"], "ready", v)
+        line = next(c for c in v["checks"] if c["id"] == "version")
+        self.assertEqual(line["ok"], "warn")
+        self.assertIn("this version again", line["text"])
+
+    def test_not_a_datapiler_zip(self):
+        import io as _io, zipfile
+        b = _io.BytesIO()
+        with zipfile.ZipFile(b, "w") as zf:
+            zf.writestr("Something/else.txt", b"x")
+        (code, v), _ = self.give(raw=b.getvalue(), name="other.zip")
+        self.assertEqual(v["state"], "failed")
+        self.assertIn("not a DataPiler release zip", v["failed"]["text"])
+        (code, v), _ = self.give(raw=b"not a zip at all", name="bad.zip")
+        self.assertIn("not a zip file", v["failed"]["text"])
+        self.assertEqual(self.update_files(), [])
+
+    def test_a_file_its_manifest_does_not_match_is_refused(self):
+        files = invented_app("0.3.0")
+        z = release_zip(Path(self.tmp.name) / "bad-manifest.zip", files,
+                        manifest=manifest_of(dict(files, **{"README.md": b"another read-me\n"})))
+        (code, v), _ = self.give(raw=z.read_bytes())
+        self.assertEqual(v["state"], "failed")
+        self.assertEqual([c["id"] for c in v["checks"]][-1], "manifest")
+        self.assertFalse(v["checks"][-1]["ok"])
+        self.assertEqual(self.update_files(), [])
+
+    def test_bad_bodies(self):
+        import base64
+        good = base64.b64encode(b"x").decode()
+        for body in ({}, {"name": "a.zip"}, {"name": "a.zip", "data": good, "more": 1}, {"name": "a.txt", "data": good},
+                     {"name": "../a.zip", "data": good}, {"name": "a.zip", "data": "%%% not base64"},
+                     {"name": "a.zip", "data": 5}):
+            code, answer = self.u.from_file(body)
+            self.assertEqual(code, 400, body)
+
+    def test_discarding_a_file_goes_back_to_what_the_check_said(self):
+        self.release()
+        self.assertEqual(self.check()["state"], "newer")
+        (code, v), _ = self.give(version="0.3.1", name="DataPiler-0.3.1.zip")
+        self.assertEqual(v["state"], "ready")
+        code, v, _ = self.post(action="cancel")
+        self.assertEqual(v["state"], "newer")
+        self.assertIsNone(v["file"])
+        self.assertEqual(self.update_files(), [])
+
+    def test_s93_a_file_given_during_a_check_stops_the_check(self):
+        self.release()
+        with self.u._lock:
+            self.u._state = "checking"            # a check under way, as the pop-up has just opened
+            self.u._gen += 1
+        (code, v), _ = self.give(version="0.3.1", name="DataPiler-0.3.1.zip")
+        self.assertEqual((code, v["state"], v["file"]["version"]), (200, "ready", "0.3.1"))
+        self.assertEqual(self.update_files(), ["update/0.3.1/DataPiler-0.3.1.zip"])
+
+    def test_a_file_replaces_a_download_not_installed(self):
+        self.release()
+        self.assertEqual(self.download()["state"], "ready")
+        (code, v), _ = self.give(version="0.3.1", name="DataPiler-0.3.1.zip")
+        self.assertEqual((v["state"], v["file"]["version"]), ("ready", "0.3.1"))
+        self.assertEqual(self.update_files(), ["update/0.3.1/DataPiler-0.3.1.zip"])
+
+
 class Install(Base):
     def ready(self):
         self.release()

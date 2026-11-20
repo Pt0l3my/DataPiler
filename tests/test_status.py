@@ -260,8 +260,10 @@ class StatusTest(StatusBase):
                     self.assertNotIn(self.tmp.name, c[k] or "")
         self.assertEqual(self.card("smithbox", "installed")["detail"], str(self.sb))
         self.assertIn("<SMITHBOX>", self.card("smithbox", "installed")["text"])
-        self.assertEqual(set(cards["link"]), {"state", "calls", "last_call", "last_methods", "would_call", "after"})
+        self.assertEqual(set(cards["link"]), {"state", "calls", "last_call", "last_methods", "would_call", "after",
+                                              "server"})
         self.assertEqual(cards["link"]["calls"], 3)
+        self.assertEqual(cards["link"]["server"], {"state": "off", "why": None})           # S94
 
     def test_port_check_cached(self):
         calls = []
@@ -283,12 +285,139 @@ class StatusTest(StatusBase):
         self.assertIsNone(self.st.cards()["link"]["after"])
 
     def test_pills(self):
-        self.assertEqual(self.st.pills(), {"smithbox": "not_running", "game": "closed", "link": "off"})
+        self.assertEqual(self.st.pills(), {"smithbox": "not_running", "game": "closed", "link": "off",
+                                           "link_why": None})
         self.b.procs = [Proc("smithbox.exe", None)]
         self.assertEqual(self.st.pills()["smithbox"], "running")
         self.cfg = Settings()
         self.b.procs = []
         self.assertEqual(self.st.pills()["smithbox"], "not_found")
+
+
+class LinkChipTest(StatusBase):
+    """S94 (DP33): with its switch on, the top bar's link chip says whether the link is established, from the port
+    check the Smithbox card makes (kept PORT_CACHE_S) and the link's own calls; while the game runs it claims no
+    connection and checks nothing."""
+
+    def setUp(self):
+        super().setUp()
+        self.checks = 0
+
+        def port():
+            self.checks += 1
+            return self.port
+
+        self.st.close()
+        self.st = status.Status(lambda: self.cfg, lambda: self.link, port)
+        self.link.state = "on"
+
+    def chip(self):
+        p = self.st.pills()
+        return p["link"], p["link_why"]
+
+    def again(self):
+        self.st._port = None            # as once PORT_CACHE_S has passed: the next read checks again
+
+    def test_off_and_no_libraries_as_before(self):
+        for state in ("off", "no_libs"):
+            self.link.state = state
+            self.assertEqual(self.chip(), (state, None))
+        self.assertEqual(self.checks, 0)
+
+    def test_connected_when_the_server_answers(self):
+        state, why = self.chip()
+        self.assertEqual(state, "connected")
+        self.assertRegex(why, r"^Smithbox's server answered at \d{2}:\d{2}:\d{2}\. Checked every few seconds while "
+                              r"this page is open\.$")
+        self.assertEqual(self.st.cards()["link"]["server"], {"state": "connected", "why": why})   # the card too
+        self.assertEqual(self.checks, 1)                    # one check, kept for the card and the next poll
+        self.chip()
+        self.assertEqual(self.checks, 1)
+
+    def test_waiting_for_smithbox_while_none_runs(self):
+        self.port = False
+        state, why = self.chip()
+        self.assertEqual(state, "waiting")
+        self.assertRegex(why, r"^Smithbox is not running, and its server did not answer at \d{2}:\d{2}:\d{2}\. Start "
+                              r"Smithbox with its server switched on\.")
+        self.assertEqual(self.st.cards()["link"]["server"]["state"], "waiting")
+
+    def test_no_answer_while_smithbox_runs_with_the_reason(self):
+        self.port = False
+        self.b.procs = [Proc("smithbox.exe", str(self.sb / "Smithbox.exe"))]
+        self.switch(False)
+        state, why = self.chip()
+        self.assertEqual(state, "no_answer")
+        self.assertRegex(why, r"^Smithbox is running, but its server did not answer at \d{2}:\d{2}:\d{2}: it is "
+                              r"switched off\. Set System_Enable_Soapstone_Server to true")
+        for value in (True, "missing-file"):
+            self.switch(value)
+            state, why = self.chip()
+            self.assertEqual(state, "no_answer")
+            self.assertIn("Smithbox may still be starting; if not, check that its server is switched on", why)
+            self.assertNotIn(self.tmp.name, why)            # never a folder in the chip's words
+
+    def test_the_game_running_claims_no_connection_and_checks_nothing(self):
+        self.b.procs = [Proc("eldenring.exe", None)]
+        self.assertEqual(self.chip(), ("blocked", status.GAME_RUNS))    # the watcher has not looked yet
+        self.link.state = "blocked"
+        self.assertEqual(self.chip(), ("blocked", status.GAME_RUNS))
+        self.b.procs = []
+        self.assertEqual(self.chip(), ("blocked", status.GAME_JUST_CLOSED))
+        self.link.state = "on"
+        self.b.fail = True
+        self.assertEqual(self.chip(), ("blocked", status.GAME_UNKNOWN))
+        self.assertEqual(self.checks, 0)
+        self.assertEqual(self.st.cards()["link"]["server"]["state"], "blocked")
+
+    def test_a_check_the_game_kept_from_being_made_is_made_once_it_has_closed(self):
+        self.b.procs = [Proc("eldenring.exe", None)]
+        self.port = None                                    # LINK's check makes no connection while the game runs
+        self.assertIsNone(self.st.port_answers())           # the Smithbox card's, kept
+        self.assertEqual(self.checks, 1)
+        self.b.procs = []
+        self.port = True
+        self.assertEqual(self.chip()[0], "connected")       # checked again at once, not PORT_CACHE_S later
+        self.assertEqual(self.checks, 2)
+        self.assertTrue(self.st.port_answers())
+        self.chip()
+        self.assertEqual(self.checks, 2)                    # then kept as before
+
+    def test_a_call_with_no_answer_until_a_call_is_answered(self):
+        events.emit("link.call", method=logbook.own("GetParamRows"), n=0, secs=30.0, ok=False,
+                    code=logbook.own("DEADLINE_EXCEEDED"))
+        state, why = self.chip()
+        self.assertEqual(state, "no_answer")
+        self.assertRegex(why, r"^The last call, GetParamRows, at \d{2}:\d{2}:\d{2}, got no answer "
+                              r"\(DEADLINE_EXCEEDED\), though Smithbox's server answered at \d{2}:\d{2}:\d{2}\.")
+        self.assertIn("This clears once a call is answered.", why)
+        events.emit("link.call", method=logbook.own("ListParams"), n=0, secs=0.1, ok=False, code=None)
+        self.assertEqual(self.chip()[0], "no_answer")       # ended by the switch or the game: no news of the server
+        events.emit("link.call", method=logbook.own("ListParams"), n=12, secs=0.1, ok=True)
+        state, why = self.chip()
+        self.assertEqual(state, "connected")
+        self.assertRegex(why, r"^Smithbox's server answered at \d{2}:\d{2}:\d{2}, and the last call at "
+                              r"\d{2}:\d{2}:\d{2}\. ")
+        events.emit("link.call", method=logbook.own("ListParamRows"), n=0, secs=0.1, ok=False,
+                    code=logbook.own("NOT_FOUND"))
+        self.assertEqual(self.chip()[0], "connected")       # an error the server sent is an answer
+
+    def test_what_else_clears_a_call_with_no_answer(self):
+        missed = dict(method=logbook.own("SearchObjects"), n=0, secs=0.5, ok=False, code=logbook.own("UNAVAILABLE"))
+        events.emit("link.call", **missed)
+        self.assertEqual(self.chip()[0], "no_answer")
+        events.emit("link.state", state=logbook.own("blocked"), why=None)     # a change of state: calls afresh
+        state, why = self.chip()
+        self.assertEqual(state, "connected")
+        self.assertNotIn("the last call", why)
+        events.emit("link.call", **missed)
+        self.assertEqual(self.chip()[0], "no_answer")
+        self.port = False                                   # the server seen gone...
+        self.again()
+        self.assertEqual(self.chip()[0], "waiting")
+        self.port = True                                    # ...and back: what it missed before is past
+        self.again()
+        self.assertEqual(self.chip()[0], "connected")
 
 
 class FakeFound:

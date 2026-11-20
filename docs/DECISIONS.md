@@ -26,7 +26,15 @@ and ids are never renumbered. EldenNet's decisions are cited as "EldenNet O55" a
   request. DP27 (an overview image made on the PC), the owner's choice. DP28 (game files that Smithbox unpacked,
   opened on the PC with the game's own Oodle library), the owner's request and choice.
   DP29 (using the PC's hardware: every core, native decoding, memory caches and a hardware view), the owner's
-  choice of (b).
+  choice of (b). DP30 (a finished job's files packed into 7z to upload; finished jobs folded), the owner's request.
+  DP31 (the server link switched on by itself after launch, a setting), the owner's request, built in 0.2.36.
+  DP32 (a release zip installed from a file dropped on the Update pop-up), the owner's request; its drop box
+  rebuilt in 0.2.37, and DP30's jobs finished in the session left unfolded, both at the owner's word. DP33 (the
+  server link's chip says whether the link is established), the owner's request, built in 0.2.38. DP34 (an About
+  block on each job card, and its columns folded under Details), the owner's request, built in 0.2.39. DP35
+  (DataPiler as the workbench and the replay harness, reading the game through EldenNet's devkit), decided as
+  recommended. DP36 (EldenNet's derivation round offline as a DataPiler job, and EldenNet's in-game numbers compared
+  with Smithbox's reading of the files), the owner's request (EldenNet O89).
 - **Open.** None.
 
 ## DP1
@@ -508,6 +516,10 @@ regulation. Off Windows, or without the library in the game folder, a KRAK file 
 
 **Owner's words.** "Yes, under those rules (Recommended)" and "Both, in one version".
 
+*Later (2026-11-15):* amended by DP35. DataPiler will read the game's archives through EldenNet's devkit (EldenNet
+O74), only while the game runs, with the keys taken from the player's own game when used and never stored. Until the
+devkit covers a file, it is opened as here.
+
 ## DP29
 
 **Using the PC's hardware: cores, memory, the graphics card** · *2026-11-15 · Decided by the owner: (b)*
@@ -544,3 +556,173 @@ on whole images.
 **Decision.** (b), the same day: (a), with the hardware shown on the Status page (0.2.33, S83).
 
 **Owner's words.** "so currently the CPU is only using 1 core for the jobs? let's go with (b)".
+
+## DP30
+
+**A finished job's files packed into 7z to upload; finished jobs folded** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "for next datapiler version, can you make it so by default that datapiler shows completed
+jobs in folded state? also, add a button to completed jobs to compress into 7z format up to 29.9MB parts (multiple
+parts if needed)."
+
+**Decision.** As asked, in 0.2.35. A finished job's card starts folded to its title row; the owner's own fold or unfold
+of a card is remembered and wins (S86). A **Pack 7z** button on that title row packs the job's share file (only while
+it passes the guard now) and every file of its workspace folder into a 7z archive in the workspace's `packed` folder,
+cut into parts of at most 29.9 MB when it is larger (S87). The archive holds the files under the job's id and nothing
+about the PC. The workspace's files stay research material (DP21): the button only makes the archive on the PC, and
+sharing it stays the owner's own act.
+
+**Owner's words.** As above.
+
+- Later (2026-11-15), the owner: "for jobs that have been done within the session, don't auto fold those, so user can
+  see results without having to unfold." Built in 0.2.37 (S92): a job that finished since DataPiler started stays
+  unfolded; one finished before folds, and the owner's own fold or unfold still wins.
+
+## DP31
+
+**The server link switched on by itself after launch, a setting** · *2026-11-15 · The owner's request, for the next
+version*
+
+**The owner's request.** "also for next datapiler version (don't build just for this) a setting to establish smithbox
+server link automatically after launch (if smithbox server is detected)."
+
+**Decision.** As asked, in the next version that has other changes too. A Settings switch, off at first: with it on,
+once DataPiler has started and sees Smithbox running with its server on, it switches the link on by itself. Every rule
+of DP4 still holds: read calls only, the link libraries present, the game closed (the link waits while the game runs
+and stops if it starts), and the project folder in Settings never the game's folder or inside it. DataPiler cannot see
+which project Smithbox has open, so it asks the owner once a session to confirm it (build plan §10, P1). Turning the
+switch on gives that confirmation for every session: the switch says so, and the log notes each time the link is
+switched on by the setting.
+
+**Owner's words.** As above.
+
+- Later (2026-11-15): built in 0.2.36 (S90), with the four map-information colour keys the owner chose to have read
+  in the same version (S89) and DP32.
+
+## DP32
+
+**A release zip installed from a file dropped on the Update pop-up** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "I was wondering if you could also add manual update to updater a file drop zone with
+manually add file button. so the user could just drop a file and datapiler would update itself and restart."
+
+**Decision.** As asked, in 0.2.36 (S91). The Update pop-up has a zone to drop a DataPiler release zip on, and a
+**Choose file…** button. DataPiler checks the zip as it checks a download, but for the release's published checksums,
+which a file given by hand has none of: its size, its shape, every file against the zip's own manifest, and the
+version inside, never older than the running one. The pop-up then shows the zip's sha256 in full, to compare with the
+one given with the file, and **Install and restart** installs it through the same helper as a download: backup,
+checks where each file landed, the new version started, and the old one put back on any failure.
+
+**Owner's words.** As above.
+
+- Later (2026-11-15), the owner: "you forgot to add drop zone to the updater UI window, this is what the pandorumLLM
+  lypsinc feature has for drop box, just a zone with an add file button, that's what I asked for." In 0.2.36 the
+  zone was a line with a Choose file button, shown only once GitHub's check had answered. Rebuilt in 0.2.37 (S93): a
+  box titled "Drop a DataPiler update here" with an **Add file** button, in every state of the pop-up from the moment
+  it opens; a file dropped anywhere on the pop-up counts, and it stops a check or a download under way.
+
+## DP33
+
+**The server link's chip says whether the link is established** · *2026-11-15 · The owner's request*
+
+**The owner's request.** "I also noticed that server link shows only that its on or not, but it would be great if
+something would also shows that the server link is established."
+
+**Decision.** As asked, in 0.2.38 (S94). With the link's switch on, the top bar's chip says whether Smithbox's server
+answers: connected (green) once it answers; waiting for Smithbox (amber) while no Smithbox runs; no answer (red) while
+Smithbox runs but its server does not answer, or did not answer the link's last call. The chip's tooltip, and a line
+on the Server link card, say when the server last answered, or why it did not. While the game runs the link is not
+used (DP4), so the chip says so and claims no connection. Every rule of DP4 holds: the answer comes from the check
+DataPiler already makes (a connection to the server's port, closed at once, never while the game runs) and from the
+link's own read calls; no new call is made.
+
+**Owner's words.** As above.
+
+## DP34
+
+**An About block on each job card, and its columns folded under Details** · *2026-11-15 · The owner's request*
+
+**The owner's request.** With a screenshot of a finished job's card, its Reads, Computes and Writes columns each a
+bullet a step (an unpack job of 40 files): "the job columns are getting very long, I wondered if we could do something
+about that, perhaps make these columns fold/unfold and normally folded, but provide short description at the top above
+these column what the job is about and what it covers with references. What do you think?"
+
+**Decision.** The design agreed the same day, built in 0.2.39 (S95). Every checked job's card, before a run, while it
+runs and after, opens with an **About** block: the job's own description, when its file has one (a new optional
+`about`, plain text of 1 to 600 characters, refused like the title otherwise); a line DataPiler counts from the job's
+steps, in three sentences for what it reads, computes and writes, the game files grouped by map; and the codes the
+title and the description cite, as plain chips with no link. The columns are under one **Details** toggle inside the
+card, folded at first, and say the same as before, except that steps whose sentences differ only by the name they
+quote, or not at all, are one item with their count and the names. Whether a card's Details is open is kept while the
+page is open; DP30's fold of whole cards, and Fold all and Unfold all, leave it as it was.
+
+**Owner's words.** As above.
+
+- Later (2026-11-15), before 0.2.39 shipped, so that a finished card is short as the owner asked (S96): once no step
+  is running and none has failed, the steps' lines are under Details too, while a running or failed step's lines stay
+  in view; the Workspace line gives a count ("Workspace: 40 folders, local, never shared"), its list under Details.
+
+## DP35
+
+**DataPiler becomes the workbench and the replay harness, reading the game through EldenNet's devkit** · *2026-11-15 ·
+Decided by the owner, as recommended*
+
+**Question.** With EldenNet's devkit (EldenNet O74), should DataPiler become the PC side of the setup? **(a) All of
+it** (recommended): it reads the game through the devkit in place of Smithbox's unpacking (amending DP28), keeps a
+local index of the game's data for quick queries, imports EldenNet's play recordings once v0.1 exists (EldenNet O73),
+and, once Min's engine is adopted, replays recordings through EldenNet's engine outside the game, calling the model
+services the owner sets up. **(b)** The workbench now, the replay later. **(c)** No: DataPiler stays as it is, and the
+workbench and the replay harness are a tool of their own.
+
+**Decision.** (a), built in steps (EldenNet's roadmap S7.11):
+- DataPiler reads the game through the devkit, under the devkit's rule: only while the game of the same install is
+  running, and nothing of the game leaves the PC. Neither holds a key: the devkit takes it from the player's own game
+  when used, and never stores it. DP28's route (files Smithbox unpacked) stays until the devkit covers them.
+- A local index of the game's data on the PC, for queries. Shares hold numbers only and pass the guard (request 0001),
+  as today.
+- Imports of EldenNet's recordings (numbers only) from v0.1 on. DataPiler never reads the game's memory itself
+  (EldenNet O73).
+- The replay harness once Min's engine is adopted. It is the first network beyond Smithbox's local server (the
+  owner's model services), so that rule is amended then, with checks of its own.
+
+**Owner's words.** "A workbench on the PC + A replay harness: we could merge and build these into datapiler" and "Yes,
+all of it (Recommended)".
+
+*Later (2026-11-15):* EldenNet's O75 lets the devkit work with the game closed too, within safe limits (read-only,
+no bulk export, nothing of the game carried, never the game's memory) and with a disclosure of safe use. So
+DataPiler's reads through it need no running game; "only while the game of the same install is running" above no
+longer holds.
+
+*Later (2026-11-15):* EldenNet's O79: the devkit ships as part of EldenNet, its features behind Developer mode, so
+DataPiler uses it from the EldenNet install, and development builds of the devkit until EldenNet ships. EldenNet's
+O76: its launcher will also run EldenNet's engine off game, as the replay harness does here.
+
+## DP36
+
+**DataPiler's part in EldenNet's derivation round, and a check against Smithbox** · *2026-11-16 · Decided by the
+owner*
+
+**Question.** EldenNet's game-access layer needs facts about the owner's build of the game, found on the owner's PC
+(EldenNet O89). Asked how, the owner asked whether DataPiler could do it, and for "a feature to analyse presence of
+data in smithbox as well to compare". **Options:** (a) **DataPiler takes the offline round and the comparison**
+(recommended): a job runs EldenNet's devkit tool on the game's executable with the game closed, and later DataPiler
+compares EldenNet's in-game numbers with Smithbox's reading of the files; (b) the offline round now, the comparison
+later; (c) neither: both rounds stay in EldenNet's own tools.
+
+**Decision.** (a), within EldenNet's O73 (only EldenNet reads the game's memory) and O75 (the devkit's safe limits):
+- **The offline round (R0).** A job runs EldenNet's devkit tool (`probe-exe --derive`) on the game's executable while
+  the game is closed. Before anything is written to a share, the guard checks that the result holds only numbers,
+  offsets and wildcarded patterns of at most 64 bytes: no code dump, text, param or path (request 0001's guard,
+  extended for this file). The job packs the result for the owner to send. DataPiler reads the file only, never the
+  game's memory.
+- **The comparison.** After EldenNet's in-game probe session (R1, run from EldenNet's launcher), DataPiler imports its
+  numbers-only file and compares the param and text ids and counts that EldenNet read in game with what Smithbox
+  reads from the files through the server link (DP4: read calls only, with the game closed). The result is
+  numbers-only (matches, misses, counts) and passes the guard. Smithbox's labels are never facts, only numbers from
+  the owner's own data (EldenNet O48).
+
+**Owner's words.** "can this be done by datapiler? or could it be part of it? perhaps we could add this and then also
+a feature to analyse presence of data in smithbox as well to compare."; then "Yes, DataPiler + Smithbox check
+(Recommended)".
+
+**Follows from.** EldenNet O48, O73 to O75 and O89; DP4, DP35. EldenNet's roadmap S7.11.h and i.

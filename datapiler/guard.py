@@ -19,7 +19,14 @@ A share file's bytes are checked before they are written, and nothing is written
    beside the workspace (`record_counts`), never in the share file.
 
 A failure names the check and the place (`tables[1].rows[40][2]`, `tables[0]`), never the value. `_strings` follows
-LLM Jobrunner 1.2's `_strings`, walking keys and values with their places (build plan §7.2)."""
+LLM Jobrunner 1.2's `_strings`, walking keys and values with their places (build plan §7.2).
+
+**A derivation report** (DP36, settled S98): a share file that is EldenNet's `derive.json`, as the devkit tool wrote it
+(`derive.py`), passes the same six checks in their form for it: 1 its shape in the report's vocabulary; 2 each value of
+its key's type, labels only the leads' labels kept with the file (`record_counts`'s `labels`) and patterns of at most
+64 bytes that do not read as text; 3 and 4 as above, on every string but the report's own words, the leads' labels and
+the patterns (hex digits and wildcards, which hold no text, path or address); 5 at most 256 KiB, 64 patterns and
+`MAX_VALUES` values; 6 its record kept beside the workspace, so a file DataPiler did not write never passes."""
 
 from __future__ import annotations
 
@@ -29,9 +36,9 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Collection, Iterator, Mapping, Sequence
 
-from . import events, fields, fileio, logbook, paths
+from . import derive, events, fields, fileio, logbook, paths
 from .logbook import own
 
 if TYPE_CHECKING:
@@ -51,10 +58,10 @@ WORDS = {1: "the share file's shape", 2: "a value that is not a number, a flag o
          3: "a string the text database holds", 4: "a path, a name of the PC's or its user's, or an address",
          5: "over the size limits",
          6: "a table covering, alone or with the file's other tables from the same game table, more than half of "
-            "that game table's rows, or one without its row counts"}
+            "that game table's rows, or one without its row counts (a derivation report: without its record)"}
 
 # The text sets join_names knows (jobs.TEXTS is this tuple), each a key of provenance.names.
-NAME_SETS = ("character_names", "place_names")
+NAME_SETS = ("character_names", "place_names", "weapon_names", "protector_names")
 # Who said whether the expansion is installed: the owner, in Settings (P2). A file check is a hint on Status only.
 EXPANSION_SOURCES = ("owner",)
 
@@ -71,6 +78,7 @@ MAX_WRAPPERS = 16
 VERIFY_SHARE = 0.5                                      # textdb.VERIFY_SHARE: at least half must resolve
 COUNTS_FORMAT = "datapiler-share-counts/2"     # /2: each table's source (the game table) beside its counts (S19)
 COUNTS_MAX_FILES = 4096
+MAX_LABELS = 512                                # the leads' labels kept for a derivation report (S98)
 NO_COUNTS = "(no row counts)"
 
 HEX64_RX = re.compile(r"[0-9a-f]{64}")
@@ -524,21 +532,24 @@ class Guard:
         return ("\n".join(lines) + "\n").encode("ascii")
 
     def check(self, data: bytes, *, declared: Mapping[str, Sequence[str]],
-              coverage: Mapping[str, object] | None = None) -> list[CheckResult]:
+              coverage: Mapping[str, object] | None = None,
+              labels: Collection[str] | None = None) -> list[CheckResult]:
         """All six checks; never raises. declared: {table: [column, ...]} as the job's write_share names them.
         coverage: {table: None or (row-id column or None, rows of the game table, the game table's name)}, from the
-        runner or from `counts_for`; without it check 6 fails (DP8: a table's coverage is never guessed)."""
+        runner or from `counts_for`; without it check 6 fails (DP8: a table's coverage is never guessed). labels: for
+        a derivation report (S98), the leads' labels it may name, from the runner or from `labels_for`; without them
+        checks 2 and 6 fail."""
         results: dict[int, tuple[bool, str | None]] = {}
         try:
-            results = self._run(data, declared, coverage)
+            results = self._run(data, declared, coverage, labels)
         except Exception as e:
             _log.error("the guard could not finish its checks: %s", logbook.why(e))
             for n in CHECKS:
                 results.setdefault(n, (False, "(file)"))
         return [CheckResult(n, NAMES[n], results[n][0], results[n][1]) for n in CHECKS]
 
-    def _run(self, data: bytes, declared: Mapping[str, Sequence[str]],
-             coverage: Mapping[str, object] | None) -> dict[int, tuple[bool, str | None]]:
+    def _run(self, data: bytes, declared: Mapping[str, Sequence[str]], coverage: Mapping[str, object] | None,
+             labels: Collection[str] | None = None) -> dict[int, tuple[bool, str | None]]:
         out: dict[int, tuple[bool, str | None]] = {}
         raw = bytes(data) if isinstance(data, (bytes, bytearray)) else b""
         try:
@@ -546,6 +557,8 @@ class Guard:
             parsed = True
         except (ValueError, RecursionError):
             doc, parsed = None, False
+        if parsed and derive.is_report(doc):
+            return self._run_derive(raw, doc, labels)
         if not parsed:
             out[1] = (False, "(file)")
             out[2] = out[3] = out[4] = out[6] = (False, "(file)")
@@ -579,8 +592,35 @@ class Guard:
             out[6] = (where is None, where)
         return out
 
+    def _run_derive(self, raw: bytes, doc: object,
+                    labels: Collection[str] | None) -> dict[int, tuple[bool, str | None]]:
+        """The six checks in their form for a derivation report (DP36, S98; derive.py)."""
+        kept = frozenset(labels) if labels is not None else None
+        w = derive.walk(doc, kept)
+        out: dict[int, tuple[bool, str | None]] = {1: (w.shape is None, w.shape), 2: (w.values is None, w.values),
+                                                   3: (True, None), 4: (True, None)}
+        words = self._words()
+        for place, kind, s in w.strings:
+            # The report's own words, the leads' labels and the patterns are no text of the game (check 3 skips them,
+            # as it skips DataPiler's fixed words); a pattern is hex digits and wildcards, with no room for a path, a
+            # name or an address (check 4 skips it). Every other string is checked: checks 1 and 2 refuse it already.
+            if out[3][0] and kind == "other" and self.textdb.text_hit(s):
+                out[3] = (False, place)
+            if out[4][0] and kind != "pattern" and owner_fault(s, place, words):
+                out[4] = (False, place)
+            if not out[3][0] and not out[4][0]:
+                break
+        if len(raw) > derive.MAX_BYTES:
+            out[5] = (False, "(file)")
+        elif w.patterns > derive.MAX_PATTERNS or w.values_seen > MAX_VALUES:
+            out[5] = (False, "(file)")
+        else:
+            out[5] = (True, None)
+        out[6] = (True, None) if kept is not None else (False, NO_COUNTS)
+        return out
+
     def write(self, share_dir: Path, name: str, data: bytes, *, declared: Mapping[str, Sequence[str]],
-              coverage: Mapping[str, object] | None) -> ShareWritten:
+              coverage: Mapping[str, object] | None, labels: Collection[str] | None = None) -> ShareWritten:
         """Check, then write atomically only if all six pass. Raises GuardFailed naming the first failing check;
         nothing is written. Logs (source guard) and emits share.written or guard.failed. ValueError for a name
         that is not one DataPiler writes."""
@@ -593,7 +633,7 @@ class Guard:
             empty = True
         if empty:
             _log.warn("the text database is empty - check 3 had no text to compare (import the text exports first)")
-        results = self.check(data, declared=declared, coverage=coverage)
+        results = self.check(data, declared=declared, coverage=coverage, labels=labels)
         failed = next((r for r in results if not r.ok), None)
         if failed is not None:
             _log.error("%s not written: check %s at %s (%s)", file_name, failed.check, own(failed.where or "-"),
@@ -638,10 +678,12 @@ def _read_counts(path: Path) -> dict:
     return doc["files"]
 
 
-def record_counts(path: Path, file_name: str, sha256: str, coverage: Mapping[str, object]) -> None:
+def record_counts(path: Path, file_name: str, sha256: str, coverage: Mapping[str, object],
+                  labels: Collection[str] | None = None) -> None:
     """Keep a written share file's row counts (check 6's input) in the workspace, by the file's name and sha256, so
     Outputs can run check 6 again later. Local only: the counts are numbers of the owner's game tables, never in a
-    share file. Atomic. Raises OSError or ValueError."""
+    share file. labels (S98): for a derivation report, the leads' labels it may name, kept with it for checks 2 and
+    6. Atomic. Raises OSError or ValueError."""
     if not HEX64_RX.fullmatch(sha256) or not isinstance(file_name, str) or \
             not paths.name_ok(file_name[:-5] if file_name.endswith(".json") else ""):
         raise ValueError("not a share file DataPiler wrote")
@@ -651,10 +693,16 @@ def record_counts(path: Path, file_name: str, sha256: str, coverage: Mapping[str
             raise ValueError("not row counts DataPiler keeps")
         tables[t] = None if spec is None else \
             {"column": spec[0], "of": spec[1], "source": spec[2]}  # type: ignore[index]
+    entry: dict[str, object] = {"sha256": sha256, "tables": tables}
+    if labels is not None:
+        kept = sorted(set(labels))
+        if len(kept) > MAX_LABELS or not all(isinstance(x, str) and derive.LABEL_RX.fullmatch(x) for x in kept):
+            raise ValueError("not labels DataPiler keeps")
+        entry["labels"] = kept
     with _counts_lock:
         files = _read_counts(path)
         files.pop(file_name, None)
-        files[file_name] = {"sha256": sha256, "tables": tables}
+        files[file_name] = entry
         while len(files) > COUNTS_MAX_FILES:
             files.pop(next(iter(files)))
         doc = {"format": COUNTS_FORMAT, "files": files}
@@ -689,15 +737,40 @@ def put_counts(path: Path, file_name: str, entry: dict) -> None:
     if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str) or \
             not HEX64_RX.fullmatch(entry["sha256"]) or not isinstance(entry.get("tables"), dict):
         raise ValueError("not row counts DataPiler keeps")
+    kept: dict[str, object] = {"sha256": entry["sha256"], "tables": entry["tables"]}
+    if "labels" in entry:
+        if _labels_ok(entry["labels"]) is None:
+            raise ValueError("not row counts DataPiler keeps")
+        kept["labels"] = list(entry["labels"])
     with _counts_lock:
         files = _read_counts(path)
         files.pop(file_name, None)
-        files[file_name] = {"sha256": entry["sha256"], "tables": entry["tables"]}
+        files[file_name] = kept
         while len(files) > COUNTS_MAX_FILES:
             files.pop(next(iter(files)))
         doc = {"format": COUNTS_FORMAT, "files": files}
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         fileio.write_atomic(Path(path), (json.dumps(doc, indent=1, ensure_ascii=True) + "\n").encode("ascii"))
+
+
+def _labels_ok(v: object) -> frozenset[str] | None:
+    if not isinstance(v, list) or len(v) > MAX_LABELS or \
+            not all(isinstance(x, str) and derive.LABEL_RX.fullmatch(x) for x in v):
+        return None
+    return frozenset(v)
+
+
+def labels_for(path: Path, file_name: str, sha256: str) -> frozenset[str] | None:
+    """S98: the leads' labels kept for that derivation report at that sha256, as `check` takes them; None when there
+    are none (a file DataPiler did not write, or one changed since), so checks 2 and 6 fail. Never raises."""
+    try:
+        with _counts_lock:
+            entry = _read_counts(path).get(file_name)
+        if not isinstance(entry, dict) or entry.get("sha256") != sha256 or "labels" not in entry:
+            return None
+        return _labels_ok(entry["labels"])
+    except Exception:
+        return None
 
 
 def counts_for(path: Path, file_name: str, sha256: str) -> dict[str, object] | None:
